@@ -27,6 +27,7 @@ class MeticheManager:
         self.accountant_on = False
         self.next_accountant_check = None
         self.awaiting_accountant_choice = False
+        self.loop_task = None
 
     def turn_on(self, channel_id: int):
         self.channel_id = channel_id
