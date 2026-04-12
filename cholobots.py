@@ -74,14 +74,6 @@ async def on_message(message: discord.Message):
             await message.channel.send("👌 Okay. Accountant mode skipped. You can still use `!metiche_on` later.")
             return
 
-        # If they typed something else, don’t eat the message—just fall through.
-
-    # IMPORTANT: allow commands to work
-    await bot.process_commands(message)
-    
-
-    
-
 @bot.command(name="queso")
 async def queso(ctx):
     msg = """
