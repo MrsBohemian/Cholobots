@@ -262,8 +262,12 @@ Save quarterly and yearly goals
         )
         mode_msg = await bot.wait_for("message", check=check)
         mode = mode_msg.content.strip().lower()
+        if mode in {"cancel", "exit", "stop"}:
+            await ctx.send("Okay. Exiting schedule flow.")
+            return
+        
         if mode not in {"merge", "modify", "replace"}:
-            await ctx.send("Reply with exactly: merge, modify, or replace.")
+            await ctx.send("Reply with exactly: merge, modify, or replace, or type cancel.")
             return
 
         await ctx.send(
