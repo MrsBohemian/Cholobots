@@ -76,8 +76,6 @@ async def on_message(message: discord.Message):
             metiche.awaiting_accountant_choice = False
             await message.channel.send("👌 Okay. Accountant mode skipped. You can still use `!metiche_on` later.")
             return
-            
-    await bot.process_commands(message)
         
 @bot.command(name="cholobots")
 async def cholobots(ctx):
