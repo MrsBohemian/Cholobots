@@ -197,13 +197,41 @@ def get_metiche():
 def register_metiche(bot):
     global metiche_instance
     metiche_instance = MeticheManager(bot)
+            
+    @bot.command(name="metichebot")
+    async def metichebot_help(ctx):
+        msg = """
+🧠 METICHEBOT
 
-    @bot.event
-    async def on_ready():
-        metiche = get_metiche()
-        if metiche and not hasattr(bot, "_metiche_loop_started"):
-            bot._metiche_loop_started = True
-            bot.loop.create_task(metiche.start_loop())
+Metiche is for planning, scheduling, check-ins, and task accounting.
+
+ACTIVE FUNCTIONS
+
+Planning
+!mweekly
+Save weekly goal, jobs, pending estimates, and invoices
+
+!mschedule
+Build or update schedule for Heaven, Daniel, or Handley Man
+
+!mplan
+Show the current saved weekly plan
+
+Execution
+!mbodydouble
+Turn on check-ins
+
+!mquiet
+Turn off check-ins
+
+!mcheckin <Category - Task - Energy(1-5)>
+Log a manual task check-in
+
+Strategy
+!mgoals
+Save quarterly and yearly goals
+"""
+        await ctx.send(msg)
 
     @bot.command(name="mschedule")
     async def mschedule(ctx: commands.Context):
