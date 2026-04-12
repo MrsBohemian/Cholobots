@@ -49,8 +49,11 @@ async def on_ready():
     
     metiche = get_metiche()
     if metiche is not None:
-        metiche.generate_daily_schedule()
-        bot.loop.create_task(metiche.start_loop())
+        if not metiche.schedule:
+            metiche.generate_daily_schedule()
+    
+        if getattr(metiche, "loop_task", None) is None or metiche.loop_task.done():
+            metiche.loop_task = bot.loop.create_task(metiche.start_loop())
         
 @bot.listen()
 async def on_message(message: discord.Message):
@@ -73,7 +76,8 @@ async def on_message(message: discord.Message):
             metiche.awaiting_accountant_choice = False
             await message.channel.send("👌 Okay. Accountant mode skipped. You can still use `!metiche_on` later.")
             return
-            
+        await bot.process_commands(message)
+        
     @bot.command(name="cholobots")
     async def cholobots(ctx):
         msg = """
