@@ -165,14 +165,21 @@ class MeticheManager:
         except Exception as e:
             return {"ok": False, "reason": str(e)}
 
-    def push_calendar_json(self, week_of: str, person: str, person_schedule: Dict[str, List[str]]) -> Dict[str, Any]:
-        plan = fetch_latest_metiche_weekly(week_of)
-        calendar_json: Dict[str, Any] = plan.get("calendar_json", {}) if plan else {}
-        calendar_json.setdefault("Heaven", {})
-        calendar_json.setdefault("Daniel", {})
-        calendar_json.setdefault("Handley Man", {})
-        calendar_json[person] = person_schedule
-        return self.post_json("calendar", calendar_json)
+   def push_calendar_json(self, week_of: str, person: str, person_schedule: Dict[str, List[str]]) -> Dict[str, Any]:
+    key_map = {
+        "Heaven": "heaven",
+        "Daniel": "daniel",
+        "Handley Man": "handley_man"
+    }
+
+    calendar_key = key_map.get(person)
+
+    payload = {
+        "calendarKey": calendar_key,
+        "schedule": person_schedule
+    }
+
+    return self.post_json("calendar", payload)
 
     def push_task_summary_json(self, week_of: str) -> Dict[str, Any]:
         plan = fetch_latest_metiche_weekly(week_of)
