@@ -154,6 +154,19 @@ class OrgSession:
     current_job: Optional[str] = None
 
 def register_guard(bot):
+    @bot.command(name="guardabot")
+    async def guardabot_help(ctx):
+    await ctx.send(
+        "📦 GUARDABOT COMMANDS\n\n"
+        "Guardabot tracks materials, locations, organization sessions, and job prep.\n\n"
+        "Current commands:\n"
+        "- `!guard organization` — start an organization session\n"
+        "- `!guard done` — finish session + summary\n"
+        "- `!guard where <item>` — find last known location of an item\n"
+        "- `!guard jobprep` — prep materials for a job\n\n"
+        "During an organization session, tell Guardabot what you moved, found, used, or placed."
+    )
+    
     @bot.group(name="guard", invoke_without_command=True)
     async def guard_group(ctx: commands.Context):
         await ctx.send(
