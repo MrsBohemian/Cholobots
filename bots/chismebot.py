@@ -1,5 +1,19 @@
 import traceback
+import json
+from pathlib import Path
 from config import client
+
+CHISME_FILE = Path("chisme_followups.json")
+
+def load_chisme():
+    if CHISME_FILE.exists():
+        with open(CHISME_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+def save_chisme(items):
+    with open(CHISME_FILE, "w", encoding="utf-8") as f:
+        json.dump(items, f, indent=2, ensure_ascii=False)
 
 def safe_text_from_openai_response(resp) -> str:
     """
@@ -70,7 +84,16 @@ def register_chisme(bot):
             )
     
             text = safe_text_from_openai_response(resp)
+            items = load_chisme()
+            items.append({
+                "raw_note": note,
+                "contact_card": text,
+                "status": "needs_followup"
+            })
+            save_chisme(items)
+            
             await send_long(ctx, text)
+            await ctx.send("✅ Saved to Chismebot follow-up list.")
     
         except Exception:
             print("=== FULL ERROR TRACEBACK ===")
