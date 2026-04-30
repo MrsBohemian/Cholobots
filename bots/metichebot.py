@@ -476,7 +476,7 @@ def register_metiche(bot):
             session.tasks[match_idx]["done"] = True
             completed_text = session.tasks[match_idx]["text"]
 
-        await ctx.send(f"✅ {completed_text}\n\n{format_daily_tasks(session)}")
+        await ctx.send(f"✅ {completed_text}")
 
         # Push checked state to the calendar dashboard.
         metiche = get_metiche()
@@ -548,6 +548,9 @@ Daily Use
 !mtoday
 Start today's working list. Metiche will verify the date, show today's goals, accept changes, and repeat the list with checkmarks as you work.
 
+!mstopday
+Stop today’s active checklist if Metiche starts treating setup messages like tasks
+
 Execution
 !mbodydouble
 Turn on task accounting check-ins. Metichebot will ask “Qué onda?” every 2 hours.
@@ -569,6 +572,7 @@ Save quarterly and yearly goals
 
     @bot.command(name="mschedule")
     async def mschedule(ctx: commands.Context):
+                active_daily_sessions.pop(ctx.channel.id, None)
         metiche = get_metiche()
 
         if metiche is None:
@@ -810,6 +814,11 @@ Save quarterly and yearly goals
 
         if not push_result.get("ok"):
             await ctx.send(f"Saved, but dashboard push failed: {push_result.get('reason')}")
+            
+    @bot.command(name="mstopday")
+    async def mstopday(ctx: commands.Context):
+        active_daily_sessions.pop(ctx.channel.id, None)
+        await ctx.send("Okay. I stopped today’s active checklist.")
 
     @bot.command(name="mplan")
     async def mplan(ctx: commands.Context):
