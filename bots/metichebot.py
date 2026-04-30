@@ -570,7 +570,7 @@ Save quarterly and yearly goals
 """
         await ctx.send(msg)
 
-    @bot.command(name="mschedule")
+@bot.command(name="mschedule")
         async def mschedule(ctx: commands.Context):
             active_daily_sessions.pop(ctx.channel.id, None)
                 
