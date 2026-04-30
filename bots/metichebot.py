@@ -576,9 +576,9 @@ Save quarterly and yearly goals
                 
             metiche = get_metiche()
     
-                if metiche is None:
-                    await ctx.send("Metiche isn’t initialized yet.")
-                    return
+            if metiche is None:
+                await ctx.send("Metiche isn’t initialized yet.")
+                return
 
         def check(m: discord.Message):
             return (m.author.id == ctx.author.id) and (m.channel.id == ctx.channel.id)
