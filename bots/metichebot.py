@@ -572,8 +572,9 @@ Save quarterly and yearly goals
 
     @bot.command(name="mschedule")
     async def mschedule(ctx: commands.Context):
-                active_daily_sessions.pop(ctx.channel.id, None)
-        metiche = get_metiche()
+            active_daily_sessions.pop(ctx.channel.id, None)
+            
+            metiche = get_metiche()
 
         if metiche is None:
             await ctx.send("Metiche isn’t initialized yet.")
