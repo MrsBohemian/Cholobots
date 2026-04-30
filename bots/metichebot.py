@@ -401,12 +401,27 @@ Save quarterly and yearly goals
 
         await ctx.send(
             format_person_schedule(person, person_schedule)
-            + "\n\nDo you want to merge, modify, or replace?"
+            + "\n\nWhat do you want to do?\n\n"
+            "1. Add to schedule (keep everything, add new tasks)\n"
+            "2. Change specific days\n"
+            "3. Start over\n\n"
+            "Reply with 1, 2, or 3"
         )
 
         mode_msg = await bot.wait_for("message", check=check)
-        mode = mode_msg.content.strip().lower()
-
+        
+        mode_raw = mode_msg.content.strip()
+        
+        if mode_raw == "1":
+            mode = "merge"
+        elif mode_raw == "2":
+            mode = "modify"
+        elif mode_raw == "3":
+            mode = "replace"
+        else:
+            await ctx.send("Reply with 1, 2, or 3 (or cancel).")
+            return
+    
         if mode in {"cancel", "exit", "stop"}:
             await ctx.send("Okay. Exiting schedule flow.")
             return
