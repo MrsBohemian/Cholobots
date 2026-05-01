@@ -423,6 +423,20 @@ async def ask(ctx: commands.Context, bot: commands.Bot, prompt: str) -> str:
 
 def register_crudo(bot: commands.Bot):
 
+    @bot.command(name="crudobot")
+    async def crudobot_help(ctx: commands.Context):
+    await ctx.send(
+            "💰 CRUDOBOT COMMANDS\n\n"
+            "`!crudojc`\n"
+            "List available job costing reports, pick one, and retrieve the report.\n\n"
+            "`!crudoestimate`\n"
+            "Ask Crudobot for estimate support using historical actuals.\n\n"
+            "`!crudoreport`\n"
+            "Generate a grounded business report from job costing + narrative data.\n\n"
+            "`!crudo phrase`\n"
+            "Receive nonsense from the jobsite cryptid."
+        )
+
     @bot.group(name="crudo", invoke_without_command=True)
     async def crudo_group(ctx: commands.Context):
         await ctx.send(
