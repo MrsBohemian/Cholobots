@@ -3,6 +3,10 @@ import json
 from pathlib import Path
 from datetime import datetime
 from config import client
+import os
+from urllib import request, error
+
+DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "").rstrip("/")
 
 # Chisme = long-term narrative/sociological database.
 CHISME_FILE = Path("chisme.json")
@@ -33,6 +37,26 @@ def load_chisme():
 
 def save_chisme(items):
     save_json(CHISME_FILE, items)
+
+def push_followups_to_dashboard(items):
+    if not DATA_SERVICE_URL:
+        return {"ok": False, "reason": "DATA_SERVICE_URL not set"}
+
+    url = f"{DATA_SERVICE_URL}/chisme_followups.json"
+    data = json.dumps(items).encode("utf-8")
+
+    req = request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+
+    try:
+        with request.urlopen(req, timeout=10) as resp:
+            return {"ok": True, "status": resp.status}
+    except Exception as e:
+        return {"ok": False, "reason": str(e)}
 
 
 def load_followups():
@@ -249,7 +273,8 @@ def register_chisme(bot):
         items = load_followups()
         items.append(item)
         save_followups(items)
-
+        push_followups_to_dashboard(items)
+        
         await ctx.send(f"✅ Added follow-up: {item['name']} — {item['reason']}")
 
     @bot.command(name="followuplist")
@@ -295,7 +320,8 @@ def register_chisme(bot):
         items[idx]["status"] = "done"
         items[idx]["completed_at"] = now_iso()
         save_followups(items)
-
+        push_followups_to_dashboard(items)
+        
         name = items[idx].get("name", "Follow-up")
         reason = items[idx].get("reason", "")
         await ctx.send(f"✅ Marked done: {name} — {reason}")
