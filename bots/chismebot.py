@@ -55,6 +55,40 @@ async def send_long(ctx, text: str, limit: int = 1900):
 # ---------- CHISMEBOT COMMAND ----------
 
 def register_chisme(bot):
+    @bot.command(name="chismebot")
+    async def chismebot_help(ctx):
+        await ctx.send(
+            "💬 CHISMEBOT COMMANDS\n\n"
+            "`!chisme <note>`\n"
+            "Save a messy contact/customer note and add it to the Command Center follow-up list.\n\n"
+            "`!chismelist`\n"
+            "Show recent follow-ups saved by Chismebot.\n\n"
+            "Coming soon:\n"
+            "`!chismedone <name>` — mark a follow-up as done."
+        )
+
+    @bot.command(name="chismelist")
+    async def chismelist(ctx):
+        items = load_chisme()
+
+        if not items:
+            await ctx.send("No Chismebot follow-ups saved yet.")
+            return
+
+        open_items = [item for item in items if item.get("status") != "done"]
+
+        if not open_items:
+            await ctx.send("No open Chismebot follow-ups.")
+            return
+
+        lines = ["💬 Current Chismebot follow-ups:\n"]
+
+        for idx, item in enumerate(open_items[-10:], start=1):
+            card = item.get("contact_card") or item.get("raw_note") or "No details"
+            short = card.replace("\n", " · ")[:180]
+            lines.append(f"{idx}. {short}")
+
+        await send_long(ctx, "\n".join(lines))
 
     @bot.command()
     async def chisme(ctx, *, note: str = ""):
