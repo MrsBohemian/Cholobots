@@ -425,7 +425,7 @@ def register_crudo(bot: commands.Bot):
 
     @bot.command(name="crudobot")
     async def crudobot_help(ctx: commands.Context):
-    await ctx.send(
+        await ctx.send(
             "💰 CRUDOBOT COMMANDS\n\n"
             "`!crudojc`\n"
             "List available job costing reports, pick one, and retrieve the report.\n\n"
