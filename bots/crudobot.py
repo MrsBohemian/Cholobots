@@ -433,8 +433,6 @@ def register_crudo(bot: commands.Bot):
             "Ask Crudobot for estimate support using historical actuals.\n\n"
             "`!crudoreport`\n"
             "Generate a grounded business report from job costing + narrative data.\n\n"
-            "`!crudo phrase`\n"
-            "Receive nonsense from the jobsite cryptid."
         )
 
     @bot.group(name="crudo", invoke_without_command=True)
@@ -528,10 +526,6 @@ def register_crudo(bot: commands.Bot):
         # to safely send summarized data to the model.
         report = grounded_theory_summary(reports, narratives)
         await ctx.send(report[:1900])
-
-    @crudo_group.command(name="phrase")
-    async def crudo_phrase_cmd(ctx: commands.Context):
-        await ctx.send(crudo_phrase())
 
     # Backward-compatible old commands.
     @crudo_group.command(name="report")
