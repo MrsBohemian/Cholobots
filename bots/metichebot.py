@@ -73,10 +73,14 @@ def normalize_task(task: str) -> str:
     return re.sub(r"\s+", " ", task.strip().lower())
 
 
-def day_to_iso(day_name: str, week_start: str) -> str:
-    base = datetime.fromisoformat(week_start)
-    offset = DAY_NAMES.index(day_name.lower())
-    return (base + timedelta(days=offset)).date().isoformat()
+def day_to_iso(day_name: str, week_start: str = None) -> str:
+    today = datetime.now().date()
+    target_index = DAY_NAMES.index(day_name.lower())
+    today_index = today.weekday()
+
+    days_ahead = (target_index - today_index) % 7
+
+    return (today + timedelta(days=days_ahead)).isoformat()
 
 
 def parse_schedule_block(text: str, week_start: str) -> Dict[str, List[str]]:
@@ -94,7 +98,7 @@ def parse_schedule_block(text: str, week_start: str) -> Dict[str, List[str]]:
             continue
 
         tasks = [t.strip() for t in task_part.split(",") if t.strip()]
-        iso_day = day_to_iso(day_name, week_start)
+        iso_day = day_to_iso(day_name)
         result[iso_day] = tasks
 
     return result
