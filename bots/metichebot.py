@@ -622,6 +622,8 @@ def register_metiche(bot):
                 "yearly_goals_json": json.dumps(yearly_goals, ensure_ascii=False),
             })
 
+            person_schedule = calendar_json.get(person, {})
+            person_schedule[date_key] = existing_today
             metiche.push_calendar_json(week, session.person, person_schedule)
 
     @bot.command(name="metichebot")
