@@ -929,21 +929,29 @@ Save quarterly and yearly goals
     @bot.command(name="mplan")
     async def mplan(ctx: commands.Context):
         week = week_of_monday(datetime.now())
-        plan = fetch_latest_metiche_weekly(week)
-
-        if not plan:
+        user_id = str(ctx.author)
+    
+        weekly_plan = load_weekly_plan(user_id, week)
+    
+        if not weekly_plan:
             await ctx.send("No weekly plan saved yet.")
             return
-
-        calendar_json = plan.get("calendar_json", {}) or {}
-
+    
         lines = [f"📌 Weekly plan ({week})"]
+    
+        weekly_goal = float(weekly_plan.get("weekly_goal", 0.0) or 0.0)
+        jobs = weekly_plan.get("jobs", []) or []
+        pending_estimates = weekly_plan.get("pending_estimates", []) or []
+        invoices_to_send = weekly_plan.get("invoices_to_send", []) or []
+    
+        lines.append(f"💰 Weekly goal: ${weekly_goal:,.0f}" if weekly_goal else "💰 Weekly goal: not set")
+    
+        lines.append("Jobs: " + (", ".join(jobs) if jobs else "none"))
+        lines.append("Pending estimates: " + (", ".join(pending_estimates) if pending_estimates else "none"))
+        lines.append("Invoices to send: " + (", ".join(invoices_to_send) if invoices_to_send else "none"))
 
-        for person in VALID_PEOPLE:
-            lines.append(format_person_schedule(person, calendar_json.get(person, {})))
-
-        await ctx.send("\n\n".join(lines))
-
+        await ctx.send("\n".join(lines))
+    
     @bot.command(name="mbodydouble")
     async def mbodydouble(ctx: commands.Context):
         metiche = get_metiche()
