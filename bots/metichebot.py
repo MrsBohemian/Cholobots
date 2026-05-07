@@ -208,6 +208,44 @@ def replace_daily_tasks(person: str, date_iso: str, tasks: List[Dict[str, Any]])
 
     if inserts:
         supabase.table("daily_tasks").insert(inserts).execute()
+
+def save_weekly_plan(
+    user_id: str,
+    channel_id: str,
+    week_of: str,
+    weekly_goal: float,
+    jobs: List[str],
+    pending_estimates: List[str],
+    invoices_to_send: List[str]
+):
+    (
+        supabase.table("metiche_weekly_plans")
+        .upsert({
+            "user_id": user_id,
+            "channel_id": channel_id,
+            "week_of": week_of,
+            "weekly_goal": weekly_goal,
+            "jobs": jobs,
+            "pending_estimates": pending_estimates,
+            "invoices_to_send": invoices_to_send,
+        })
+        .execute()
+    )
+
+
+def load_weekly_plan(user_id: str, week_of: str):
+    response = (
+        supabase.table("metiche_weekly_plans")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("week_of", week_of)
+        .limit(1)
+        .execute()
+    )
+
+    rows = response.data or []
+
+    return rows[0] if rows else None
     
 def parse_task_list(text: str) -> List[Dict[str, Any]]:
     cleaned = text.strip()
@@ -848,6 +886,15 @@ Save quarterly and yearly goals
             "yearly_goals_json": json.dumps(yearly_goals, ensure_ascii=False),
         })
 
+        save_weekly_plan(
+            user_id=str(ctx.author),
+            channel_id=str(ctx.channel.id),
+            week_of=week,
+            weekly_goal=weekly_goal,
+            jobs=jobs,
+            pending_estimates=pending_estimates,
+            invoices_to_send=invoices_to_send
+        )
         metiche.push_calendar_json(week, person, person_schedule)
         metiche.push_task_summary_json(build_raw_time_payload(session))
         metiche.turn_on_bodydouble(ctx.channel.id)
