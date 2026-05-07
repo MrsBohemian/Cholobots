@@ -6,9 +6,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from urllib import request, error
+from supabase import create_client
 
 import discord
 from discord.ext import commands
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 from db.database import (
     now_iso,
@@ -141,7 +147,68 @@ def normalize_daily_items(raw_items: List[Any]) -> List[Dict[str, Any]]:
 
     return normalized
 
+def load_daily_tasks(person: str, date_iso: str) -> List[Dict[str, Any]]:
+    key_map = {
+        "Heaven": "heaven",
+        "Daniel": "daniel",
+        "Handley Man": "handley_man"
+    }
 
+    calendar_key = key_map.get(person, "heaven")
+
+    response = (
+        supabase.table("daily_tasks")
+        .select("*")
+        .eq("calendar_key", calendar_key)
+        .eq("date", date_iso)
+        .order("created_at")
+        .execute()
+    )
+
+    rows = response.data or []
+
+    return [
+        {
+            "text": row["task"],
+            "done": row["completed"]
+        }
+        for row in rows
+    ]
+
+
+def replace_daily_tasks(person: str, date_iso: str, tasks: List[Dict[str, Any]]):
+    key_map = {
+        "Heaven": "heaven",
+        "Daniel": "daniel",
+        "Handley Man": "handley_man"
+    }
+
+    calendar_key = key_map.get(person, "heaven")
+
+    # delete old tasks
+    (
+        supabase.table("daily_tasks")
+        .delete()
+        .eq("calendar_key", calendar_key)
+        .eq("date", date_iso)
+        .execute()
+    )
+
+    # insert fresh tasks
+    inserts = []
+
+    for task in tasks:
+        inserts.append({
+            "user_id": calendar_key,
+            "calendar_key": calendar_key,
+            "date": date_iso,
+            "task": task["text"],
+            "completed": task.get("done", False)
+        })
+
+    if inserts:
+        supabase.table("daily_tasks").insert(inserts).execute()
+    
 def parse_task_list(text: str) -> List[Dict[str, Any]]:
     cleaned = text.strip()
 
@@ -486,6 +553,11 @@ def register_metiche(bot):
 
         if session.person in VALID_PEOPLE:
             person_schedule[session.date_iso] = session.daily_tasks
+            replace_daily_tasks(
+                session.person,
+                session.date_iso,
+                session.daily_tasks
+            )
             calendar_json[session.person] = person_schedule
 
             weekly_goal = float(plan.get("weekly_goal", 0.0) or 0.0)
@@ -705,9 +777,9 @@ Save quarterly and yearly goals
             return
 
         date_key = today_iso()
-        person_schedule = calendar_json.get(person, {}) or {}
-        existing_today = normalize_daily_items(person_schedule.get(date_key, []))
 
+        existing_today = load_daily_tasks(person, date_key)
+        
         weekly_goal = float(current_plan.get("weekly_goal", 0.0) or 0.0)
         quarterly_goals = current_plan.get("quarterly_goals", []) or []
         yearly_goals = current_plan.get("yearly_goals", []) or []
@@ -753,8 +825,7 @@ Save quarterly and yearly goals
 
         active_time_sessions[ctx.channel.id] = session
 
-        person_schedule[date_key] = existing_today
-        calendar_json[person] = person_schedule
+        replace_daily_tasks(person, date_key, existing_today)
 
         jobs = current_plan.get("jobs", []) or []
         pending_estimates = current_plan.get("pending_estimates", []) or []
