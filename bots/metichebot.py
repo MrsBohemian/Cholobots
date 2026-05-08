@@ -626,8 +626,6 @@ def register_metiche(bot):
                 "yearly_goals_json": json.dumps(yearly_goals, ensure_ascii=False),
             })
 
-            person_schedule = calendar_json.get(person, {})
-            person_schedule[date_key] = existing_today
             metiche.push_calendar_json(week, session.person, person_schedule)
 
     @bot.command(name="metichebot")
@@ -901,6 +899,8 @@ Save quarterly and yearly goals
             pending_estimates=pending_estimates,
             invoices_to_send=invoices_to_send
         )
+        person_schedule = calendar_json.get(person, {})
+        person_schedule[date_key] = existing_today
         metiche.push_calendar_json(week, person, person_schedule)
         metiche.push_task_summary_json(build_raw_time_payload(session))
         metiche.turn_on_bodydouble(ctx.channel.id)
