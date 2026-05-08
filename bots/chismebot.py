@@ -5,6 +5,12 @@ from datetime import datetime
 from config import client
 import os
 from urllib import request, error
+from supabase import create_client
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "").rstrip("/")
 
@@ -12,8 +18,6 @@ DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "").rstrip("/")
 CHISME_FILE = Path("chisme.json")
 
 # Follow-ups = short-term operational call/action list for Command Center.
-FOLLOWUP_FILE = Path("chisme_followups.json")
-
 
 def now_iso():
     return datetime.now().isoformat()
@@ -38,6 +42,16 @@ def load_chisme():
 def save_chisme(items):
     save_json(CHISME_FILE, items)
 
+def load_followups():
+    response = (
+        supabase.table("chisme_followups")
+        .select("*")
+        .neq("status", "done")
+        .order("created_at")
+        .execute()
+    )
+    return response.data or []
+
 def push_followups_to_dashboard(items):
     if not DATA_SERVICE_URL:
         return {"ok": False, "reason": "DATA_SERVICE_URL not set"}
@@ -58,14 +72,17 @@ def push_followups_to_dashboard(items):
     except Exception as e:
         return {"ok": False, "reason": str(e)}
 
+def add_followup(item):
+    supabase.table("chisme_followups").insert(item).execute()
 
-def load_followups():
-    return load_json(FOLLOWUP_FILE, [])
 
-
-def save_followups(items):
-    save_json(FOLLOWUP_FILE, items)
-
+def update_followup(item_id, updates):
+    (
+        supabase.table("chisme_followups")
+        .update(updates)
+        .eq("id", item_id)
+        .execute()
+    )
 
 def safe_text_from_openai_response(resp) -> str:
     """
@@ -270,9 +287,12 @@ def register_chisme(bot):
             "type": "followup"
         }
 
+        item["user_id"] = str(ctx.author.id)
+        item["channel_id"] = str(ctx.channel.id)
+        
+        add_followup(item)
+        
         items = load_followups()
-        items.append(item)
-        save_followups(items)
         push_followups_to_dashboard(items)
         
         await ctx.send(f"✅ Added follow-up: {item['name']} — {item['reason']}")
@@ -317,9 +337,15 @@ def register_chisme(bot):
             await ctx.send("I couldn’t find an open follow-up matching that.")
             return
 
-        items[idx]["status"] = "done"
-        items[idx]["completed_at"] = now_iso()
-        save_followups(items)
+        update_followup(
+            items[idx]["id"],
+            {
+                "status": "done",
+                "completed_at": now_iso()
+            }
+        )
+        
+        items = load_followups()
         push_followups_to_dashboard(items)
         
         name = items[idx].get("name", "Follow-up")
