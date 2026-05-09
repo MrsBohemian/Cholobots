@@ -279,16 +279,13 @@ def register_chisme(bot):
             reason = "follow up"
 
         item = {
-            "timestamp": now_iso(),
+            "user_id": str(ctx.author.id),
+            "channel_id": str(ctx.channel.id),
             "name": name.strip(),
             "reason": reason.strip(),
             "raw_note": note.strip(),
-            "status": "open",
-            "type": "followup"
+            "status": "open"
         }
-
-        item["user_id"] = str(ctx.author.id)
-        item["channel_id"] = str(ctx.channel.id)
         
         add_followup(item)
         
