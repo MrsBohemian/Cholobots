@@ -1,20 +1,28 @@
+"""
+Metichebot refactor: weekly execution engine + daily raw time accounting.
+
+What changed:
+- Removed the duplicate metiche_weekly_plans table path that made !mplan look empty.
+- Uses fetch_latest_metiche_weekly / insert_metiche_weekly as the single weekly-plan source.
+- Rebuilt !mweekly as an operational forecast intake, not just a note collector.
+- Added automatic weekly execution interpretation and schedule injection.
+- Added !mwakeup for Daniel's morning boot sequence.
+- Kept: !mschedule, !mtoday, !mcheckin, !mbodydouble, !mquiet, !mgoals, !mstopday.
+- Removed stale generate_daily_schedule/save_weekly_plan/load_weekly_plan compatibility code.
+"""
+
 import asyncio
 import json
 import os
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
-from urllib import request, error
-from supabase import create_client
+from datetime import datetime, timedelta, date
+from typing import Any, Dict, List, Optional, Tuple
+from urllib import error, request
 
 import discord
 from discord.ext import commands
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+from supabase import create_client
 
 from db.database import (
     now_iso,
@@ -23,21 +31,30 @@ from db.database import (
     fetch_latest_metiche_weekly,
 )
 
-metiche_instance = None
-
 DAY_NAMES = [
-    "monday", "tuesday", "wednesday", "thursday",
-    "friday", "saturday", "sunday"
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
 ]
 
 VALID_PEOPLE = ["Heaven", "Daniel", "Handley Man"]
+PERSON_TO_CALENDAR_KEY = {
+    "Heaven": "heaven",
+    "Daniel": "daniel",
+    "Handley Man": "handley_man",
+}
 
-# Keep old category names out of the user-facing flow.
-# Raw time accounting does not judge or categorize tasks yet.
 RAW_TIME_LABEL = "raw_time"
+DEFAULT_CALENDAR = {"Heaven": {}, "Daniel": {}, "Handley Man": {}}
+DEFAULT_CHILLHOP_URL = os.getenv(
+    "DANIEL_MORNING_AUDIO_URL",
+    "https://www.youtube.com/results?search_query=chillhop+morning+radio",
+)
 
-# One active time accounting session per Discord channel.
+metiche_instance = None
 active_time_sessions: Dict[int, "TimeSession"] = {}
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 
 @dataclass
@@ -50,6 +67,23 @@ class TimeSession:
     blocks: List[Dict[str, Any]] = field(default_factory=list)
     daily_tasks: List[Dict[str, Any]] = field(default_factory=list)
 
+
+@dataclass
+class WeeklyExecution:
+    target_amount: float = 0.0
+    scheduled_revenue: float = 0.0
+    outstanding_estimate_value: float = 0.0
+    pending_invoice_value: float = 0.0
+    earning_jobs: List[str] = field(default_factory=list)
+    estimates_to_write: List[str] = field(default_factory=list)
+    invoices_to_send: List[str] = field(default_factory=list)
+    revenue_gap: float = 0.0
+    pipeline_coverage_ratio: float = 0.0
+    primary_mode: str = "not_set"
+    priority_tasks: List[str] = field(default_factory=list)
+
+
+# ---------- general parsing / formatting ----------
 
 def parse_iso(ts: str) -> datetime:
     return datetime.fromisoformat(ts)
@@ -65,279 +99,117 @@ def today_iso() -> str:
 
 
 def today_label() -> str:
-    # Linux/Railway supports %-d; Windows fallback is for local dev.
-    return datetime.now().strftime("%A, %B %-d") if os.name != "nt" else datetime.now().strftime("%A, %B %#d")
+    fmt = "%A, %B %-d" if os.name != "nt" else "%A, %B %#d"
+    return datetime.now().strftime(fmt)
+
+
+def money_to_float(raw: str) -> float:
+    cleaned = re.sub(r"[^0-9.\-]", "", raw or "")
+    if not cleaned or cleaned in {"-", "."}:
+        return 0.0
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0.0
 
 
 def normalize_task(task: str) -> str:
-    return re.sub(r"\s+", " ", task.strip().lower())
+    return re.sub(r"\s+", " ", str(task).strip().lower())
 
 
-def day_to_iso(day_name: str, week_start: str = None) -> str:
-    today = datetime.now().date()
-    target_index = DAY_NAMES.index(day_name.lower())
-    today_index = today.weekday()
-
-    days_ahead = (target_index - today_index) % 7
-
-    return (today + timedelta(days=days_ahead)).isoformat()
-
-
-def parse_schedule_block(text: str, week_start: str) -> Dict[str, List[str]]:
-    result: Dict[str, List[str]] = {}
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-
-    for line in lines:
-        if ":" not in line:
-            continue
-
-        day_part, task_part = line.split(":", 1)
-        day_name = day_part.strip().lower()
-
-        if day_name not in DAY_NAMES:
-            continue
-
-        tasks = [t.strip() for t in task_part.split(",") if t.strip()]
-        iso_day = day_to_iso(day_name)
-        result[iso_day] = tasks
-
-    return result
-
-
-def merge_days(existing: Dict[str, List[str]], incoming: Dict[str, List[str]]) -> Dict[str, List[str]]:
-    merged = {k: list(v) for k, v in existing.items()}
-
-    for day, new_tasks in incoming.items():
-        current = merged.get(day, [])
-        seen = {normalize_task(task) for task in current}
-
-        for task in new_tasks:
-            norm = normalize_task(task)
-            if norm not in seen:
-                current.append(task.strip())
-                seen.add(norm)
-
-        merged[day] = current
-
-    return merged
-
-
-def modify_days(existing: Dict[str, List[str]], incoming: Dict[str, List[str]]) -> Dict[str, List[str]]:
-    updated = {k: list(v) for k, v in existing.items()}
-
-    for day, tasks in incoming.items():
-        updated[day] = tasks
-
-    return updated
-
-
-def replace_days(_: Dict[str, List[str]], incoming: Dict[str, List[str]]) -> Dict[str, List[str]]:
-    return {k: list(v) for k, v in incoming.items()}
-
-
-def normalize_daily_items(raw_items: List[Any]) -> List[Dict[str, Any]]:
-    normalized = []
-
-    for item in raw_items:
-        if isinstance(item, dict):
-            text = str(item.get("text", "")).strip()
-            done = bool(item.get("done", False))
-        else:
-            text = str(item).strip()
-            done = False
-
-        if text:
-            normalized.append({"text": text, "done": done})
-
-    return normalized
-
-def load_daily_tasks(person: str, date_iso: str) -> List[Dict[str, Any]]:
-    key_map = {
-        "Heaven": "heaven",
-        "Daniel": "daniel",
-        "Handley Man": "handley_man"
-    }
-
-    calendar_key = key_map.get(person, "heaven")
-
-    response = (
-        supabase.table("daily_tasks")
-        .select("*")
-        .eq("calendar_key", calendar_key)
-        .eq("date", date_iso)
-        .order("created_at")
-        .execute()
-    )
-
-    rows = response.data or []
-
-    return [
-        {
-            "text": row["task"],
-            "done": row["completed"]
-        }
-        for row in rows
-    ]
-
-
-def replace_daily_tasks(person: str, date_iso: str, tasks: List[Dict[str, Any]]):
-    key_map = {
-        "Heaven": "heaven",
-        "Daniel": "daniel",
-        "Handley Man": "handley_man"
-    }
-
-    calendar_key = key_map.get(person, "heaven")
-
-    # delete old tasks
-    (
-        supabase.table("daily_tasks")
-        .delete()
-        .eq("calendar_key", calendar_key)
-        .eq("date", date_iso)
-        .execute()
-    )
-
-    # insert fresh tasks
-    inserts = []
-
-    for task in tasks:
-        inserts.append({
-            "user_id": calendar_key,
-            "calendar_key": calendar_key,
-            "date": date_iso,
-            "task": task["text"],
-            "completed": task.get("done", False)
-        })
-
-    if inserts:
-        supabase.table("daily_tasks").insert(inserts).execute()
-
-def save_weekly_plan(
-    user_id: str,
-    channel_id: str,
-    week_of: str,
-    weekly_goal: float,
-    jobs: List[str],
-    pending_estimates: List[str],
-    invoices_to_send: List[str]
-):
-    (
-        supabase.table("metiche_weekly_plans")
-        .upsert({
-            "user_id": user_id,
-            "channel_id": channel_id,
-            "week_of": week_of,
-            "weekly_goal": weekly_goal,
-            "jobs": jobs,
-            "pending_estimates": pending_estimates,
-            "invoices_to_send": invoices_to_send,
-        })
-        .execute()
-    )
-
-
-def load_weekly_plan(user_id: str, week_of: str):
-    response = (
-        supabase.table("metiche_weekly_plans")
-        .select("*")
-        .eq("user_id", user_id)
-        .eq("week_of", week_of)
-        .limit(1)
-        .execute()
-    )
-
-    rows = response.data or []
-
-    return rows[0] if rows else None
-    
-def parse_task_list(text: str) -> List[Dict[str, Any]]:
+def parse_named_list(text: str) -> List[str]:
     cleaned = text.strip()
-
-    if not cleaned:
+    if not cleaned or cleaned.lower() in {"none", "no", "n/a", "na"}:
         return []
-
     if "\n" in cleaned:
         parts = [line.strip("-• 1234567890.").strip() for line in cleaned.splitlines()]
     else:
         parts = [part.strip() for part in cleaned.split(",")]
-
-    return [{"text": part, "done": False} for part in parts if part]
-
-
-def format_person_schedule(person: str, person_schedule: Dict[str, List[Any]]) -> str:
-    if not person_schedule:
-        return f"{person}: (blank)"
-
-    lines = [f"{person}:"]
-
-    for iso_day in sorted(person_schedule.keys()):
-        day_label_str = datetime.fromisoformat(iso_day).strftime("%A")
-        raw_tasks = person_schedule[iso_day] or []
-        display_tasks = []
-
-        for task in raw_tasks:
-            if isinstance(task, dict):
-                mark = "✅" if task.get("done") else "⬜"
-                display_tasks.append(f"{mark} {task.get('text', '')}")
-            else:
-                display_tasks.append(str(task))
-
-        tasks = ", ".join(display_tasks) if display_tasks else "(blank)"
-        lines.append(f"- {day_label_str} ({iso_day}): {tasks}")
-
-    return "\n".join(lines)
+    return [part for part in parts if part and part.lower() != "none"]
 
 
-def format_daily_tasks(tasks: List[Dict[str, Any]], person: str, date_label_str: str) -> str:
-    if not tasks:
-        return "No tasks listed for today yet."
-
-    lines = [f"📋 {person} — {date_label_str}"]
-
-    for idx, task in enumerate(tasks, start=1):
-        mark = "✅" if task.get("done") else "⬜"
-        lines.append(f"{mark} {idx}. {task.get('text', '')}")
-
-    return "\n".join(lines)
+def parse_task_list(text: str) -> List[Dict[str, Any]]:
+    return [{"text": item, "done": False} for item in parse_named_list(text)]
 
 
-def find_best_task_match(tasks: List[Dict[str, Any]], text: str) -> Optional[int]:
-    incoming = normalize_task(text)
+def day_to_iso(day_name: str, week_start: Optional[str] = None) -> str:
+    base = date.fromisoformat(week_start) if week_start else datetime.now().date()
+    target_index = DAY_NAMES.index(day_name.lower())
+    monday = base - timedelta(days=base.weekday())
+    return (monday + timedelta(days=target_index)).isoformat()
 
-    if not incoming:
-        return None
 
-    for idx, task in enumerate(tasks):
-        if task.get("done"):
+def parse_schedule_block(text: str, week_start: str) -> Dict[str, List[Any]]:
+    result: Dict[str, List[Any]] = {}
+    for line in [line.strip() for line in text.splitlines() if line.strip()]:
+        if ":" not in line:
             continue
-
-        task_text = normalize_task(task.get("text", ""))
-
-        if task_text and (task_text in incoming or incoming in task_text):
-            return idx
-
-    incoming_words = {w for w in re.findall(r"[a-zA-Z0-9]+", incoming) if len(w) > 2}
-
-    best_idx = None
-    best_score = 0
-
-    for idx, task in enumerate(tasks):
-        if task.get("done"):
+        day_part, task_part = line.split(":", 1)
+        day_name = day_part.strip().lower()
+        if day_name not in DAY_NAMES:
             continue
+        tasks = [{"text": t.strip(), "done": False} for t in task_part.split(",") if t.strip()]
+        result[day_to_iso(day_name, week_start)] = tasks
+    return result
 
-        task_words = {
-            w for w in re.findall(r"[a-zA-Z0-9]+", normalize_task(task.get("text", "")))
-            if len(w) > 2
-        }
 
-        score = len(incoming_words & task_words)
+def ensure_calendar(raw: Any = None) -> Dict[str, Dict[str, List[Any]]]:
+    calendar = json_safe_load(raw, DEFAULT_CALENDAR.copy())
+    for person in VALID_PEOPLE:
+        calendar.setdefault(person, {})
+    return calendar
 
-        if score > best_score:
-            best_score = score
-            best_idx = idx
 
-    return best_idx if best_score >= 2 else None
+def json_safe_load(raw: Any, fallback: Any):
+    if raw is None:
+        return fallback
+    if isinstance(raw, (dict, list)):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return fallback
+    return fallback
+
+
+def normalize_daily_items(raw_items: List[Any]) -> List[Dict[str, Any]]:
+    normalized = []
+    for item in raw_items or []:
+        if isinstance(item, dict):
+            text = str(item.get("text") or item.get("task") or "").strip()
+            done = bool(item.get("done") or item.get("completed") or False)
+        else:
+            text = str(item).strip()
+            done = False
+        if text:
+            normalized.append({"text": text, "done": done})
+    return normalized
+
+
+def merge_days(existing: Dict[str, List[Any]], incoming: Dict[str, List[Any]]) -> Dict[str, List[Any]]:
+    merged = {k: normalize_daily_items(v) for k, v in (existing or {}).items()}
+    for day, new_tasks in incoming.items():
+        current = merged.get(day, [])
+        seen = {normalize_task(task.get("text", "")) for task in current}
+        for task in normalize_daily_items(new_tasks):
+            norm = normalize_task(task.get("text", ""))
+            if norm and norm not in seen:
+                current.append(task)
+                seen.add(norm)
+        merged[day] = current
+    return merged
+
+
+def modify_days(existing: Dict[str, List[Any]], incoming: Dict[str, List[Any]]) -> Dict[str, List[Any]]:
+    updated = {k: normalize_daily_items(v) for k, v in (existing or {}).items()}
+    for day, tasks in incoming.items():
+        updated[day] = normalize_daily_items(tasks)
+    return updated
+
+
+def replace_days(_: Dict[str, List[Any]], incoming: Dict[str, List[Any]]) -> Dict[str, List[Any]]:
+    return {k: normalize_daily_items(v) for k, v in incoming.items()}
 
 
 def total_minutes(blocks: List[Dict[str, Any]]) -> int:
@@ -347,7 +219,6 @@ def total_minutes(blocks: List[Dict[str, Any]]) -> int:
 def minutes_to_label(minutes: int) -> str:
     hours = minutes // 60
     mins = minutes % 60
-
     if hours and mins:
         return f"{hours}h {mins}m"
     if hours:
@@ -355,21 +226,254 @@ def minutes_to_label(minutes: int) -> str:
     return f"{mins}m"
 
 
+# ---------- Supabase daily task persistence ----------
+
+def require_supabase() -> bool:
+    return supabase is not None
+
+
+def load_daily_tasks(person: str, date_iso_value: str) -> List[Dict[str, Any]]:
+    if not require_supabase():
+        return []
+    calendar_key = PERSON_TO_CALENDAR_KEY.get(person, "heaven")
+    response = (
+        supabase.table("daily_tasks")
+        .select("*")
+        .eq("calendar_key", calendar_key)
+        .eq("date", date_iso_value)
+        .order("created_at")
+        .execute()
+    )
+    return [
+        {"text": row.get("task", ""), "done": bool(row.get("completed", False))}
+        for row in (response.data or [])
+        if row.get("task")
+    ]
+
+
+def replace_daily_tasks(person: str, date_iso_value: str, tasks: List[Dict[str, Any]]):
+    if not require_supabase():
+        return
+    calendar_key = PERSON_TO_CALENDAR_KEY.get(person, "heaven")
+    (
+        supabase.table("daily_tasks")
+        .delete()
+        .eq("calendar_key", calendar_key)
+        .eq("date", date_iso_value)
+        .execute()
+    )
+    inserts = [
+        {
+            "user_id": calendar_key,
+            "calendar_key": calendar_key,
+            "date": date_iso_value,
+            "task": task["text"],
+            "completed": bool(task.get("done", False)),
+        }
+        for task in normalize_daily_items(tasks)
+    ]
+    if inserts:
+        supabase.table("daily_tasks").insert(inserts).execute()
+
+
+# ---------- Weekly execution logic ----------
+
+def build_weekly_execution(
+    target_amount: float,
+    scheduled_revenue: float,
+    outstanding_estimate_value: float,
+    pending_invoice_value: float,
+    earning_jobs: List[str],
+    estimates_to_write: List[str],
+    invoices_to_send: List[str],
+) -> WeeklyExecution:
+    gap = max(0.0, target_amount - scheduled_revenue)
+    ratio = round(outstanding_estimate_value / gap, 2) if gap else 999.0
+
+    priority_tasks: List[str] = []
+    if invoices_to_send or pending_invoice_value > 0:
+        priority_tasks.append("Send/collect pending invoices")
+    if estimates_to_write or outstanding_estimate_value > 0:
+        priority_tasks.append("Write and follow up estimates")
+    if gap > 0 and outstanding_estimate_value < gap:
+        priority_tasks.append("Find or schedule additional earning work")
+    if earning_jobs:
+        priority_tasks.append("Protect scheduled earning jobs")
+    if not priority_tasks:
+        priority_tasks.append("Review numbers and set the work week")
+
+    if gap <= 0:
+        primary_mode = "protect_scheduled_work"
+    elif pending_invoice_value >= gap:
+        primary_mode = "collections_first"
+    elif outstanding_estimate_value >= gap:
+        primary_mode = "estimate_conversion_first"
+    elif scheduled_revenue > 0:
+        primary_mode = "mixed_pipeline_gap"
+    else:
+        primary_mode = "sales_and_scheduling_gap"
+
+    return WeeklyExecution(
+        target_amount=target_amount,
+        scheduled_revenue=scheduled_revenue,
+        outstanding_estimate_value=outstanding_estimate_value,
+        pending_invoice_value=pending_invoice_value,
+        earning_jobs=earning_jobs,
+        estimates_to_write=estimates_to_write,
+        invoices_to_send=invoices_to_send,
+        revenue_gap=gap,
+        pipeline_coverage_ratio=ratio,
+        primary_mode=primary_mode,
+        priority_tasks=priority_tasks,
+    )
+
+
+def weekly_execution_to_json(execution: WeeklyExecution) -> Dict[str, Any]:
+    return {
+        "target_amount": execution.target_amount,
+        "scheduled_revenue": execution.scheduled_revenue,
+        "outstanding_estimate_value": execution.outstanding_estimate_value,
+        "pending_invoice_value": execution.pending_invoice_value,
+        "earning_jobs": execution.earning_jobs,
+        "estimates_to_write": execution.estimates_to_write,
+        "invoices_to_send": execution.invoices_to_send,
+        "revenue_gap": execution.revenue_gap,
+        "pipeline_coverage_ratio": execution.pipeline_coverage_ratio,
+        "primary_mode": execution.primary_mode,
+        "priority_tasks": execution.priority_tasks,
+    }
+
+
+def weekly_execution_from_plan(plan: Dict[str, Any]) -> WeeklyExecution:
+    task_summary = json_safe_load(plan.get("task_summary_json"), {})
+    raw = task_summary.get("weekly_execution", {}) if isinstance(task_summary, dict) else {}
+
+    return WeeklyExecution(
+        target_amount=float(raw.get("target_amount") or plan.get("weekly_goal") or 0.0),
+        scheduled_revenue=float(raw.get("scheduled_revenue") or 0.0),
+        outstanding_estimate_value=float(raw.get("outstanding_estimate_value") or 0.0),
+        pending_invoice_value=float(raw.get("pending_invoice_value") or 0.0),
+        earning_jobs=raw.get("earning_jobs") or json_safe_load(plan.get("jobs_json"), []),
+        estimates_to_write=raw.get("estimates_to_write") or json_safe_load(plan.get("pending_estimates_json"), []),
+        invoices_to_send=raw.get("invoices_to_send") or json_safe_load(plan.get("invoices_to_send_json"), []),
+        revenue_gap=float(raw.get("revenue_gap") or 0.0),
+        pipeline_coverage_ratio=float(raw.get("pipeline_coverage_ratio") or 0.0),
+        primary_mode=str(raw.get("primary_mode") or "not_set"),
+        priority_tasks=raw.get("priority_tasks") or [],
+    )
+
+
+def build_auto_schedule(week: str, execution: WeeklyExecution) -> Dict[str, List[Dict[str, Any]]]:
+    """Create practical execution blocks. This does not overwrite personal calendars unless merged."""
+    monday = date.fromisoformat(week)
+    schedule: Dict[str, List[Dict[str, Any]]] = {}
+
+    def add(day_offset: int, text: str):
+        iso = (monday + timedelta(days=day_offset)).isoformat()
+        schedule.setdefault(iso, []).append({"text": text, "done": False})
+
+    # Monday: turn balance-sheet numbers into action.
+    add(0, f"Balance sheet + weekly target review (${execution.target_amount:,.0f} target)")
+    add(0, "Build week around earning jobs, estimates, invoices, and family constraints")
+
+    if execution.invoices_to_send or execution.pending_invoice_value > 0:
+        add(0, f"Send/collect invoices (${execution.pending_invoice_value:,.0f} pending)")
+        add(2, "Second invoice follow-up pass")
+
+    if execution.estimates_to_write or execution.outstanding_estimate_value > 0:
+        add(1, f"Estimate writing block (${execution.outstanding_estimate_value:,.0f} in estimate pipeline)")
+        add(3, "Estimate follow-up / conversion block")
+
+    if execution.revenue_gap > 0:
+        add(1, f"Close revenue gap: ${execution.revenue_gap:,.0f}")
+
+    for job in execution.earning_jobs:
+        add(0, f"Confirm earning job: {job}")
+
+    add(4, "Friday closeout: invoices sent, estimates followed up, receipts/materials captured")
+    return schedule
+
+
+def format_money(value: float) -> str:
+    return f"${value:,.0f}"
+
+
+def format_execution_summary(execution: WeeklyExecution) -> str:
+    lines = [
+        "📌 Weekly execution readout",
+        f"Target: {format_money(execution.target_amount)}",
+        f"Scheduled revenue: {format_money(execution.scheduled_revenue)}",
+        f"Revenue gap: {format_money(execution.revenue_gap)}",
+        f"Outstanding estimates: {format_money(execution.outstanding_estimate_value)}",
+        f"Pending invoices: {format_money(execution.pending_invoice_value)}",
+        f"Mode: {execution.primary_mode}",
+        "Priorities:",
+    ]
+    lines.extend([f"- {task}" for task in execution.priority_tasks])
+    return "\n".join(lines)
+
+
+# ---------- display helpers ----------
+
+def format_person_schedule(person: str, person_schedule: Dict[str, List[Any]]) -> str:
+    if not person_schedule:
+        return f"{person}: (blank)"
+    lines = [f"{person}:"]
+    for iso_day in sorted(person_schedule.keys()):
+        day_label_str = datetime.fromisoformat(iso_day).strftime("%A")
+        tasks = normalize_daily_items(person_schedule.get(iso_day, []))
+        display = [f"{'✅' if t.get('done') else '⬜'} {t.get('text', '')}" for t in tasks]
+        lines.append(f"- {day_label_str} ({iso_day}): " + (", ".join(display) if display else "(blank)"))
+    return "\n".join(lines)
+
+
+def format_daily_tasks(tasks: List[Dict[str, Any]], person: str, date_label_str: str) -> str:
+    tasks = normalize_daily_items(tasks)
+    if not tasks:
+        return "No tasks listed for today yet."
+    lines = [f"📋 {person} — {date_label_str}"]
+    for idx, task in enumerate(tasks, start=1):
+        mark = "✅" if task.get("done") else "⬜"
+        lines.append(f"{mark} {idx}. {task.get('text', '')}")
+    return "\n".join(lines)
+
+
+def find_best_task_match(tasks: List[Dict[str, Any]], text: str) -> Optional[int]:
+    incoming = normalize_task(text)
+    if not incoming:
+        return None
+
+    for idx, task in enumerate(tasks):
+        if task.get("done"):
+            continue
+        task_text = normalize_task(task.get("text", ""))
+        if task_text and (task_text in incoming or incoming in task_text):
+            return idx
+
+    incoming_words = {w for w in re.findall(r"[a-zA-Z0-9]+", incoming) if len(w) > 2}
+    best_idx = None
+    best_score = 0
+    for idx, task in enumerate(tasks):
+        if task.get("done"):
+            continue
+        task_words = {w for w in re.findall(r"[a-zA-Z0-9]+", normalize_task(task.get("text", ""))) if len(w) > 2}
+        score = len(incoming_words & task_words)
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+    return best_idx if best_score >= 2 else None
+
+
+# ---------- manager ----------
+
 class MeticheManager:
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.channel_id: Optional[int] = None
         self.bodydouble_on = False
         self.next_checkin: Optional[datetime] = None
         self.checkin_interval_hours = 2
         self.data_service_url = os.getenv("DATA_SERVICE_URL", "").rstrip("/")
-
-        # Backward compatibility with older cholobots.py on_ready code.
-        self.schedule: List[Any] = []
-        self.loop_task = None
-
-    def generate_daily_schedule(self):
-        self.schedule = []
 
     def turn_on_bodydouble(self, channel_id: int):
         self.channel_id = channel_id
@@ -385,70 +489,48 @@ class MeticheManager:
             self.next_checkin = datetime.now() + timedelta(hours=self.checkin_interval_hours)
 
     def build_bodydouble_prompt(self) -> str:
-        return (
-            "¿Qué onda?\n"
-            "What have you been doing since the last time marker?"
-        )
+        return "¿Qué onda?\nWhat have you been doing since the last time marker?"
 
     async def start_loop(self):
         while True:
             await asyncio.sleep(30)
-
             if not self.channel_id or not self.bodydouble_on or not self.next_checkin:
                 continue
-
             if datetime.now() >= self.next_checkin:
                 channel = self.bot.get_channel(self.channel_id)
-
                 if channel:
                     await channel.send(self.build_bodydouble_prompt())
-
                 self.next_checkin = datetime.now() + timedelta(hours=self.checkin_interval_hours)
 
     def post_json(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not self.data_service_url:
             return {"ok": False, "reason": "DATA_SERVICE_URL not set"}
-
         url = f"{self.data_service_url}/{endpoint.lstrip('/')}"
-        data = json.dumps(payload).encode("utf-8")
-
         req = request.Request(
             url,
-            data=data,
+            data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
-            method="POST"
+            method="POST",
         )
-
         try:
             with request.urlopen(req, timeout=10) as resp:
-                body = resp.read().decode("utf-8")
-                return {"ok": True, "status": resp.status, "body": body}
-
+                return {"ok": True, "status": resp.status, "body": resp.read().decode("utf-8")}
         except error.HTTPError as e:
             return {"ok": False, "reason": f"HTTP {e.code}"}
-
         except Exception as e:
             return {"ok": False, "reason": str(e)}
 
-    def push_calendar_json(self, week_of: str, person: str, person_schedule: Dict[str, List[Any]]) -> Dict[str, Any]:
-        key_map = {
-            "Heaven": "heaven",
-            "Daniel": "daniel",
-            "Handley Man": "handley_man"
-        }
-
-        calendar_key = key_map.get(person)
-
-        payload = {
-            "calendarKey": calendar_key,
-            "schedule": person_schedule
-        }
-
-        return self.post_json("calendar", payload)
+    def push_calendar_json(self, person: str, person_schedule: Dict[str, List[Any]]) -> Dict[str, Any]:
+        return self.post_json("calendar", {
+            "calendarKey": PERSON_TO_CALENDAR_KEY.get(person),
+            "schedule": person_schedule,
+        })
 
     def push_task_summary_json(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self.post_json("tasks", payload)
 
+
+# ---------- persistence wrappers ----------
 
 def get_metiche():
     return metiche_instance
@@ -467,72 +549,102 @@ def build_raw_time_payload(session: TimeSession) -> Dict[str, Any]:
     }
 
 
-def save_raw_time_to_weekly(ctx: commands.Context, session: TimeSession):
-    week = week_of_monday(datetime.now())
-    plan = fetch_latest_metiche_weekly(week) or {}
+def build_task_summary(weekly_execution: Optional[WeeklyExecution] = None, raw_time: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {}
+    if weekly_execution is not None:
+        payload["weekly_execution"] = weekly_execution_to_json(weekly_execution)
+    if raw_time is not None:
+        payload["raw_time"] = raw_time
+    return payload
 
-    weekly_goal = float(plan.get("weekly_goal", 0.0) or 0.0)
-    jobs = plan.get("jobs", []) or []
-    pending_estimates = plan.get("pending_estimates", []) or []
-    invoices_to_send = plan.get("invoices_to_send", []) or []
-    calendar_json = plan.get("calendar_json", {}) or {"Heaven": {}, "Daniel": {}, "Handley Man": {}}
-    wants_bodydouble = bool(plan.get("wants_bodydouble", True))
-    quarterly_goals = plan.get("quarterly_goals", []) or []
-    yearly_goals = plan.get("yearly_goals", []) or []
-    task_summary = build_raw_time_payload(session)
 
+def save_weekly_snapshot(
+    ctx: commands.Context,
+    week: str,
+    execution: WeeklyExecution,
+    calendar_json: Dict[str, Any],
+    wants_bodydouble: bool = False,
+    quarterly_goals: Optional[List[str]] = None,
+    yearly_goals: Optional[List[str]] = None,
+    raw_time: Optional[Dict[str, Any]] = None,
+):
     insert_metiche_weekly({
         "ts": now_iso(),
         "discord_user": str(ctx.author),
         "channel_id": str(ctx.channel.id),
         "week_of": week,
-        "weekly_goal": weekly_goal,
-        "jobs_json": json.dumps(jobs, ensure_ascii=False),
-        "pending_estimates_json": json.dumps(pending_estimates, ensure_ascii=False),
-        "invoices_to_send_json": json.dumps(invoices_to_send, ensure_ascii=False),
+        "weekly_goal": execution.target_amount,
+        "jobs_json": json.dumps(execution.earning_jobs, ensure_ascii=False),
+        "pending_estimates_json": json.dumps(execution.estimates_to_write, ensure_ascii=False),
+        "invoices_to_send_json": json.dumps(execution.invoices_to_send, ensure_ascii=False),
         "calendar_json": json.dumps(calendar_json, ensure_ascii=False),
-        "task_summary_json": json.dumps(task_summary, ensure_ascii=False),
+        "task_summary_json": json.dumps(build_task_summary(execution, raw_time), ensure_ascii=False),
         "wants_bodydouble": wants_bodydouble,
-        "quarterly_goals_json": json.dumps(quarterly_goals, ensure_ascii=False),
-        "yearly_goals_json": json.dumps(yearly_goals, ensure_ascii=False),
+        "quarterly_goals_json": json.dumps(quarterly_goals or [], ensure_ascii=False),
+        "yearly_goals_json": json.dumps(yearly_goals or [], ensure_ascii=False),
     })
 
 
-def register_metiche(bot):
+def current_weekly_context(week: str) -> Tuple[Dict[str, Any], WeeklyExecution, Dict[str, Any], List[str], List[str]]:
+    plan = fetch_latest_metiche_weekly(week) or {}
+    execution = weekly_execution_from_plan(plan)
+    calendar_json = ensure_calendar(plan.get("calendar_json"))
+    quarterly_goals = json_safe_load(plan.get("quarterly_goals_json") or plan.get("quarterly_goals"), [])
+    yearly_goals = json_safe_load(plan.get("yearly_goals_json") or plan.get("yearly_goals"), [])
+    return plan, execution, calendar_json, quarterly_goals, yearly_goals
+
+
+# ---------- registration / commands ----------
+
+def register_metiche(bot: commands.Bot):
     global metiche_instance
     metiche_instance = MeticheManager(bot)
+
+    async def push_daily_tasks_to_calendar(ctx: commands.Context, session: TimeSession):
+        metiche = get_metiche()
+        if metiche is None or session.person not in VALID_PEOPLE:
+            return
+
+        week = week_of_monday(datetime.now())
+        _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
+        person_schedule = calendar_json.get(session.person, {})
+        person_schedule[session.date_iso] = normalize_daily_items(session.daily_tasks)
+        calendar_json[session.person] = person_schedule
+
+        replace_daily_tasks(session.person, session.date_iso, session.daily_tasks)
+        save_weekly_snapshot(
+            ctx, week, execution, calendar_json,
+            wants_bodydouble=True,
+            quarterly_goals=quarterly_goals,
+            yearly_goals=yearly_goals,
+            raw_time=build_raw_time_payload(session),
+        )
+        metiche.push_calendar_json(session.person, person_schedule)
 
     async def log_raw_time_block(ctx: commands.Context, activity: str, source: str = "message") -> Optional[Dict[str, Any]]:
         metiche = get_metiche()
         session = active_time_sessions.get(ctx.channel.id)
-
         if metiche is None:
             await ctx.send("Metiche isn’t initialized yet.")
             return None
-
         if not session:
-            # If the user is using bodydouble without mtoday, start a plain raw session.
             session = TimeSession(
                 channel_id=ctx.channel.id,
                 person="Unassigned",
                 date_iso=today_iso(),
                 date_label=today_label(),
                 last_timestamp=now_iso(),
-                blocks=[],
-                daily_tasks=[],
             )
             active_time_sessions[ctx.channel.id] = session
             await ctx.send("Started raw time accounting. Tell me what you were doing at the next time marker.")
             return None
 
-        now = datetime.now()
-        start = parse_iso(session.last_timestamp)
-        duration = max(0, int((now - start).total_seconds() // 60))
         activity_text = activity.strip()
-
         if not activity_text:
             return None
 
+        now = datetime.now()
+        duration = max(0, int((now - parse_iso(session.last_timestamp)).total_seconds() // 60))
         block = {
             "date": session.date_iso,
             "start": session.last_timestamp,
@@ -542,11 +654,9 @@ def register_metiche(bot):
             "activity": activity_text,
             "source": source,
         }
-
         session.blocks.append(block)
         session.last_timestamp = now.isoformat()
 
-        # Backward-compatible DB insert.
         insert_metiche_checkin({
             "ts": now_iso(),
             "discord_user": str(ctx.author),
@@ -557,301 +667,225 @@ def register_metiche(bot):
             "energy": None,
         })
 
-        save_raw_time_to_weekly(ctx, session)
-        push_result = metiche.push_task_summary_json(build_raw_time_payload(session))
-        metiche.bump_bodydouble_timer()
-
         match_idx = find_best_task_match(session.daily_tasks, activity_text)
-
         if match_idx is not None:
             session.daily_tasks[match_idx]["done"] = True
             await push_daily_tasks_to_calendar(ctx, session)
 
-        msg = (
-            f"⏱️ Logged {minutes_to_label(duration)} — {activity_text}\n"
-            f"Total accounted today: {build_raw_time_payload(session)['total_label']}"
-        )
+        push_result = metiche.push_task_summary_json(build_raw_time_payload(session))
+        metiche.bump_bodydouble_timer()
 
+        msg = f"⏱️ Logged {minutes_to_label(duration)} — {activity_text}\nTotal accounted today: {build_raw_time_payload(session)['total_label']}"
         if match_idx is not None:
             msg += f"\n✅ Checked off: {session.daily_tasks[match_idx]['text']}"
-
         if not push_result.get("ok"):
-            msg += f"\nSaved locally, but dashboard push failed: {push_result.get('reason')}"
-
+            msg += f"\nSaved, but dashboard push failed: {push_result.get('reason')}"
         await ctx.send(msg)
         return block
 
-    async def push_daily_tasks_to_calendar(ctx: commands.Context, session: TimeSession):
-        metiche = get_metiche()
-
-        if metiche is None:
-            return
-
-        week = week_of_monday(datetime.now())
-        plan = fetch_latest_metiche_weekly(week) or {}
-        calendar_json = plan.get("calendar_json", {}) or {"Heaven": {}, "Daniel": {}, "Handley Man": {}}
-
-        person_schedule = calendar_json.get(session.person, {}) or {}
-
-        if session.person in VALID_PEOPLE:
-            person_schedule[session.date_iso] = session.daily_tasks
-            replace_daily_tasks(
-                session.person,
-                session.date_iso,
-                session.daily_tasks
-            )
-            calendar_json[session.person] = person_schedule
-
-            weekly_goal = float(plan.get("weekly_goal", 0.0) or 0.0)
-            jobs = plan.get("jobs", []) or []
-            pending_estimates = plan.get("pending_estimates", []) or []
-            invoices_to_send = plan.get("invoices_to_send", []) or []
-            wants_bodydouble = bool(plan.get("wants_bodydouble", True))
-            quarterly_goals = plan.get("quarterly_goals", []) or []
-            yearly_goals = plan.get("yearly_goals", []) or []
-
-            insert_metiche_weekly({
-                "ts": now_iso(),
-                "discord_user": str(ctx.author),
-                "channel_id": str(ctx.channel.id),
-                "week_of": week,
-                "weekly_goal": weekly_goal,
-                "jobs_json": json.dumps(jobs, ensure_ascii=False),
-                "pending_estimates_json": json.dumps(pending_estimates, ensure_ascii=False),
-                "invoices_to_send_json": json.dumps(invoices_to_send, ensure_ascii=False),
-                "calendar_json": json.dumps(calendar_json, ensure_ascii=False),
-                "task_summary_json": json.dumps(build_raw_time_payload(session), ensure_ascii=False),
-                "wants_bodydouble": wants_bodydouble,
-                "quarterly_goals_json": json.dumps(quarterly_goals, ensure_ascii=False),
-                "yearly_goals_json": json.dumps(yearly_goals, ensure_ascii=False),
-            })
-
-            metiche.push_calendar_json(week, session.person, person_schedule)
-
     @bot.command(name="metichebot")
     async def metichebot_help(ctx):
-        msg = """
+        await ctx.send(
+            """
 🧠 METICHEBOT
 
-Metiche is for goals, schedules, body-doubling, and raw time accounting.
-
-ACTIVE FUNCTIONS
-
 Planning
-!mweekly
-Save weekly goal, jobs, pending estimates, and invoices
-
-!mschedule
-Build or update schedule for Heaven, Daniel, or Handley Man
-
-!mplan
-Show the current saved weekly plan
+!mweekly — enter target, scheduled revenue, jobs, estimates, and invoices; generates weekly execution mode + auto schedule
+!mplan — show the current weekly execution plan
+!mschedule — manually add/change/replace a person schedule
+!mgoals — save quarterly and yearly goals
 
 Daily Use
-!mtoday
-Start today's working list and raw time accounting session
+!mwakeup — Daniel morning boot checklist + chillhop link
+!mtoday — start today’s working list and raw time accounting
+!mcheckin <what you were doing> — manual raw time entry
+!mstopday — stop today’s time session
 
-!mstopday
-Stop today's active time session
-
-Bodydouble / Time Accounting
-!mbodydouble
-Ask “Qué onda?” every 2 hours if you have not actively used Metichebot
-
-!mquiet
-Turn off Que Onda pings
-
-!mcheckin <what you were doing>
-Manual raw time entry
-
-Strategy
-!mgoals
-Save quarterly and yearly goals
+Bodydouble
+!mbodydouble — Que onda every 2 hours
+!mquiet — turn off Que onda pings
 """
-        await ctx.send(msg)
+        )
+
+    @bot.command(name="mweekly")
+    async def mweekly(ctx: commands.Context):
+        active_time_sessions.pop(ctx.channel.id, None)
+
+        def check(m: discord.Message):
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
+
+        week = week_of_monday(datetime.now())
+        _, _, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
+
+        await ctx.send("Weekly target amount from the Monday balance sheet:")
+        target_amount = money_to_float((await bot.wait_for("message", check=check)).content)
+
+        await ctx.send("Estimated revenue already scheduled from earning jobs:")
+        scheduled_revenue = money_to_float((await bot.wait_for("message", check=check)).content)
+
+        await ctx.send("Earning jobs on the schedule? List names comma-separated, or `none`:")
+        earning_jobs = parse_named_list((await bot.wait_for("message", check=check)).content)
+
+        await ctx.send("Total value of current outstanding estimates:")
+        outstanding_estimate_value = money_to_float((await bot.wait_for("message", check=check)).content)
+
+        await ctx.send("Which estimates need to be written or followed up? List comma-separated, or `none`:")
+        estimates_to_write = parse_named_list((await bot.wait_for("message", check=check)).content)
+
+        await ctx.send("Total value of invoices that need to be sent/collected:")
+        pending_invoice_value = money_to_float((await bot.wait_for("message", check=check)).content)
+
+        await ctx.send("Which invoices need to be sent/collected? List comma-separated, or `none`:")
+        invoices_to_send = parse_named_list((await bot.wait_for("message", check=check)).content)
+
+        execution = build_weekly_execution(
+            target_amount=target_amount,
+            scheduled_revenue=scheduled_revenue,
+            outstanding_estimate_value=outstanding_estimate_value,
+            pending_invoice_value=pending_invoice_value,
+            earning_jobs=earning_jobs,
+            estimates_to_write=estimates_to_write,
+            invoices_to_send=invoices_to_send,
+        )
+
+        auto_schedule = build_auto_schedule(week, execution)
+        calendar_json["Handley Man"] = merge_days(calendar_json.get("Handley Man", {}), auto_schedule)
+
+        save_weekly_snapshot(
+            ctx, week, execution, calendar_json,
+            wants_bodydouble=False,
+            quarterly_goals=quarterly_goals,
+            yearly_goals=yearly_goals,
+        )
+
+        metiche = get_metiche()
+        push_result = metiche.push_calendar_json("Handley Man", calendar_json["Handley Man"]) if metiche else {"ok": False, "reason": "Metiche not initialized"}
+        status = "Pushed auto schedule to dashboard." if push_result.get("ok") else f"Saved, but dashboard push failed: {push_result.get('reason')}"
+
+        await ctx.send(format_execution_summary(execution) + f"\n\n{status}")
+
+    @bot.command(name="mplan")
+    async def mplan(ctx: commands.Context):
+        week = week_of_monday(datetime.now())
+        plan = fetch_latest_metiche_weekly(week) or {}
+        if not plan:
+            await ctx.send("No weekly plan saved yet. Run !mweekly first.")
+            return
+        execution = weekly_execution_from_plan(plan)
+        calendar_json = ensure_calendar(plan.get("calendar_json"))
+        lines = [format_execution_summary(execution), "", format_person_schedule("Handley Man", calendar_json.get("Handley Man", {}))]
+        await ctx.send("\n".join(lines))
+
+    @bot.command(name="mwakeup")
+    async def mwakeup(ctx: commands.Context):
+        week = week_of_monday(datetime.now())
+        _, execution, _, _, _ = current_weekly_context(week)
+        await ctx.send(
+            "🌅 Daniel morning boot sequence\n"
+            f"Audio runway: {DEFAULT_CHILLHOP_URL}\n\n"
+            "1. Shower + shave\n"
+            "2. Get dressed\n"
+            "3. Make sit-down breakfast\n"
+            "4. Kids pack snacks/lunch boxes from staged counter snacks\n"
+            "5. Confirm first job / first work block\n\n"
+            f"Weekly target: {format_money(execution.target_amount)}\n"
+            f"Scheduled revenue: {format_money(execution.scheduled_revenue)}\n"
+            f"Revenue gap: {format_money(execution.revenue_gap)}\n"
+            "Start with the shower. No algorithm hole."
+        )
 
     @bot.command(name="mschedule")
     async def mschedule(ctx: commands.Context):
-        # Prevent the daily listener from treating setup replies as task/time logs.
         active_time_sessions.pop(ctx.channel.id, None)
-
         metiche = get_metiche()
-
         if metiche is None:
             await ctx.send("Metiche isn’t initialized yet.")
             return
 
         def check(m: discord.Message):
-            return (m.author.id == ctx.author.id) and (m.channel.id == ctx.channel.id)
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
 
         week = week_of_monday(datetime.now())
-        current_plan = fetch_latest_metiche_weekly(week) or {}
-        calendar_json: Dict[str, Any] = current_plan.get("calendar_json", {}) or {}
+        _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
 
         await ctx.send("Who’s schedule are we working on?\n(Heaven / Daniel / Handley Man)")
-        who_msg = await bot.wait_for("message", check=check)
-
-        person_raw = who_msg.content.strip()
+        person_raw = (await bot.wait_for("message", check=check)).content.strip()
         person = next((p for p in VALID_PEOPLE if p.lower() == person_raw.lower()), None)
-
         if not person:
             await ctx.send("I need one of: Heaven / Daniel / Handley Man")
             return
 
         person_schedule = calendar_json.get(person, {})
-
         await ctx.send(
             format_person_schedule(person, person_schedule)
-            + "\n\nWhat do you want to do?\n\n"
-            "1. Add to schedule (keep everything, add new tasks)\n"
-            "2. Change specific days\n"
-            "3. Start over\n\n"
-            "Reply with 1, 2, or 3"
+            + "\n\nWhat do you want to do?\n1. Add to schedule\n2. Change specific days\n3. Start over\nReply with 1, 2, or 3"
         )
-
-        mode_msg = await bot.wait_for("message", check=check)
-        mode_raw = mode_msg.content.strip().lower()
-
+        mode_raw = (await bot.wait_for("message", check=check)).content.strip().lower()
         if mode_raw in {"cancel", "exit", "stop"}:
             await ctx.send("Okay. Exiting schedule flow.")
             return
-
-        if mode_raw == "1":
-            mode = "merge"
-        elif mode_raw == "2":
-            mode = "modify"
-        elif mode_raw == "3":
-            mode = "replace"
-        else:
-            await ctx.send("Reply with 1, 2, or 3 (or cancel).")
+        mode = {"1": "merge", "2": "modify", "3": "replace"}.get(mode_raw)
+        if not mode:
+            await ctx.send("Reply with 1, 2, or 3.")
             return
 
-        await ctx.send(
-            "What does the weekly schedule look like?\n\n"
-            "Use format:\n"
-            "Monday: task, task\n"
-            "Tuesday: task"
-        )
-
-        schedule_msg = await bot.wait_for("message", check=check)
-        incoming = parse_schedule_block(schedule_msg.content, week)
-
+        await ctx.send("Use format:\nMonday: task, task\nTuesday: task")
+        incoming = parse_schedule_block((await bot.wait_for("message", check=check)).content, week)
         if not incoming:
             await ctx.send("I couldn’t parse that. Use lines like `Monday: task, task`.")
             return
 
         if mode == "merge":
-            updated_person_schedule = merge_days(person_schedule, incoming)
+            updated = merge_days(person_schedule, incoming)
         elif mode == "modify":
-            updated_person_schedule = modify_days(person_schedule, incoming)
+            updated = modify_days(person_schedule, incoming)
         else:
-            updated_person_schedule = replace_days(person_schedule, incoming)
+            updated = replace_days(person_schedule, incoming)
 
-        calendar_json.setdefault("Heaven", {})
-        calendar_json.setdefault("Daniel", {})
-        calendar_json.setdefault("Handley Man", {})
-        calendar_json[person] = updated_person_schedule
-
-        weekly_goal = float(current_plan.get("weekly_goal", 0.0) or 0.0)
-        jobs = current_plan.get("jobs", []) or []
-        pending_estimates = current_plan.get("pending_estimates", []) or []
-        invoices_to_send = current_plan.get("invoices_to_send", []) or []
-        wants_bodydouble = bool(current_plan.get("wants_bodydouble", False))
-        quarterly_goals = current_plan.get("quarterly_goals", []) or []
-        yearly_goals = current_plan.get("yearly_goals", []) or []
-        task_summary = current_plan.get("task_summary_json") or {}
-
-        insert_metiche_weekly({
-            "ts": now_iso(),
-            "discord_user": str(ctx.author),
-            "channel_id": str(ctx.channel.id),
-            "week_of": week,
-            "weekly_goal": weekly_goal,
-            "jobs_json": json.dumps(jobs, ensure_ascii=False),
-            "pending_estimates_json": json.dumps(pending_estimates, ensure_ascii=False),
-            "invoices_to_send_json": json.dumps(invoices_to_send, ensure_ascii=False),
-            "calendar_json": json.dumps(calendar_json, ensure_ascii=False),
-            "task_summary_json": json.dumps(task_summary, ensure_ascii=False),
-            "wants_bodydouble": wants_bodydouble,
-            "quarterly_goals_json": json.dumps(quarterly_goals, ensure_ascii=False),
-            "yearly_goals_json": json.dumps(yearly_goals, ensure_ascii=False),
-        })
-
-        push_result = metiche.push_calendar_json(week, person, updated_person_schedule)
-
-        status_line = (
-            "Pushed to dashboard JSON."
-            if push_result.get("ok")
-            else f"Saved, but dashboard push failed: {push_result.get('reason')}"
-        )
-
-        await ctx.send(format_person_schedule(person, updated_person_schedule) + f"\n\n{status_line}")
+        calendar_json[person] = updated
+        save_weekly_snapshot(ctx, week, execution, calendar_json, quarterly_goals=quarterly_goals, yearly_goals=yearly_goals)
+        push_result = metiche.push_calendar_json(person, updated)
+        status = "Pushed to dashboard JSON." if push_result.get("ok") else f"Saved, but dashboard push failed: {push_result.get('reason')}"
+        await ctx.send(format_person_schedule(person, updated) + f"\n\n{status}")
 
     @bot.command(name="mtoday")
     async def mtoday(ctx: commands.Context):
         active_time_sessions.pop(ctx.channel.id, None)
-
         metiche = get_metiche()
-
         if metiche is None:
             await ctx.send("Metiche isn’t initialized yet.")
             return
 
         def check(m: discord.Message):
-            return (m.author.id == ctx.author.id) and (m.channel.id == ctx.channel.id)
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
 
         week = week_of_monday(datetime.now())
-        current_plan = fetch_latest_metiche_weekly(week) or {}
-        calendar_json: Dict[str, Any] = current_plan.get("calendar_json", {}) or {}
+        _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
 
-        await ctx.send(
-            f"Today is {today_label()}.\n\n"
-            "Who are we working as today?\n"
-            "(Heaven / Daniel / Handley Man)"
-        )
-
-        who_msg = await bot.wait_for("message", check=check)
-        person_raw = who_msg.content.strip()
+        await ctx.send(f"Today is {today_label()}.\nWho are we working as today?\n(Heaven / Daniel / Handley Man)")
+        person_raw = (await bot.wait_for("message", check=check)).content.strip()
         person = next((p for p in VALID_PEOPLE if p.lower() == person_raw.lower()), None)
-
         if not person:
             await ctx.send("I need one of: Heaven / Daniel / Handley Man")
             return
 
         date_key = today_iso()
-
         existing_today = load_daily_tasks(person, date_key)
-        
-        weekly_goal = float(current_plan.get("weekly_goal", 0.0) or 0.0)
-        quarterly_goals = current_plan.get("quarterly_goals", []) or []
-        yearly_goals = current_plan.get("yearly_goals", []) or []
-
-        goal_lines = [
-            f"📅 Today is {today_label()}",
-            f"💰 Weekly goal: ${weekly_goal:,.0f}" if weekly_goal else "💰 Weekly goal: not set",
-        ]
-
-        if quarterly_goals:
-            goal_lines.append("🎯 Quarterly goals: " + ", ".join(quarterly_goals))
-        if yearly_goals:
-            goal_lines.append("🧭 Yearly goals: " + ", ".join(yearly_goals))
+        if not existing_today:
+            existing_today = normalize_daily_items(calendar_json.get(person, {}).get(date_key, []))
 
         await ctx.send(
-            "\n".join(goal_lines)
-            + "\n\n"
+            f"📅 Today is {today_label()}\n"
+            f"💰 Weekly target: {format_money(execution.target_amount)}\n"
+            f"🧭 Mode: {execution.primary_mode}\n\n"
             + format_daily_tasks(existing_today, person, today_label())
-            + "\n\n"
-            "Any changes for today?\n"
-            "Reply with the new full list for today, or say `no changes`."
+            + "\n\nAny changes for today? Reply with the new full list, or say `no changes`."
         )
-
-        changes_msg = await bot.wait_for("message", check=check)
-        changes = changes_msg.content.strip()
-
+        changes = (await bot.wait_for("message", check=check)).content.strip()
         if changes.lower() not in {"no", "no changes", "same", "keep"}:
-            new_tasks = parse_task_list(changes)
-            if new_tasks:
-                existing_today = new_tasks
+            parsed = parse_task_list(changes)
+            if parsed:
+                existing_today = parsed
             else:
                 await ctx.send("I couldn’t read that as a list, so I kept the current list.")
 
@@ -861,238 +895,73 @@ Save quarterly and yearly goals
             date_iso=date_key,
             date_label=today_label(),
             last_timestamp=now_iso(),
-            blocks=[],
-            daily_tasks=existing_today,
+            daily_tasks=normalize_daily_items(existing_today),
         )
-
         active_time_sessions[ctx.channel.id] = session
-
-        replace_daily_tasks(person, date_key, existing_today)
-
-        jobs = current_plan.get("jobs", []) or []
-        pending_estimates = current_plan.get("pending_estimates", []) or []
-        invoices_to_send = current_plan.get("invoices_to_send", []) or []
-        wants_bodydouble = True
-
-        insert_metiche_weekly({
-            "ts": now_iso(),
-            "discord_user": str(ctx.author),
-            "channel_id": str(ctx.channel.id),
-            "week_of": week,
-            "weekly_goal": weekly_goal,
-            "jobs_json": json.dumps(jobs, ensure_ascii=False),
-            "pending_estimates_json": json.dumps(pending_estimates, ensure_ascii=False),
-            "invoices_to_send_json": json.dumps(invoices_to_send, ensure_ascii=False),
-            "calendar_json": json.dumps(calendar_json, ensure_ascii=False),
-            "task_summary_json": json.dumps(build_raw_time_payload(session), ensure_ascii=False),
-            "wants_bodydouble": wants_bodydouble,
-            "quarterly_goals_json": json.dumps(quarterly_goals, ensure_ascii=False),
-            "yearly_goals_json": json.dumps(yearly_goals, ensure_ascii=False),
-        })
-
-        save_weekly_plan(
-            user_id=str(ctx.author),
-            channel_id=str(ctx.channel.id),
-            week_of=week,
-            weekly_goal=weekly_goal,
-            jobs=jobs,
-            pending_estimates=pending_estimates,
-            invoices_to_send=invoices_to_send
+        calendar_json[person][date_key] = session.daily_tasks
+        replace_daily_tasks(person, date_key, session.daily_tasks)
+        save_weekly_snapshot(
+            ctx, week, execution, calendar_json,
+            wants_bodydouble=True,
+            quarterly_goals=quarterly_goals,
+            yearly_goals=yearly_goals,
+            raw_time=build_raw_time_payload(session),
         )
-        person_schedule = calendar_json.get(person, {})
-        person_schedule[date_key] = existing_today
-        metiche.push_calendar_json(week, person, person_schedule)
+        metiche.push_calendar_json(person, calendar_json[person])
         metiche.push_task_summary_json(build_raw_time_payload(session))
         metiche.turn_on_bodydouble(ctx.channel.id)
 
         await ctx.send(
             "Locked for today. Raw time accounting starts now.\n\n"
-            + format_daily_tasks(existing_today, person, today_label())
-            + "\n\n"
-            "When I ask `Qué onda?`, tell me what you have been doing since the last time marker.\n"
-            "You can also type an update anytime."
+            + format_daily_tasks(session.daily_tasks, person, today_label())
+            + "\n\nWhen I ask `Qué onda?`, tell me what you have been doing since the last time marker."
         )
 
     @bot.command(name="mstopday")
     async def mstopday(ctx: commands.Context):
         session = active_time_sessions.pop(ctx.channel.id, None)
         metiche = get_metiche()
-
         if metiche is not None:
             metiche.turn_off_bodydouble()
-
         if not session:
             await ctx.send("No active time session was running.")
             return
-
         payload = build_raw_time_payload(session)
-        await ctx.send(
-            f"Stopped today’s time session.\n"
-            f"Total accounted: {payload['total_label']}\n"
-            f"Blocks logged: {payload['blocks_logged']}"
-        )
+        await ctx.send(f"Stopped today’s time session.\nTotal accounted: {payload['total_label']}\nBlocks logged: {payload['blocks_logged']}")
 
-    @bot.command(name="mplan")
-    async def mplan(ctx: commands.Context):
-        week = week_of_monday(datetime.now())
-        user_id = str(ctx.author)
-    
-        weekly_plan = load_weekly_plan(user_id, week)
-    
-        if not weekly_plan:
-            await ctx.send("No weekly plan saved yet.")
-            return
-    
-        lines = [f"📌 Weekly plan ({week})"]
-    
-        weekly_goal = float(weekly_plan.get("weekly_goal", 0.0) or 0.0)
-        jobs = weekly_plan.get("jobs", []) or []
-        pending_estimates = weekly_plan.get("pending_estimates", []) or []
-        invoices_to_send = weekly_plan.get("invoices_to_send", []) or []
-    
-        lines.append(f"💰 Weekly goal: ${weekly_goal:,.0f}" if weekly_goal else "💰 Weekly goal: not set")
-    
-        lines.append("Jobs: " + (", ".join(jobs) if jobs else "none"))
-        lines.append("Pending estimates: " + (", ".join(pending_estimates) if pending_estimates else "none"))
-        lines.append("Invoices to send: " + (", ".join(invoices_to_send) if invoices_to_send else "none"))
-
-        await ctx.send("\n".join(lines))
-    
     @bot.command(name="mbodydouble")
     async def mbodydouble(ctx: commands.Context):
         metiche = get_metiche()
-
         if metiche is None:
             await ctx.send("Metiche isn’t initialized yet.")
             return
-
         metiche.turn_on_bodydouble(ctx.channel.id)
         await ctx.send(metiche.build_bodydouble_prompt())
 
     @bot.command(name="mquiet")
     async def mquiet(ctx: commands.Context):
         metiche = get_metiche()
-
         if metiche is None:
             await ctx.send("Metiche isn’t initialized yet.")
             return
-
         metiche.turn_off_bodydouble()
         await ctx.send("Okay. I’ll be quiet.")
 
     @bot.command(name="mgoals")
     async def mgoals(ctx: commands.Context):
         def check(m: discord.Message):
-            return (m.author.id == ctx.author.id) and (m.channel.id == ctx.channel.id)
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
 
         week = week_of_monday(datetime.now())
-        current_plan = fetch_latest_metiche_weekly(week) or {}
+        _, execution, calendar_json, _, _ = current_weekly_context(week)
 
-        await ctx.send("What are the quarterly goals?\nComma-separated, or `none`.")
-        q_msg = await bot.wait_for("message", check=check)
-        quarterly_goals = [
-            x.strip()
-            for x in q_msg.content.split(",")
-            if x.strip() and x.strip().lower() != "none"
-        ]
+        await ctx.send("What are the quarterly goals? Comma-separated, or `none`.")
+        quarterly_goals = parse_named_list((await bot.wait_for("message", check=check)).content)
+        await ctx.send("What are the yearly goals? Comma-separated, or `none`.")
+        yearly_goals = parse_named_list((await bot.wait_for("message", check=check)).content)
 
-        await ctx.send("What are the yearly goals?\nComma-separated, or `none`.")
-        y_msg = await bot.wait_for("message", check=check)
-        yearly_goals = [
-            x.strip()
-            for x in y_msg.content.split(",")
-            if x.strip() and x.strip().lower() != "none"
-        ]
-
-        weekly_goal = float(current_plan.get("weekly_goal", 0.0) or 0.0)
-        jobs = current_plan.get("jobs", []) or []
-        pending_estimates = current_plan.get("pending_estimates", []) or []
-        invoices_to_send = current_plan.get("invoices_to_send", []) or []
-        calendar_json = current_plan.get("calendar_json", {}) or {"Heaven": {}, "Daniel": {}, "Handley Man": {}}
-        wants_bodydouble = bool(current_plan.get("wants_bodydouble", False))
-        task_summary = current_plan.get("task_summary_json") or {}
-
-        insert_metiche_weekly({
-            "ts": now_iso(),
-            "discord_user": str(ctx.author),
-            "channel_id": str(ctx.channel.id),
-            "week_of": week,
-            "weekly_goal": weekly_goal,
-            "jobs_json": json.dumps(jobs, ensure_ascii=False),
-            "pending_estimates_json": json.dumps(pending_estimates, ensure_ascii=False),
-            "invoices_to_send_json": json.dumps(invoices_to_send, ensure_ascii=False),
-            "calendar_json": json.dumps(calendar_json, ensure_ascii=False),
-            "task_summary_json": json.dumps(task_summary, ensure_ascii=False),
-            "wants_bodydouble": wants_bodydouble,
-            "quarterly_goals_json": json.dumps(quarterly_goals, ensure_ascii=False),
-            "yearly_goals_json": json.dumps(yearly_goals, ensure_ascii=False),
-        })
-
+        save_weekly_snapshot(ctx, week, execution, calendar_json, quarterly_goals=quarterly_goals, yearly_goals=yearly_goals)
         await ctx.send("Locked. I saved your quarterly and yearly goals.")
-
-    @bot.command(name="mweekly")
-    async def mweekly(ctx: commands.Context):
-        def check(m: discord.Message):
-            return (m.author.id == ctx.author.id) and (m.channel.id == ctx.channel.id)
-
-        week = week_of_monday(datetime.now())
-        current_plan = fetch_latest_metiche_weekly(week) or {}
-
-        await ctx.send("Weekly financial goal (number):")
-        goal_msg = await bot.wait_for("message", check=check)
-
-        try:
-            weekly_goal = float(goal_msg.content.replace("$", "").replace(",", "").strip())
-        except Exception:
-            weekly_goal = 0.0
-
-        await ctx.send("Jobs for the week (comma-separated or `none`):")
-        jobs_msg = await bot.wait_for("message", check=check)
-        jobs = [
-            x.strip()
-            for x in jobs_msg.content.split(",")
-            if x.strip() and x.strip().lower() != "none"
-        ]
-
-        await ctx.send("Pending estimates (comma-separated or `none`):")
-        est_msg = await bot.wait_for("message", check=check)
-        pending_estimates = [
-            x.strip()
-            for x in est_msg.content.split(",")
-            if x.strip() and x.strip().lower() != "none"
-        ]
-
-        await ctx.send("Invoices to send (comma-separated or `none`):")
-        inv_msg = await bot.wait_for("message", check=check)
-        invoices_to_send = [
-            x.strip()
-            for x in inv_msg.content.split(",")
-            if x.strip() and x.strip().lower() != "none"
-        ]
-
-        calendar_json = current_plan.get("calendar_json", {}) or {"Heaven": {}, "Daniel": {}, "Handley Man": {}}
-        quarterly_goals = current_plan.get("quarterly_goals", []) or []
-        yearly_goals = current_plan.get("yearly_goals", []) or []
-        wants_bodydouble = bool(current_plan.get("wants_bodydouble", False))
-        task_summary = current_plan.get("task_summary_json") or {}
-
-        insert_metiche_weekly({
-            "ts": now_iso(),
-            "discord_user": str(ctx.author),
-            "channel_id": str(ctx.channel.id),
-            "week_of": week,
-            "weekly_goal": weekly_goal,
-            "jobs_json": json.dumps(jobs, ensure_ascii=False),
-            "pending_estimates_json": json.dumps(pending_estimates, ensure_ascii=False),
-            "invoices_to_send_json": json.dumps(invoices_to_send, ensure_ascii=False),
-            "calendar_json": json.dumps(calendar_json, ensure_ascii=False),
-            "task_summary_json": json.dumps(task_summary, ensure_ascii=False),
-            "wants_bodydouble": wants_bodydouble,
-            "quarterly_goals_json": json.dumps(quarterly_goals, ensure_ascii=False),
-            "yearly_goals_json": json.dumps(yearly_goals, ensure_ascii=False),
-        })
-
-        await ctx.send("Locked. Weekly execution layer saved.")
 
     @bot.command(name="mcheckin")
     async def mcheckin(ctx: commands.Context, *, entry: str = ""):
@@ -1100,27 +969,18 @@ Save quarterly and yearly goals
 
     @bot.listen("on_message")
     async def metiche_time_listener(message: discord.Message):
-        if message.author.bot:
-            return
-
-        if message.content.startswith("!"):
+        if message.author.bot or message.content.startswith("!"):
             return
 
         metiche = get_metiche()
-
         if metiche is None:
             return
 
         ctx = await bot.get_context(message)
-
         if message.channel.id in active_time_sessions:
             await log_raw_time_block(ctx, message.content, source="active_day")
             return
 
-        if not metiche.bodydouble_on:
-            return
+        if metiche.bodydouble_on and metiche.channel_id == message.channel.id:
+            await log_raw_time_block(ctx, message.content, source="que_onda")
 
-        if metiche.channel_id != message.channel.id:
-            return
-
-        await log_raw_time_block(ctx, message.content, source="que_onda")
