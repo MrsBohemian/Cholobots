@@ -82,7 +82,10 @@ def init_metiche_db():
                 jobs_json TEXT,
                 pending_estimates_json TEXT,
                 invoices_to_send_json TEXT,
-                todays_schedule TEXT,
+                calendar_json TEXT,
+                task_summary_json TEXT,
+                quarterly_goals_json TEXT,
+                yearly_goals_json TEXT,
                 wants_accountant INTEGER
             )
         """)
@@ -215,13 +218,21 @@ def insert_metiche_weekly(row: Dict[str, Any]):
                 ts, discord_user, channel_id,
                 week_of, weekly_goal,
                 jobs_json, pending_estimates_json, invoices_to_send_json,
-                todays_schedule, wants_accountant
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                calendar_json, task_summary_json,
+                quarterly_goals_json, yearly_goals_json,
+                wants_accountant
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             row["ts"], row.get("discord_user"), row.get("channel_id"),
             row["week_of"], row.get("weekly_goal"),
-            row.get("jobs_json"), row.get("pending_estimates_json"), row.get("invoices_to_send_json"),
-            row.get("todays_schedule"), 1 if row.get("wants_accountant") else 0
+            row.get("jobs_json"),
+            row.get("pending_estimates_json"),
+            row.get("invoices_to_send_json"),
+            row.get("calendar_json"),
+            row.get("task_summary_json"),
+            row.get("quarterly_goals_json"),
+            row.get("yearly_goals_json"),
+            1 if row.get("wants_accountant") else 0
         ))
         conn.commit()
 
@@ -247,8 +258,10 @@ def fetch_latest_metiche_weekly(week_of: str) -> Optional[Dict[str, Any]]:
         cur = conn.cursor()
         cur.execute("""
             SELECT ts, discord_user, channel_id, week_of, weekly_goal,
-                   jobs_json, pending_estimates_json, invoices_to_send_json,
-                   todays_schedule, wants_accountant
+               jobs_json, pending_estimates_json, invoices_to_send_json,
+               calendar_json, task_summary_json,
+               quarterly_goals_json, yearly_goals_json,
+               wants_accountant
             FROM metiche_weekly
             WHERE week_of = ?
             ORDER BY id DESC
@@ -259,7 +272,7 @@ def fetch_latest_metiche_weekly(week_of: str) -> Optional[Dict[str, Any]]:
     if not r:
         return None
 
-    ts, discord_user, channel_id, week_of, weekly_goal, jobs_json, est_json, inv_json, todays_schedule, wants_acc = r
+    ts, discord_user, channel_id, week_of, weekly_goal, jobs_json, est_json, inv_json, calendar_json, task_summary_json, quarterly_goals_json, yearly_goals_json, wants_acc = r
     return {
         "ts": ts,
         "discord_user": discord_user,
@@ -269,7 +282,10 @@ def fetch_latest_metiche_weekly(week_of: str) -> Optional[Dict[str, Any]]:
         "jobs": json.loads(jobs_json) if jobs_json else [],
         "pending_estimates": json.loads(est_json) if est_json else [],
         "invoices_to_send": json.loads(inv_json) if inv_json else [],
-        "todays_schedule": todays_schedule or "",
+        "calendar_json": calendar_json,
+        "task_summary_json": task_summary_json,
+        "quarterly_goals_json": quarterly_goals_json,
+        "yearly_goals_json": yearly_goals_json,
         "wants_accountant": bool(wants_acc),
     }
 
