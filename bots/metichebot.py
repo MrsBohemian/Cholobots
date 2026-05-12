@@ -51,6 +51,7 @@ DEFAULT_CHILLHOP_URL = os.getenv(
 
 metiche_instance = None
 active_time_sessions: Dict[int, "TimeSession"] = {}
+pending_wakeups: Dict[int, Dict[str, Any]] = {}
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -87,6 +88,24 @@ class WeeklyExecution:
 
 def parse_iso(ts: str) -> datetime:
     return datetime.fromisoformat(ts)
+
+def parse_wakeup_time(raw: str) -> Optional[datetime]:
+    raw = raw.strip().lower().replace(".", "")
+    today = datetime.now().date()
+
+    for fmt in ("%I:%M %p", "%I %p", "%H:%M", "%H"):
+        try:
+            parsed = datetime.strptime(raw, fmt).time()
+            wake_dt = datetime.combine(today, parsed)
+
+            if wake_dt <= datetime.now():
+                wake_dt = wake_dt + timedelta(days=1)
+
+            return wake_dt
+        except ValueError:
+            continue
+
+    return None
 
 
 def week_of_monday(d: datetime) -> str:
@@ -412,6 +431,24 @@ def format_execution_summary(execution: WeeklyExecution) -> str:
     lines.extend([f"- {task}" for task in execution.priority_tasks])
     return "\n".join(lines)
 
+def build_wakeup_message(execution: WeeklyExecution) -> str:
+    return (
+        "🌅 Daniel morning boot sequence\n"
+        f"Audio runway: {DEFAULT_CHILLHOP_URL}\n\n"
+        "1. Shower + shave\n"
+        "2. Get dressed\n"
+        "3. Make sit-down breakfast\n"
+        "4. Kids pack snacks/lunch boxes from staged counter snacks\n"
+        "5. Confirm first job / first work block\n\n"
+        f"Weekly target: {format_money(execution.target_amount)}\n"
+        f"Scheduled revenue: {format_money(execution.scheduled_revenue)}\n"
+        f"Revenue gap: {format_money(execution.revenue_gap)}\n"
+        f"Mode: {execution.primary_mode}\n\n"
+        "Priorities:\n"
+        + "\n".join([f"- {task}" for task in execution.priority_tasks])
+        + "\n\nStart with the shower. No algorithm hole."
+    )
+
 
 # ---------- display helpers ----------
 
@@ -494,6 +531,17 @@ class MeticheManager:
     async def start_loop(self):
         while True:
             await asyncio.sleep(30)
+            now = datetime.now()
+
+            for channel_id, wakeup in list(pending_wakeups.items()):
+                if now >= wakeup["wake_time"]:
+                    channel = self.bot.get_channel(channel_id)
+                    if channel:
+                        week = week_of_monday(datetime.now())
+                        _, execution, _, _, _ = current_weekly_context(week)
+                        await channel.send(build_wakeup_message(execution))
+                    pending_wakeups.pop(channel_id, None)
+        
             if not self.channel_id or not self.bodydouble_on or not self.next_checkin:
                 continue
             if datetime.now() >= self.next_checkin:
@@ -778,20 +826,26 @@ Bodydouble
 
     @bot.command(name="mwakeup")
     async def mwakeup(ctx: commands.Context):
-        week = week_of_monday(datetime.now())
-        _, execution, _, _, _ = current_weekly_context(week)
+        def check(m: discord.Message):
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
+    
+        await ctx.send("What time should I run Daniel’s wakeup sequence? Example: `7:00 AM`")
+    
+        raw_time = (await bot.wait_for("message", check=check)).content.strip()
+        wake_time = parse_wakeup_time(raw_time)
+    
+        if wake_time is None:
+            await ctx.send("I couldn’t read that time. Try something like `7:00 AM` or `6:30`.")
+            return
+    
+        pending_wakeups[ctx.channel.id] = {
+            "wake_time": wake_time,
+            "set_by": str(ctx.author),
+        }
+    
         await ctx.send(
-            "🌅 Daniel morning boot sequence\n"
-            f"Audio runway: {DEFAULT_CHILLHOP_URL}\n\n"
-            "1. Shower + shave\n"
-            "2. Get dressed\n"
-            "3. Make sit-down breakfast\n"
-            "4. Kids pack snacks/lunch boxes from staged counter snacks\n"
-            "5. Confirm first job / first work block\n\n"
-            f"Weekly target: {format_money(execution.target_amount)}\n"
-            f"Scheduled revenue: {format_money(execution.scheduled_revenue)}\n"
-            f"Revenue gap: {format_money(execution.revenue_gap)}\n"
-            "Start with the shower. No algorithm hole."
+            f"✅ Daniel’s wakeup sequence is scheduled for {wake_time.strftime('%A, %B %-d at %-I:%M %p')}.\n"
+            "Set his actual phone alarm too. I can ping Discord, but I can’t make the phone scream."
         )
 
     @bot.command(name="mschedule")
