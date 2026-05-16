@@ -152,11 +152,13 @@ def parse_task_list(text: str) -> List[Dict[str, Any]]:
 
 
 def day_to_iso(day_name: str, week_start: Optional[str] = None) -> str:
-    base = date.fromisoformat(week_start) if week_start else datetime.now().date()
+    today = datetime.now().date()
     target_index = DAY_NAMES.index(day_name.lower())
-    monday = base - timedelta(days=base.weekday())
-    return (monday + timedelta(days=target_index)).isoformat()
+    today_index = today.weekday()
 
+    days_ahead = (target_index - today_index) % 7
+
+    return (today + timedelta(days=days_ahead)).isoformat()
 
 def parse_schedule_block(text: str, week_start: str) -> Dict[str, List[Any]]:
     result: Dict[str, List[Any]] = {}
