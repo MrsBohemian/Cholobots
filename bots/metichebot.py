@@ -343,28 +343,40 @@ def build_weekly_execution(
     gap = max(0.0, target_amount - scheduled_revenue)
     ratio = round(outstanding_estimate_value / gap, 2) if gap else 999.0
 
+    has_invoices = pending_invoice_value > 0 or bool(invoices_to_send)
+    has_estimates = outstanding_estimate_value > 0 or bool(estimates_to_write)
+    has_jobs = bool(earning_jobs)
+
     priority_tasks: List[str] = []
-    if invoices_to_send or pending_invoice_value > 0:
-        priority_tasks.append("Send/collect pending invoices")
-    if estimates_to_write or outstanding_estimate_value > 0:
-        priority_tasks.append("Write and follow up estimates")
-    if gap > 0 and outstanding_estimate_value < gap:
-        priority_tasks.append("Find or schedule additional earning work")
-    if earning_jobs:
-        priority_tasks.append("Protect scheduled earning jobs")
-    if not priority_tasks:
-        priority_tasks.append("Review numbers and set the work week")
 
     if gap <= 0:
         primary_mode = "protect_scheduled_work"
-    elif pending_invoice_value >= gap:
-        primary_mode = "collections_first"
-    elif outstanding_estimate_value >= gap:
-        primary_mode = "estimate_conversion_first"
-    elif scheduled_revenue > 0:
-        primary_mode = "mixed_pipeline_gap"
+        priority_tasks.append("Protect scheduled earning jobs")
+        priority_tasks.append("Collect cleanly and avoid creating unnecessary new work")
+
+    elif has_invoices and pending_invoice_value >= gap:
+        primary_mode = "collections_push"
+        priority_tasks.append("Send/collect pending invoices")
+
+    elif has_estimates and outstanding_estimate_value >= gap:
+        primary_mode = "estimate_conversion_push"
+        priority_tasks.append("Write and follow up estimates")
+
+    elif has_invoices or has_estimates or has_jobs:
+        primary_mode = "mixed_operations_push"
+        if has_invoices:
+            priority_tasks.append("Send/collect pending invoices")
+        if has_estimates:
+            priority_tasks.append("Write and follow up estimates")
+        if has_jobs:
+            priority_tasks.append("Protect scheduled earning jobs")
+        priority_tasks.append("Check remaining gap after known levers are worked")
+
     else:
-        primary_mode = "sales_and_scheduling_gap"
+        primary_mode = "crm_mining_push"
+        priority_tasks.append("Known invoices, estimates, and earning jobs are exhausted")
+        priority_tasks.append("Escalate to Chismebot CRM mining")
+        priority_tasks.append("Look for dormant leads, past customers, unfinished conversations, and quick-close jobs")
 
     return WeeklyExecution(
         target_amount=target_amount,
@@ -417,7 +429,7 @@ def weekly_execution_from_plan(plan: Dict[str, Any]) -> WeeklyExecution:
 
 
 def build_auto_schedule(start_iso: str, execution: WeeklyExecution) -> Dict[str, List[Dict[str, Any]]]:
-    """Create rolling operational execution blocks starting from today/current planning day."""
+    """Create rolling operational execution blocks based on current revenue-gap levers."""
     start_day = date.fromisoformat(start_iso)
     schedule: Dict[str, List[Dict[str, Any]]] = {}
 
@@ -431,24 +443,49 @@ def build_auto_schedule(start_iso: str, execution: WeeklyExecution) -> Dict[str,
             "priority": priority,
         })
 
-    add(0, f"Review operating target: {format_money(execution.target_amount)} target", "high")
-    add(0, "Build next moves around jobs, invoices, estimates, and family constraints", "high")
+    add(0, f"Current operating target: {format_money(execution.target_amount)}", "high")
+    add(0, f"Remaining revenue gap: {format_money(execution.revenue_gap)}", "high")
 
-    if execution.invoices_to_send or execution.pending_invoice_value > 0:
-        add(0, f"Send/collect invoices: {format_money(execution.pending_invoice_value)} pending", "high")
-        add(2, "Second invoice follow-up pass", "normal")
+    if execution.primary_mode == "protect_scheduled_work":
+        for job in execution.earning_jobs:
+            add(0, f"Protect scheduled job: {job}", "high")
+        add(1, "Confirm collections and close out cleanly", "normal")
 
-    if execution.estimates_to_write or execution.outstanding_estimate_value > 0:
-        add(1, f"Estimate writing block: {format_money(execution.outstanding_estimate_value)} pipeline", "high")
-        add(3, "Estimate follow-up / conversion block", "normal")
+    elif execution.primary_mode == "collections_push":
+        if execution.invoices_to_send:
+            for invoice in execution.invoices_to_send:
+                add(0, f"Send/collect invoice: {invoice}", "high")
+        else:
+            add(0, f"Send/collect invoices: {format_money(execution.pending_invoice_value)} pending", "high")
+        add(2, "Second pass on invoice collection", "normal")
 
-    if execution.revenue_gap > 0:
-        add(1, f"Close remaining revenue gap: {format_money(execution.revenue_gap)}", "high")
+    elif execution.primary_mode == "estimate_conversion_push":
+        if execution.estimates_to_write:
+            for estimate in execution.estimates_to_write:
+                add(0, f"Write/follow up estimate: {estimate}", "high")
+        else:
+            add(0, f"Estimate conversion block: {format_money(execution.outstanding_estimate_value)} pipeline", "high")
+        add(1, "Second pass on estimate conversion", "normal")
 
-    for job in execution.earning_jobs:
-        add(0, f"Confirm/protect earning job: {job}", "high")
+    elif execution.primary_mode == "mixed_operations_push":
+        for invoice in execution.invoices_to_send:
+            add(0, f"Send/collect invoice: {invoice}", "high")
 
-    add(4, "Closeout: invoices sent, estimates followed up, receipts/materials captured", "normal")
+        for estimate in execution.estimates_to_write:
+            add(1, f"Write/follow up estimate: {estimate}", "high")
+
+        for job in execution.earning_jobs:
+            add(0, f"Protect scheduled job: {job}", "high")
+
+        add(2, "Check remaining gap after known levers are worked", "normal")
+
+    elif execution.primary_mode == "crm_mining_push":
+        add(0, "Known work levers exhausted — activate Chismebot", "high")
+        add(0, "Run !followuplist and look for quick-close follow-ups", "high")
+        add(1, "Run !chismelist and mine dormant leads / past customers", "high")
+        add(1, "Create new follow-ups from Chismebot CRM mining", "normal")
+
+    add(4, "Closeout: update invoices, estimates, receipts/materials, and next operating target", "normal")
 
     return schedule
 
@@ -786,8 +823,7 @@ def register_metiche(bot: commands.Bot):
 🧠 METICHEBOT
 
 Planning
-!mweekly — enter target, scheduled revenue, jobs, estimates, and invoices; generates weekly execution mode + auto schedule
-!mplan — show the current weekly execution plan
+!mweekly — update current operating target and choose the next revenue-gap lever!mplan — show the current weekly execution plan
 !mschedule — manually add/change/replace a person schedule
 !mgoals — save quarterly and yearly goals
 
