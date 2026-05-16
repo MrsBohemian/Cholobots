@@ -384,34 +384,40 @@ def weekly_execution_from_plan(plan: Dict[str, Any]) -> WeeklyExecution:
     )
 
 
-def build_auto_schedule(week: str, execution: WeeklyExecution) -> Dict[str, List[Dict[str, Any]]]:
-    """Create practical execution blocks. This does not overwrite personal calendars unless merged."""
-    monday = date.fromisoformat(week)
+def build_auto_schedule(start_iso: str, execution: WeeklyExecution) -> Dict[str, List[Dict[str, Any]]]:
+    """Create rolling operational execution blocks starting from today/current planning day."""
+    start_day = date.fromisoformat(start_iso)
     schedule: Dict[str, List[Dict[str, Any]]] = {}
 
-    def add(day_offset: int, text: str):
-        iso = (monday + timedelta(days=day_offset)).isoformat()
-        schedule.setdefault(iso, []).append({"text": text, "done": False})
+    def add(day_offset: int, text: str, priority: str = "normal"):
+        iso = (start_day + timedelta(days=day_offset)).isoformat()
+        schedule.setdefault(iso, []).append({
+            "text": text,
+            "done": False,
+            "source": "mweekly",
+            "type": "operations",
+            "priority": priority,
+        })
 
-    # Monday: turn balance-sheet numbers into action.
-    add(0, f"Balance sheet + weekly target review (${execution.target_amount:,.0f} target)")
-    add(0, "Build week around earning jobs, estimates, invoices, and family constraints")
+    add(0, f"Review operating target: {format_money(execution.target_amount)} target", "high")
+    add(0, "Build next moves around jobs, invoices, estimates, and family constraints", "high")
 
     if execution.invoices_to_send or execution.pending_invoice_value > 0:
-        add(0, f"Send/collect invoices (${execution.pending_invoice_value:,.0f} pending)")
-        add(2, "Second invoice follow-up pass")
+        add(0, f"Send/collect invoices: {format_money(execution.pending_invoice_value)} pending", "high")
+        add(2, "Second invoice follow-up pass", "normal")
 
     if execution.estimates_to_write or execution.outstanding_estimate_value > 0:
-        add(1, f"Estimate writing block (${execution.outstanding_estimate_value:,.0f} in estimate pipeline)")
-        add(3, "Estimate follow-up / conversion block")
+        add(1, f"Estimate writing block: {format_money(execution.outstanding_estimate_value)} pipeline", "high")
+        add(3, "Estimate follow-up / conversion block", "normal")
 
     if execution.revenue_gap > 0:
-        add(1, f"Close revenue gap: ${execution.revenue_gap:,.0f}")
+        add(1, f"Close remaining revenue gap: {format_money(execution.revenue_gap)}", "high")
 
     for job in execution.earning_jobs:
-        add(0, f"Confirm earning job: {job}")
+        add(0, f"Confirm/protect earning job: {job}", "high")
 
-    add(4, "Friday closeout: invoices sent, estimates followed up, receipts/materials captured")
+    add(4, "Closeout: invoices sent, estimates followed up, receipts/materials captured", "normal")
+
     return schedule
 
 
@@ -806,7 +812,7 @@ Bodydouble
             invoices_to_send=invoices_to_send,
         )
 
-        auto_schedule = build_auto_schedule(week, execution)
+        auto_schedule = build_auto_schedule(today_iso(), execution)
         calendar_json["Handley Man"] = merge_days(calendar_json.get("Handley Man", {}), auto_schedule)
 
         save_weekly_snapshot(
