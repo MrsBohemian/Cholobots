@@ -569,10 +569,18 @@ class MeticheManager:
             return {"ok": False, "reason": str(e)}
 
     def push_calendar_json(self, person: str, person_schedule: Dict[str, List[Any]]) -> Dict[str, Any]:
-        return self.post_json("calendar", {
+        payload = {
             "calendarKey": PERSON_TO_CALENDAR_KEY.get(person),
             "schedule": person_schedule,
-        })
+        }
+    
+        print("PUSHING CALENDAR:", payload)
+    
+        result = self.post_json("calendar", payload)
+    
+        print("CALENDAR PUSH RESULT:", result)
+    
+        return result
 
     def push_task_summary_json(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self.post_json("tasks", payload)
