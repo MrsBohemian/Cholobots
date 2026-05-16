@@ -196,15 +196,33 @@ def json_safe_load(raw: Any, fallback: Any):
 
 def normalize_daily_items(raw_items: List[Any]) -> List[Dict[str, Any]]:
     normalized = []
+
     for item in raw_items or []:
         if isinstance(item, dict):
             text = str(item.get("text") or item.get("task") or "").strip()
             done = bool(item.get("done") or item.get("completed") or False)
+            source = item.get("source")
+            item_type = item.get("type")
+            priority = item.get("priority")
         else:
             text = str(item).strip()
             done = False
+            source = None
+            item_type = None
+            priority = None
+
         if text:
-            normalized.append({"text": text, "done": done})
+            row = {"text": text, "done": done}
+
+            if source:
+                row["source"] = source
+            if item_type:
+                row["type"] = item_type
+            if priority:
+                row["priority"] = priority
+
+            normalized.append(row)
+
     return normalized
 
 
@@ -220,6 +238,20 @@ def merge_days(existing: Dict[str, List[Any]], incoming: Dict[str, List[Any]]) -
                 seen.add(norm)
         merged[day] = current
     return merged
+
+def remove_source_tasks(person_schedule: Dict[str, List[Any]], source: str) -> Dict[str, List[Any]]:
+    cleaned = {}
+
+    for day, tasks in (person_schedule or {}).items():
+        kept = [
+            task for task in normalize_daily_items(tasks)
+            if task.get("source") != source
+        ]
+
+        if kept:
+            cleaned[day] = kept
+
+    return cleaned
 
 
 def modify_days(existing: Dict[str, List[Any]], incoming: Dict[str, List[Any]]) -> Dict[str, List[Any]]:
@@ -813,8 +845,9 @@ Bodydouble
         )
 
         auto_schedule = build_auto_schedule(today_iso(), execution)
-        calendar_json["Handley Man"] = merge_days(calendar_json.get("Handley Man", {}), auto_schedule)
-
+        handley_schedule = remove_source_tasks(calendar_json.get("Handley Man", {}), "mweekly")
+        calendar_json["Handley Man"] = merge_days(handley_schedule, auto_schedule)
+        
         save_weekly_snapshot(
             ctx, week, execution, calendar_json,
             wants_bodydouble=False,
