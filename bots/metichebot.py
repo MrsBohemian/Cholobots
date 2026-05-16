@@ -781,7 +781,7 @@ Bodydouble
         week = week_of_monday(datetime.now())
         _, _, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
 
-        await ctx.send("Weekly target amount from the Monday balance sheet:")
+        await ctx.send("Weekly target amount for the week:")
         target_amount = money_to_float((await bot.wait_for("message", check=check)).content)
 
         await ctx.send("Estimated revenue already scheduled from earning jobs:")
