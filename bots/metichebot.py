@@ -327,7 +327,53 @@ def replace_daily_tasks(person: str, date_iso_value: str, tasks: List[Dict[str, 
     ]
     if inserts:
         supabase.table("daily_tasks").insert(inserts).execute()
+def save_wakeup(channel_id: int, person: str, wake_time: datetime, set_by: str):
+    if not require_supabase():
+        return {"ok": False, "reason": "Supabase not configured"}
 
+    response = (
+        supabase.table("metiche_wakeups")
+        .insert({
+            "channel_id": str(channel_id),
+            "person": person,
+            "wake_time": wake_time.isoformat(),
+            "status": "scheduled",
+            "set_by": set_by,
+        })
+        .execute()
+    )
+
+    return {"ok": True, "data": response.data}
+
+
+def fetch_due_wakeups(now: datetime):
+    if not require_supabase():
+        return []
+
+    response = (
+        supabase.table("metiche_wakeups")
+        .select("*")
+        .eq("status", "scheduled")
+        .lte("wake_time", now.isoformat())
+        .execute()
+    )
+
+    return response.data or []
+
+
+def mark_wakeup_sent(wakeup_id: str):
+    if not require_supabase():
+        return
+
+    (
+        supabase.table("metiche_wakeups")
+        .update({
+            "status": "sent",
+            "sent_at": datetime.now().isoformat(),
+        })
+        .eq("id", wakeup_id)
+        .execute()
+    )
 
 # ---------- Weekly execution logic ----------
 
@@ -610,14 +656,21 @@ class MeticheManager:
             await asyncio.sleep(30)
             now = datetime.now()
 
-            for channel_id, wakeup in list(pending_wakeups.items()):
-                if now >= wakeup["wake_time"]:
-                    channel = self.bot.get_channel(channel_id)
-                    if channel:
-                        week = week_of_monday(datetime.now())
-                        _, execution, _, _, _ = current_weekly_context(week)
-                        await channel.send(build_wakeup_message(execution))
-                    pending_wakeups.pop(channel_id, None)
+            due_wakeups = fetch_due_wakeups(now)
+
+            for wakeup in due_wakeups:
+                channel_id = int(wakeup["channel_id"])
+                channel = self.bot.get_channel(channel_id)
+            
+                if not channel:
+                    continue
+            
+                week = week_of_monday(datetime.now())
+                _, execution, _, _, _ = current_weekly_context(week)
+            
+                await channel.send(build_wakeup_message(execution))
+            
+                mark_wakeup_sent(wakeup["id"])
         
             if not self.channel_id or not self.bodydouble_on or not self.next_checkin:
                 continue
@@ -923,10 +976,16 @@ Bodydouble
             await ctx.send("I couldn’t read that time. Try something like `7:00 AM` or `6:30`.")
             return
     
-        pending_wakeups[ctx.channel.id] = {
-            "wake_time": wake_time,
-            "set_by": str(ctx.author),
-        }
+       result = save_wakeup(
+            channel_id=ctx.channel.id,
+            person="Daniel",
+            wake_time=wake_time,
+            set_by=str(ctx.author),
+        )
+
+        if not result.get("ok"):
+            await ctx.send(f"Failed to save wakeup: {result.get('reason')}")
+            return
     
         await ctx.send(
             f"✅ Daniel’s wakeup sequence is scheduled for {wake_time.strftime('%A, %B %-d at %-I:%M %p')}.\n"
