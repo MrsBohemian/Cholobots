@@ -17,6 +17,7 @@ from bots.chismebot import register_chisme
 from bots.metichebot import register_metiche, get_metiche
 from bots.guardabot import register_guard
 from bots.crudobot import register_crudo
+from bots.obijuan import setup_obijuan
 
 from db.database import (
     init_guardabot_db,
@@ -44,7 +45,13 @@ async def on_ready():
     init_guardabot_db()
     ensure_guardabot_schema()
     init_metiche_db()
+    
     init_crudobot_db()
+    if not hasattr(bot, "obijuan_loaded"):
+        await setup_obijuan(bot)
+        bot.obijuan_loaded = True
+        print("✅ ObiJuan loaded")
+            
     print(f"✅ Logged in as {bot.user} | Guardabot DB: {GUARDABOT_DB}")
     
     metiche = get_metiche()
@@ -90,6 +97,8 @@ async def cholobots(ctx):
     Crudobot is kind of like your drunk uncle meets Deepak Chopra.
     His job is job costing, reports, and estimates, but his real jam is listening while you open up about the work:
     what went right, what went terribly wrong, and what the numbers are trying to tell you.
+
+    ...And if you're lucky, you get to meet Obi Juan Que Homie
         
     Type `!queso` to see what the Cholobots do.
     """
