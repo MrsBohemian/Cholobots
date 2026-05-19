@@ -1070,6 +1070,7 @@ def register_metiche(bot: commands.Bot):
         "**Daily Operations**\n"
         "`!mroutine` — view or edit morning routines\n"
         "`!mwakeup` — schedule Daniel's morning boot sequence\n"
+        "`!mbraindump` — capture and sort the messy pile before planning today\n"
         "`!mtoday` — structure today's work and optional check-in cadence\n"
         "`!mstopday` — stop today's time session\n"
         "`!mquiet` — stop reminder/check-in pings"
@@ -1229,6 +1230,100 @@ def register_metiche(bot: commands.Bot):
         status = "Pushed to dashboard JSON." if push_result.get("ok") else f"Saved, but dashboard push failed: {push_result.get('reason')}"
         await ctx.send(format_person_schedule(person, updated) + f"\n\n{status}")
 
+    @bot.command(name="mbraindump")
+    async def mbraindump(ctx: commands.Context):
+        metiche = get_metiche()
+        if metiche is None:
+            await ctx.send("Metiche isn’t initialized yet.")
+            return
+
+        def check(m: discord.Message):
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
+
+        week = week_of_monday(datetime.now())
+        _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
+
+        await ctx.send(
+            "🧠 Brain dump time.\n\n"
+            "Drop the whole messy pile here. Use commas or separate lines.\n"
+            "Don’t organize it yet."
+        )
+
+        raw_dump = (await bot.wait_for("message", check=check)).content.strip()
+        dumped_items = parse_named_list(raw_dump)
+
+        if not dumped_items:
+            await ctx.send("I didn’t catch any items. Try again with a list or a few lines.")
+            return
+
+        await ctx.send(
+            "Now sort them.\n\n"
+            "Reply using this format:\n"
+            "`today: item, item`\n"
+            "`later: item, item`\n"
+            "`delegate: item, item`\n"
+            "`waiting: item, item`\n"
+            "`delete: item, item`"
+        )
+
+        sort_reply = (await bot.wait_for("message", check=check)).content.strip()
+
+        buckets = {
+            "today": [],
+            "later": [],
+            "delegate": [],
+            "waiting": [],
+            "delete": [],
+        }
+
+        for line in sort_reply.splitlines():
+            if ":" not in line:
+                continue
+
+            bucket, items = line.split(":", 1)
+            bucket = bucket.strip().lower()
+
+            if bucket in buckets:
+                buckets[bucket].extend(parse_named_list(items))
+
+        date_key = today_iso()
+        person = "Heaven"
+
+        today_tasks = [{"text": item, "done": False, "source": "mbraindump"} for item in buckets["today"]]
+
+        existing_today = load_daily_tasks(person, date_key)
+        merged_today = normalize_daily_items(existing_today) + today_tasks
+
+        calendar_json.setdefault(person, {})
+        calendar_json[person][date_key] = merged_today
+
+        replace_daily_tasks(person, date_key, merged_today)
+        save_weekly_snapshot(
+            ctx,
+            week,
+            execution,
+            calendar_json,
+            wants_bodydouble=False,
+            quarterly_goals=quarterly_goals,
+            yearly_goals=yearly_goals,
+        )
+
+        push_result = metiche.push_calendar_json(person, calendar_json[person])
+        status = "Pushed today’s brain dump to the calendar." if push_result.get("ok") else f"Saved, but dashboard push failed: {push_result.get('reason')}"
+
+        summary = (
+            "🧠 Brain dump sorted.\n\n"
+            f"Today: {len(buckets['today'])}\n"
+            f"Later: {len(buckets['later'])}\n"
+            f"Delegate: {len(buckets['delegate'])}\n"
+            f"Waiting: {len(buckets['waiting'])}\n"
+            f"Delete: {len(buckets['delete'])}\n\n"
+            f"{status}\n\n"
+            "Run `!mtoday` when you’re ready to structure the actual day."
+        )
+
+        await ctx.send(summary)
+        
     @bot.command(name="mtoday")
     async def mtoday(ctx: commands.Context):
         active_time_sessions.pop(ctx.channel.id, None)
