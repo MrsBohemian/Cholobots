@@ -1,16 +1,3 @@
-import asyncio
-import json
-import os
-import re
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, date
-from typing import Any, Dict, List, Optional, Tuple
-from urllib import error, request
-
-import discord
-from discord.ext import commands
-from supabase import create_client
-
 """
 ObiJuan.py
 
