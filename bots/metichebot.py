@@ -1285,7 +1285,7 @@ def register_metiche(bot: commands.Bot):
             await ctx.send("I didn’t catch any items. Try again with a list or a few lines.")
             return
 
-            buckets = autosort_braindump_items(dumped_items)
+        buckets = autosort_braindump_items(dumped_items)
 
         preview = (
             "🧠 Proposed sort:\n\n"
