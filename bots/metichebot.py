@@ -961,7 +961,36 @@ def current_weekly_context(week: str) -> Tuple[Dict[str, Any], WeeklyExecution, 
 
 
 # ---------- registration / commands ----------
+def autosort_braindump_items(items: List[str]) -> Dict[str, List[str]]:
+    buckets = {
+        "today": [],
+        "later": [],
+        "delegate": [],
+        "waiting": [],
+        "delete": [],
+    }
 
+    today_words = ["today", "lunch", "bus", "launch", "library", "work on", "finish", "pick up", "ride"]
+    waiting_words = ["waiting", "reach out", "follow up", "email", "call", "text", "schedule"]
+    later_words = ["plan", "menu", "clean", "fridge", "kitchen", "summer", "landscaping", "transportation"]
+    delegate_words = ["daniel", "samuel", "jesse", "delegate", "ask"]
+
+    for item in items:
+        norm = normalize_task(item)
+
+        if any(word in norm for word in waiting_words):
+            buckets["waiting"].append(item)
+        elif any(word in norm for word in delegate_words):
+            buckets["delegate"].append(item)
+        elif any(word in norm for word in today_words):
+            buckets["today"].append(item)
+        elif any(word in norm for word in later_words):
+            buckets["later"].append(item)
+        else:
+            buckets["later"].append(item)
+
+    return buckets
+    
 def register_metiche(bot: commands.Bot):
     global metiche_instance
     metiche_instance = MeticheManager(bot)
@@ -1256,35 +1285,27 @@ def register_metiche(bot: commands.Bot):
             await ctx.send("I didn’t catch any items. Try again with a list or a few lines.")
             return
 
-        await ctx.send(
-            "Now sort them.\n\n"
-            "Reply using this format:\n"
-            "`today: item, item`\n"
-            "`later: item, item`\n"
-            "`delegate: item, item`\n"
-            "`waiting: item, item`\n"
-            "`delete: item, item`"
+            buckets = autosort_braindump_items(dumped_items)
+
+        preview = (
+            "🧠 Proposed sort:\n\n"
+            f"**Today**\n- " + "\n- ".join(buckets["today"] or ["(empty)"]) + "\n\n"
+            f"**Later**\n- " + "\n- ".join(buckets["later"] or ["(empty)"]) + "\n\n"
+            f"**Delegate**\n- " + "\n- ".join(buckets["delegate"] or ["(empty)"]) + "\n\n"
+            f"**Waiting**\n- " + "\n- ".join(buckets["waiting"] or ["(empty)"]) + "\n\n"
+            f"**Delete**\n- " + "\n- ".join(buckets["delete"] or ["(empty)"]) + "\n\n"
+            "Reply with:\n"
+            "`yes` to accept\n"
+            "`no` to cancel"
         )
 
-        sort_reply = (await bot.wait_for("message", check=check)).content.strip()
+        await ctx.send(preview)
 
-        buckets = {
-            "today": [],
-            "later": [],
-            "delegate": [],
-            "waiting": [],
-            "delete": [],
-        }
+        confirmation = (await bot.wait_for("message", check=check)).content.strip().lower()
 
-        for line in sort_reply.splitlines():
-            if ":" not in line:
-                continue
-
-            bucket, items = line.split(":", 1)
-            bucket = bucket.strip().lower()
-
-            if bucket in buckets:
-                buckets[bucket].extend(parse_named_list(items))
+        if confirmation not in {"yes", "y"}:
+            await ctx.send("Okay. Brain dump canceled.")
+            return
 
         date_key = today_iso()
         person = "Heaven"
