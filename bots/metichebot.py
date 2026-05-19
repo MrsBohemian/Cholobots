@@ -1051,31 +1051,29 @@ def register_metiche(bot: commands.Bot):
     @bot.command(name="metichebot")
     async def metichebot_help(ctx):
         await ctx.send(
-            """
-        🧠 METICHEBOT
-        
-        Metichebot helps structure:
-        - planning
-        - routines
-        - scheduling
-        - priorities
-        - operational flow
-        - task accounting
-        
-        Planning
-        !mweekly — update weekly operating target and execution strategy
-        !mplan — show current weekly execution plan
-        !mschedule — add/change/replace a schedule
-        !mgoals — save quarterly and yearly goals
-        
-        Daily Operations
-        !mroutine — view or edit morning routines
-        !mwakeup — schedule Daniel’s morning boot sequence
-        !mtoday — structure today’s work and optional check-in cadence
-        !mstopday — stop today’s time session
-        !mquiet — stop reminder/check-in pings
-        """
-        )
+        "🧠 **METICHEBOT**\n\n"
+    
+        "Metichebot helps structure:\n"
+        "• planning\n"
+        "• routines\n"
+        "• scheduling\n"
+        "• priorities\n"
+        "• operational flow\n"
+        "• task accounting\n\n"
+    
+        "**Planning**\n"
+        "`!mweekly` — update weekly operating target and execution strategy\n"
+        "`!mplan` — show current weekly execution plan\n"
+        "`!mschedule` — add/change/replace a schedule\n"
+        "`!mgoals` — save quarterly and yearly goals\n\n"
+    
+        "**Daily Operations**\n"
+        "`!mroutine` — view or edit morning routines\n"
+        "`!mwakeup` — schedule Daniel's morning boot sequence\n"
+        "`!mtoday` — structure today's work and optional check-in cadence\n"
+        "`!mstopday` — stop today's time session\n"
+        "`!mquiet` — stop reminder/check-in pings"
+    )
 
     @bot.command(name="mweekly")
     async def mweekly(ctx: commands.Context):
