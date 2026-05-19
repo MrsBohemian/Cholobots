@@ -1,14 +1,78 @@
 """
-Metichebot refactor: weekly execution engine + daily raw time accounting.
+METICHEBOT
+-----------
 
-What changed:
-- Removed the duplicate metiche_weekly_plans table path that made !mplan look empty.
-- Uses fetch_latest_metiche_weekly / insert_metiche_weekly as the single weekly-plan source.
-- Rebuilt !mweekly as an operational forecast intake, not just a note collector.
-- Added automatic weekly execution interpretation and schedule injection.
-- Added !mwakeup for Daniel's morning boot sequence.
-- Kept: !mschedule, !mtoday, !mcheckin, !mbodydouble, !mquiet, !mgoals, !mstopday.
-- Removed stale generate_daily_schedule/save_weekly_plan/load_weekly_plan compatibility code.
+Metichebot is the operational coordination and task-accounting layer
+for the Cholobots ecosystem.
+
+Its purpose is to help neurodivergent tradespeople externalize:
+- planning
+- sequencing
+- prioritization
+- schedule coordination
+- wakeup/morning activation
+- time awareness
+- task accounting
+- daily operational flow
+
+Metichebot is intentionally designed around conversational workflows
+instead of rigid project-management abstractions.
+
+PRIMARY RESPONSIBILITIES
+------------------------
+- Weekly operational forecasting (!mweekly)
+- Goal and schedule management (!mgoals, !mschedule)
+- Daily task structuring (!mtoday)
+- Morning activation and routines (!mwakeup, !mroutine)
+- Persistent reminder/ping scheduling
+- Task accounting and time-session tracking
+- Calendar synchronization with the Command Center
+
+RELATIONSHIP TO OTHER CHOLOBOTS
+--------------------------------
+Metichebot coordinates operational execution across the ecosystem:
+
+- Chismebot:
+    Relationship management, follow-ups, customer narratives,
+    opportunity tracking, and social memory.
+
+- Crudobot:
+    Estimating, job costing, purchasing analysis,
+    financial observations, and operational metrics.
+
+- Guardabot:
+    Inventory, garage zones, materials staging,
+    logistics, and physical resource tracking.
+
+Metichebot often acts as the orchestration layer connecting:
+- scheduling
+- operational execution
+- accountability
+- workflow continuity
+
+TASK ACCOUNTING
+----------------
+Task accounting is not surveillance or productivity scoring.
+
+It is a lightweight operational memory system intended to help users:
+- understand where time is going
+- externalize cognitive load
+- re-enter interrupted workflows
+- document operational drift
+- support neurodivergent execution patterns
+
+Persistent task accounting data eventually feeds the
+Command Center dashboard visualization layer.
+
+ARCHITECTURE NOTES
+-------------------
+- Persistent operational state is stored in Supabase.
+- Discord serves as the conversational guild hall interface.
+- The Command Center acts as the visualization layer.
+- Railway hosts the operational bot services.
+
+This system is evolving toward a distributed operational framework
+for collaborative trades work and guild-style coordination.
 """
 
 import asyncio
@@ -51,7 +115,6 @@ DEFAULT_CHILLHOP_URL = os.getenv(
 
 metiche_instance = None
 active_time_sessions: Dict[int, "TimeSession"] = {}
-pending_wakeups: Dict[int, Dict[str, Any]] = {}
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -374,7 +437,127 @@ def mark_wakeup_sent(wakeup_id: str):
         .eq("id", wakeup_id)
         .execute()
     )
+# ---------- Routine persistence ----------
 
+def fetch_active_routine(person: str = "Daniel") -> Optional[Dict[str, Any]]:
+    if not require_supabase():
+        return None
+
+    response = (
+        supabase.table("metiche_routines")
+        .select("*")
+        .eq("user_id", person.lower())
+        .eq("active", True)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+
+    rows = response.data or []
+    return rows[0] if rows else None
+
+
+def save_routine(person: str, routine_name: str, routine_text: str):
+    if not require_supabase():
+        return {"ok": False, "reason": "Supabase not configured"}
+
+    user_id = person.lower()
+
+    (
+        supabase.table("metiche_routines")
+        .update({"active": False})
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+    response = (
+        supabase.table("metiche_routines")
+        .insert({
+            "user_id": user_id,
+            "routine_name": routine_name,
+            "routine_text": routine_text,
+            "active": True,
+        })
+        .execute()
+    )
+
+    return {"ok": True, "data": response.data}
+
+
+# ---------- Persistent ping schedules ----------
+
+def save_ping_schedule(
+    channel_id: int,
+    person: str,
+    interval_minutes: int,
+    prompt: str,
+    source: str = "mtoday",
+):
+    if not require_supabase():
+        return {"ok": False, "reason": "Supabase not configured"}
+
+    next_ping_at = datetime.now() + timedelta(minutes=interval_minutes)
+
+    response = (
+        supabase.table("metiche_ping_schedules")
+        .insert({
+            "channel_id": str(channel_id),
+            "person": person,
+            "interval_minutes": interval_minutes,
+            "next_ping_at": next_ping_at.isoformat(),
+            "prompt": prompt,
+            "source": source,
+            "status": "active",
+        })
+        .execute()
+    )
+
+    return {"ok": True, "data": response.data}
+
+
+def fetch_due_pings(now: datetime):
+    if not require_supabase():
+        return []
+
+    response = (
+        supabase.table("metiche_ping_schedules")
+        .select("*")
+        .eq("status", "active")
+        .lte("next_ping_at", now.isoformat())
+        .execute()
+    )
+
+    return response.data or []
+
+
+def advance_ping_schedule(ping_id: str, interval_minutes: int):
+    if not require_supabase():
+        return
+
+    next_ping_at = datetime.now() + timedelta(minutes=interval_minutes)
+
+    (
+        supabase.table("metiche_ping_schedules")
+        .update({
+            "last_sent_at": datetime.now().isoformat(),
+            "next_ping_at": next_ping_at.isoformat(),
+        })
+        .eq("id", ping_id)
+        .execute()
+    )
+
+
+def stop_ping_schedules(channel_id: int):
+    if not require_supabase():
+        return
+
+    (
+        supabase.table("metiche_ping_schedules")
+        .update({"status": "stopped"})
+        .eq("channel_id", str(channel_id))
+        .eq("status", "active")
+        .execute()
+    )
 # ---------- Weekly execution logic ----------
 
 def build_weekly_execution(
@@ -554,22 +737,32 @@ def format_execution_summary(execution: WeeklyExecution) -> str:
     lines.extend([f"- {task}" for task in execution.priority_tasks])
     return "\n".join(lines)
 
-def build_wakeup_message(execution: WeeklyExecution) -> str:
+def build_wakeup_message(execution: WeeklyExecution, routine: Optional[Dict[str, Any]] = None) -> str:
+    routine_text = None
+
+    if routine:
+        routine_text = routine.get("routine_text")
+
+    if not routine_text:
+        routine_text = (
+            "1. Shower + shave\n"
+            "2. Get dressed\n"
+            "3. Make sit-down breakfast\n"
+            "4. Kids pack snacks/lunch boxes from staged counter snacks\n"
+            "5. Confirm first job / first work block"
+        )
+
     return (
         "🌅 Daniel morning boot sequence\n"
         f"Audio runway: {DEFAULT_CHILLHOP_URL}\n\n"
-        "1. Shower + shave\n"
-        "2. Get dressed\n"
-        "3. Make sit-down breakfast\n"
-        "4. Kids pack snacks/lunch boxes from staged counter snacks\n"
-        "5. Confirm first job / first work block\n\n"
+        f"{routine_text}\n\n"
         f"Weekly target: {format_money(execution.target_amount)}\n"
         f"Scheduled revenue: {format_money(execution.scheduled_revenue)}\n"
         f"Revenue gap: {format_money(execution.revenue_gap)}\n"
         f"Mode: {execution.primary_mode}\n\n"
         "Priorities:\n"
         + "\n".join([f"- {task}" for task in execution.priority_tasks])
-        + "\n\nStart with the shower. No algorithm hole."
+        + "\n\nStart with the first physical step. No algorithm hole."
     )
 
 
@@ -629,27 +822,7 @@ def find_best_task_match(tasks: List[Dict[str, Any]], text: str) -> Optional[int
 class MeticheManager:
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.channel_id: Optional[int] = None
-        self.bodydouble_on = False
-        self.next_checkin: Optional[datetime] = None
-        self.checkin_interval_hours = 2
         self.data_service_url = os.getenv("DATA_SERVICE_URL", "").rstrip("/")
-
-    def turn_on_bodydouble(self, channel_id: int):
-        self.channel_id = channel_id
-        self.bodydouble_on = True
-        self.next_checkin = datetime.now() + timedelta(hours=self.checkin_interval_hours)
-
-    def turn_off_bodydouble(self):
-        self.bodydouble_on = False
-        self.next_checkin = None
-
-    def bump_bodydouble_timer(self):
-        if self.bodydouble_on:
-            self.next_checkin = datetime.now() + timedelta(hours=self.checkin_interval_hours)
-
-    def build_bodydouble_prompt(self) -> str:
-        return "¿Qué onda?\nWhat have you been doing since the last time marker?"
 
     async def start_loop(self):
         while True:
@@ -659,30 +832,38 @@ class MeticheManager:
             due_wakeups = fetch_due_wakeups(now)
 
             for wakeup in due_wakeups:
-                channel_id = int(wakeup["channel_id"])
-                channel = self.bot.get_channel(channel_id)
-            
+                channel = self.bot.get_channel(int(wakeup["channel_id"]))
+
                 if not channel:
                     continue
-            
+
                 week = week_of_monday(datetime.now())
                 _, execution, _, _, _ = current_weekly_context(week)
-            
-                await channel.send(build_wakeup_message(execution))
-            
+                routine = fetch_active_routine(wakeup.get("person", "Daniel"))
+
+                await channel.send(build_wakeup_message(execution, routine))
                 mark_wakeup_sent(wakeup["id"])
-        
-            if not self.channel_id or not self.bodydouble_on or not self.next_checkin:
-                continue
-            if datetime.now() >= self.next_checkin:
-                channel = self.bot.get_channel(self.channel_id)
-                if channel:
-                    await channel.send(self.build_bodydouble_prompt())
-                self.next_checkin = datetime.now() + timedelta(hours=self.checkin_interval_hours)
+
+            due_pings = fetch_due_pings(now)
+
+            for ping in due_pings:
+                channel = self.bot.get_channel(int(ping["channel_id"]))
+
+                if not channel:
+                    continue
+
+                prompt = ping.get("prompt") or "¿Qué onda? What changed since the last time marker?"
+                await channel.send(prompt)
+
+                advance_ping_schedule(
+                    ping["id"],
+                    int(ping.get("interval_minutes") or 120),
+                )
 
     def post_json(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not self.data_service_url:
             return {"ok": False, "reason": "DATA_SERVICE_URL not set"}
+
         url = f"{self.data_service_url}/{endpoint.lstrip('/')}"
         req = request.Request(
             url,
@@ -690,6 +871,7 @@ class MeticheManager:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+
         try:
             with request.urlopen(req, timeout=10) as resp:
                 return {"ok": True, "status": resp.status, "body": resp.read().decode("utf-8")}
@@ -703,13 +885,11 @@ class MeticheManager:
             "calendarKey": PERSON_TO_CALENDAR_KEY.get(person),
             "schedule": person_schedule,
         }
-    
+
         print("PUSHING CALENDAR:", payload)
-    
         result = self.post_json("calendar", payload)
-    
         print("CALENDAR PUSH RESULT:", result)
-    
+
         return result
 
     def push_task_summary_json(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -859,7 +1039,6 @@ def register_metiche(bot: commands.Bot):
             await push_daily_tasks_to_calendar(ctx, session)
 
         push_result = metiche.push_task_summary_json(build_raw_time_payload(session))
-        metiche.bump_bodydouble_timer()
 
         msg = f"⏱️ Logged {minutes_to_label(duration)} — {activity_text}\nTotal accounted today: {build_raw_time_payload(session)['total_label']}"
         if match_idx is not None:
@@ -883,12 +1062,7 @@ Planning
 Daily Use
 !mwakeup — Daniel morning boot checklist + chillhop link
 !mtoday — start today’s working list and raw time accounting
-!mcheckin <what you were doing> — manual raw time entry
 !mstopday — stop today’s time session
-
-Bodydouble
-!mbodydouble — Que onda every 2 hours
-!mquiet — turn off Que onda pings
 """
         )
 
@@ -1107,7 +1281,31 @@ Bodydouble
         )
         metiche.push_calendar_json(person, calendar_json[person])
         metiche.push_task_summary_json(build_raw_time_payload(session))
-        metiche.turn_on_bodydouble(ctx.channel.id)
+        await ctx.send(
+            "Do you want optional check-in pings today?\n"
+            "Reply with:\n"
+            "`none`\n"
+            "`15`\n"
+            "`30`\n"
+            "`60`\n"
+            "`120`"
+        )
+        
+        ping_reply = (await bot.wait_for("message", check=check)).content.strip().lower()
+        
+        if ping_reply not in {"none", "no", "0"}:
+            try:
+                interval = int(ping_reply)
+        
+                save_ping_schedule(
+                    channel_id=ctx.channel.id,
+                    person=person,
+                    interval_minutes=interval,
+                    prompt="¿Qué onda? What changed since the last time marker?",
+                )
+
+            except ValueError:
+                await ctx.send("I couldn’t read that interval, so I skipped pings.")
 
         await ctx.send(
             "Locked for today. Raw time accounting starts now.\n\n"
@@ -1118,32 +1316,18 @@ Bodydouble
     @bot.command(name="mstopday")
     async def mstopday(ctx: commands.Context):
         session = active_time_sessions.pop(ctx.channel.id, None)
-        metiche = get_metiche()
-        if metiche is not None:
-            metiche.turn_off_bodydouble()
+        stop_ping_schedules(ctx.channel.id)
+        
         if not session:
             await ctx.send("No active time session was running.")
-            return
+            return    
         payload = build_raw_time_payload(session)
         await ctx.send(f"Stopped today’s time session.\nTotal accounted: {payload['total_label']}\nBlocks logged: {payload['blocks_logged']}")
 
-    @bot.command(name="mbodydouble")
-    async def mbodydouble(ctx: commands.Context):
-        metiche = get_metiche()
-        if metiche is None:
-            await ctx.send("Metiche isn’t initialized yet.")
-            return
-        metiche.turn_on_bodydouble(ctx.channel.id)
-        await ctx.send(metiche.build_bodydouble_prompt())
-
     @bot.command(name="mquiet")
     async def mquiet(ctx: commands.Context):
-        metiche = get_metiche()
-        if metiche is None:
-            await ctx.send("Metiche isn’t initialized yet.")
-            return
-        metiche.turn_off_bodydouble()
-        await ctx.send("Okay. I’ll be quiet.")
+        stop_ping_schedules(ctx.channel.id)
+        await ctx.send("Okay. I stopped the check-in pings.")
 
     @bot.command(name="mgoals")
     async def mgoals(ctx: commands.Context):
@@ -1161,10 +1345,6 @@ Bodydouble
         save_weekly_snapshot(ctx, week, execution, calendar_json, quarterly_goals=quarterly_goals, yearly_goals=yearly_goals)
         await ctx.send("Locked. I saved your quarterly and yearly goals.")
 
-    @bot.command(name="mcheckin")
-    async def mcheckin(ctx: commands.Context, *, entry: str = ""):
-        await log_raw_time_block(ctx, entry, source="manual")
-
     @bot.listen("on_message")
     async def metiche_time_listener(message: discord.Message):
         if message.author.bot or message.content.startswith("!"):
@@ -1179,6 +1359,4 @@ Bodydouble
             await log_raw_time_block(ctx, message.content, source="active_day")
             return
 
-        if metiche.bodydouble_on and metiche.channel_id == message.channel.id:
-            await log_raw_time_block(ctx, message.content, source="que_onda")
-
+       
