@@ -62,29 +62,12 @@ async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
 
-    # If Metiche is waiting for a yes/no in her active channel, handle it
-    if metiche and metiche.channel_id == message.channel.id and getattr(metiche, "awaiting_accountant_choice", False):
-        text = message.content.lower().strip()
-
-        if text in ("yes", "y"):
-            metiche.awaiting_accountant_choice = False
-            metiche.turn_on(message.channel.id)
-            await message.channel.send("✅ Accountant mode ON. I’ll check in every 2 hours (until 5pm).")
-            return
-
-        if text in ("no", "n"):
-            metiche.awaiting_accountant_choice = False
-            await message.channel.send("👌 Okay. Accountant mode skipped. You can still use `!metiche_on` later.")
-            return
         
 @bot.command(name="cholobots")
 async def cholobots(ctx):
     msg = """
     🤖 WHO ARE THE CHOLOBOTS?
-        
-    If your business is going sideways, consider these new hires.
-        
-    The Cholobots are your four office staff: part thug, part guru, fully committed to dragging your business toward functionality.
+    The Cholobots are hustlers who can be your best friends for life. If you need to grind as an entrepreneur, or to set a goal, these guys can help!
         
     💬 CHISMEBOT
     Chismebot wants to talk about everybody.
