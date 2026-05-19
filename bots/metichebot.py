@@ -1376,15 +1376,37 @@ def register_metiche(bot: commands.Bot):
             f"💰 Weekly target: {format_money(execution.target_amount)}\n"
             f"🧭 Mode: {execution.primary_mode}\n\n"
             + format_daily_tasks(existing_today, person, today_label())
-            + "\n\nAny changes for today? Reply with the new full list, or say `no changes`."
+            + "\n\nReply with:\n"
+                "`start` — begin task accounting\n"
+                "`edit` — change this list first\n"
+                "`cancel` — stop"
         )
-        changes = (await bot.wait_for("message", check=check)).content.strip()
-        if changes.lower() not in {"no", "no changes", "same", "keep"}:
-            parsed = parse_task_list(changes)
+        
+        choice = (await bot.wait_for("message", check=check)).content.strip().lower()
+
+        if choice == "cancel":
+            await ctx.send("Okay. I stopped before starting task accounting.")
+            return
+
+        if choice == "edit":
+            await ctx.send(
+                "Tell me the corrected list. Use commas or separate lines.\n"
+                "Only include what still belongs in the rest of today."
+            )
+
+            edited = (await bot.wait_for("message", check=check)).content.strip()
+            parsed = parse_task_list(edited)
+
             if parsed:
                 existing_today = parsed
             else:
-                await ctx.send("I couldn’t read that as a list, so I kept the current list.")
+                await ctx.send(
+                    "I couldn’t read that as a list, so I kept the current list."
+                )
+
+        elif choice != "start":
+            await ctx.send("I need `start`, `edit`, or `cancel`.")
+            return
 
         session = TimeSession(
             channel_id=ctx.channel.id,
