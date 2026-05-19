@@ -1052,18 +1052,29 @@ def register_metiche(bot: commands.Bot):
     async def metichebot_help(ctx):
         await ctx.send(
             """
-🧠 METICHEBOT
-
-Planning
-!mweekly — update current operating target and choose the next revenue-gap lever!mplan — show the current weekly execution plan
-!mschedule — manually add/change/replace a person schedule
-!mgoals — save quarterly and yearly goals
-
-Daily Use
-!mwakeup — Daniel morning boot checklist + chillhop link
-!mtoday — start today’s working list and raw time accounting
-!mstopday — stop today’s time session
-"""
+        🧠 METICHEBOT
+        
+        Metichebot helps structure:
+        - planning
+        - routines
+        - scheduling
+        - priorities
+        - operational flow
+        - task accounting
+        
+        Planning
+        !mweekly — update weekly operating target and execution strategy
+        !mplan — show current weekly execution plan
+        !mschedule — add/change/replace a schedule
+        !mgoals — save quarterly and yearly goals
+        
+        Daily Operations
+        !mroutine — view or edit morning routines
+        !mwakeup — schedule Daniel’s morning boot sequence
+        !mtoday — structure today’s work and optional check-in cadence
+        !mstopday — stop today’s time session
+        !mquiet — stop reminder/check-in pings
+        """
         )
 
     @bot.command(name="mweekly")
