@@ -17,7 +17,7 @@ from bots.chismebot import register_chisme
 from bots.metichebot import register_metiche, get_metiche
 from bots.guardabot import register_guard
 from bots.crudobot import register_crudo
-from bots.obijuan import setup_obijuan
+#from bots.obijuan import setup_obijuan
 
 from db.database import (
     init_guardabot_db,
@@ -48,9 +48,9 @@ async def on_ready():
     
     init_crudobot_db()
     if not hasattr(bot, "obijuan_loaded"):
-        await setup_obijuan(bot)
-        bot.obijuan_loaded = True
-        print("✅ ObiJuan loaded")
+        #await setup_obijuan(bot)
+        #bot.obijuan_loaded = True
+        #print("✅ ObiJuan loaded")
             
     print(f"✅ Logged in as {bot.user} | Guardabot DB: {GUARDABOT_DB}")
     
