@@ -56,11 +56,8 @@ async def on_ready():
     
     metiche = get_metiche()
     if metiche is not None:
-        if not getattr(metiche, "schedule", None):
-            metiche.generate_daily_schedule()
-        
-            if getattr(metiche, "loop_task", None) is None or metiche.loop_task.done():
-                metiche.loop_task = bot.loop.create_task(metiche.start_loop())
+        if getattr(metiche, "loop_task", None) is None or metiche.loop_task.done():
+            metiche.loop_task = bot.loop.create_task(metiche.start_loop())
         
 @bot.event
 async def on_message(message: discord.Message):
