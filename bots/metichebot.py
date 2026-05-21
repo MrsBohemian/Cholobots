@@ -483,8 +483,6 @@ def save_routine(person: str, routine_name: str, routine_text: str):
     )
 
     return {"ok": True, "data": response.data}
-
-
 # ---------- Persistent ping schedules ----------
 
 def save_ping_schedule(
@@ -501,7 +499,7 @@ def save_ping_schedule(
 
     response = (
         supabase.table("metiche_ping_schedules")
-        .insert({
+        .upsert({
             "channel_id": str(channel_id),
             "person": person,
             "interval_minutes": interval_minutes,
@@ -509,12 +507,11 @@ def save_ping_schedule(
             "prompt": prompt,
             "source": source,
             "status": "active",
-        })
+        }, on_conflict="channel_id")
         .execute()
     )
 
     return {"ok": True, "data": response.data}
-
 
 def fetch_due_pings(now: datetime):
     if not require_supabase():
