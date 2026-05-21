@@ -1339,8 +1339,7 @@ def register_metiche(bot: commands.Bot):
                 yearly_goals=yearly_goals,
                 )
         
-        push_result = metiche.push_calendar_json(person, calendar_json[person])
-        status = "Pushed today’s brain dump to the calendar." if push_result.get("ok") else f"Saved, but dashboard push failed: {push_result.get('reason')}"
+        status = "Added today’s brain dump items to mtoday."
         
         summary = (
             "🧠 Brain dump sorted.\n\n"
