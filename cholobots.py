@@ -62,7 +62,7 @@ async def on_ready():
         if getattr(metiche, "loop_task", None) is None or metiche.loop_task.done():
             metiche.loop_task = bot.loop.create_task(metiche.start_loop())
         
-@bot.listen()
+@bot.event
 async def on_message(message: discord.Message):
     
     # Ignore the bot's own messages
