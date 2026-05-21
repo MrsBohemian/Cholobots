@@ -120,7 +120,6 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
-
 @dataclass
 class TimeSession:
     channel_id: int
@@ -128,6 +127,7 @@ class TimeSession:
     date_iso: str
     date_label: str
     last_timestamp: str
+    active_task: Optional[str] = None
     blocks: List[Dict[str, Any]] = field(default_factory=list)
     daily_tasks: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -1370,84 +1370,103 @@ def register_metiche(bot: commands.Bot):
         if metiche is None:
             await ctx.send("Metiche isn’t initialized yet.")
             return
-
+    
         def check(m: discord.Message):
             return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
-
+    
         week = week_of_monday(datetime.now())
         _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
-
-        await ctx.send(f"Today is {today_label()}.\nWho are we working as today?\n(Heaven / Daniel / Handley Man)")
-        person_raw = (await bot.wait_for("message", check=check)).content.strip()
-        person = next((p for p in VALID_PEOPLE if p.lower() == person_raw.lower()), None)
-        if not person:
-            await ctx.send("I need one of: Heaven / Daniel / Handley Man")
-            return
-
+    
+        person = "Heaven"
         date_key = today_iso()
+    
         existing_today = load_daily_tasks(person, date_key)
         if not existing_today:
             existing_today = normalize_daily_items(calendar_json.get(person, {}).get(date_key, []))
-
+    
         await ctx.send(
             f"📅 Today is {today_label()}\n"
             f"💰 Weekly target: {format_money(execution.target_amount)}\n"
             f"🧭 Mode: {execution.primary_mode}\n\n"
             + format_daily_tasks(existing_today, person, today_label())
-            + "\n\nReply with:\n"
-                "`start` — begin task accounting\n"
-                "`edit` — change this list first\n"
-                "`cancel` — stop"
+            + "\n\nWhat are you working on right now?\n"
+              "Reply with a task number or a short focus label.\n"
+              "Examples:\n"
+              "`1`\n"
+              "`metichebot`\n"
+              "`customer communication`\n\n"
+              "Or reply:\n"
+              "`edit` — change today’s list first\n"
+              "`cancel` — stop"
         )
-        
-        choice = (await bot.wait_for("message", check=check)).content.strip().lower()
-
-        if choice == "cancel":
+    
+        choice = (await bot.wait_for("message", check=check)).content.strip()
+    
+        if choice.lower() == "cancel":
             await ctx.send("Okay. I stopped before starting task accounting.")
             return
-
-        if choice == "edit":
+    
+        if choice.lower() == "edit":
             await ctx.send(
                 "Tell me the corrected list. Use commas or separate lines.\n"
                 "Only include what still belongs in the rest of today."
             )
-
+    
             edited = (await bot.wait_for("message", check=check)).content.strip()
             parsed = parse_task_list(edited)
-
+    
             if parsed:
                 existing_today = parsed
             else:
-                await ctx.send(
-                    "I couldn’t read that as a list, so I kept the current list."
-                )
-
-        elif choice != "start":
-            await ctx.send("I need `start`, `edit`, or `cancel`.")
-            return
-
+                await ctx.send("I couldn’t read that as a list, so I kept the current list.")
+    
+            await ctx.send(
+                format_daily_tasks(existing_today, person, today_label())
+                + "\n\nNow what are you working on right now?"
+            )
+            choice = (await bot.wait_for("message", check=check)).content.strip()
+    
+        active_focus = choice
+    
+        if choice.isdigit():
+            idx = int(choice) - 1
+            tasks = normalize_daily_items(existing_today)
+            if 0 <= idx < len(tasks):
+                active_focus = tasks[idx]["text"]
+            else:
+                await ctx.send("I couldn’t match that task number, so I’ll use it as a focus label.")
+    
         session = TimeSession(
             channel_id=ctx.channel.id,
             person=person,
             date_iso=date_key,
             date_label=today_label(),
             last_timestamp=now_iso(),
+            active_task=active_focus,
             daily_tasks=normalize_daily_items(existing_today),
         )
+    
         active_time_sessions[ctx.channel.id] = session
+        calendar_json.setdefault(person, {})
         calendar_json[person][date_key] = session.daily_tasks
+    
         replace_daily_tasks(person, date_key, session.daily_tasks)
+    
         save_weekly_snapshot(
-            ctx, week, execution, calendar_json,
+            ctx,
+            week,
+            execution,
+            calendar_json,
             wants_bodydouble=True,
             quarterly_goals=quarterly_goals,
             yearly_goals=yearly_goals,
             raw_time=build_raw_time_payload(session),
         )
-        metiche.push_calendar_json(person, calendar_json[person])
+    
         metiche.push_task_summary_json(build_raw_time_payload(session))
+    
         await ctx.send(
-            "Do you want optional check-in pings today?\n"
+            "Do you want Que Onda check-in pings today?\n"
             "Reply with:\n"
             "`none`\n"
             "`15`\n"
@@ -1455,27 +1474,31 @@ def register_metiche(bot: commands.Bot):
             "`60`\n"
             "`120`"
         )
-        
+    
         ping_reply = (await bot.wait_for("message", check=check)).content.strip().lower()
-        
+    
         if ping_reply not in {"none", "no", "0"}:
             try:
                 interval = int(ping_reply)
-        
+    
                 save_ping_schedule(
                     channel_id=ctx.channel.id,
                     person=person,
                     interval_minutes=interval,
-                    prompt="¿Qué onda? What changed since the last time marker?",
+                    prompt=f"¿Qué onda? Still on {active_focus}, or did something change?",
                 )
-
+    
             except ValueError:
                 await ctx.send("I couldn’t read that interval, so I skipped pings.")
 
         await ctx.send(
-            "Locked for today. Raw time accounting starts now.\n\n"
-            + format_daily_tasks(session.daily_tasks, person, today_label())
-            + "\n\nWhen I ask `Qué onda?`, tell me what you have been doing since the last time marker."
+            f"🟢 Active focus: {active_focus}\n\n"
+            "Task accounting starts now.\n"
+            "When something changes, just tell me what changed.\n\n"
+            "Examples:\n"
+            "`finished metichebot, switching to customer communication`\n"
+            "`still on metichebot, debugging mtoday`\n"
+            "`sent three customer texts, now picking up Evelyn`"
         )
 
     @bot.command(name="mstopday")
