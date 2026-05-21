@@ -826,6 +826,7 @@ class MeticheManager:
         self.data_service_url = os.getenv("DATA_SERVICE_URL", "").rstrip("/")
 
     async def start_loop(self):
+        print("[METICHE LOOP] heartbeat")
         while True:
             await asyncio.sleep(30)
             now = datetime.now()
@@ -846,6 +847,7 @@ class MeticheManager:
                 mark_wakeup_sent(wakeup["id"])
 
             due_pings = fetch_due_pings(now)
+            print(f"[PING SCHEDULES DUE] {due_pings}")
 
             for ping in due_pings:
                 channel = self.bot.get_channel(int(ping["channel_id"]))
