@@ -907,6 +907,7 @@ def build_raw_time_payload(session: TimeSession) -> Dict[str, Any]:
         "mode": "raw_time_accounting",
         "date": session.date_iso,
         "person": session.person,
+        "active_task": session.active_task,
         "last_timestamp": session.last_timestamp,
         "total_minutes": total_minutes(session.blocks),
         "total_label": minutes_to_label(total_minutes(session.blocks)),
@@ -1058,6 +1059,7 @@ def register_metiche(bot: commands.Bot):
             "duration_minutes": duration,
             "duration_label": minutes_to_label(duration),
             "activity": activity_text,
+            "active_task": session.active_task,
             "source": source,
         }
         session.blocks.append(block)
@@ -1080,7 +1082,12 @@ def register_metiche(bot: commands.Bot):
 
         push_result = metiche.push_task_summary_json(build_raw_time_payload(session))
 
-        msg = f"⏱️ Logged {minutes_to_label(duration)} — {activity_text}\nTotal accounted today: {build_raw_time_payload(session)['total_label']}"
+        msg = (
+            f"⏱️ Logged {minutes_to_label(duration)} on {session.active_task or 'unassigned focus'}\n"
+            f"Update: {activity_text}\n"
+            f"Total accounted today: {build_raw_time_payload(session)['total_label']}"
+        )
+                
         if match_idx is not None:
             msg += f"\n✅ Checked off: {session.daily_tasks[match_idx]['text']}"
         if not push_result.get("ok"):
@@ -1464,17 +1471,27 @@ def register_metiche(bot: commands.Bot):
         )
     
         metiche.push_task_summary_json(build_raw_time_payload(session))
-    
+
+        pending_tasks = [
+            task for task in normalize_daily_items(existing_today)
+            if normalize_task(task.get("text", "")) != normalize_task(active_focus)
+        ]
+        
+        pending_text = "\n".join(
+            [f"- {task['text']}" for task in pending_tasks]
+        ) or "(nothing else pending)"
+        
+        await ctx.send(
+            f"🟢 Active focus:\n{active_focus}\n\n"
+            f"⏳ Pending:\n{pending_text}\n\n"
+            "Task accounting is now active."
+        )
+        
         await ctx.send(
             "Do you want Que Onda check-in pings today?\n"
-            "Reply with:\n"
-            "`none`\n"
-            "`15`\n"
-            "`30`\n"
-            "`60`\n"
-            "`120`"
+            "Reply with: `none`, `15`, `30`, `60`, or `120`"
         )
-    
+
         ping_reply = (await bot.wait_for("message", check=check)).content.strip().lower()
     
         if ping_reply not in {"none", "no", "0"}:
@@ -1492,13 +1509,8 @@ def register_metiche(bot: commands.Bot):
                 await ctx.send("I couldn’t read that interval, so I skipped pings.")
 
         await ctx.send(
-            f"🟢 Active focus: {active_focus}\n\n"
-            "Task accounting starts now.\n"
-            "When something changes, just tell me what changed.\n\n"
-            "Examples:\n"
-            "`finished metichebot, switching to customer communication`\n"
-            "`still on metichebot, debugging mtoday`\n"
-            "`sent three customer texts, now picking up Evelyn`"
+            "Task accounting is active.\n"
+            "When something changes, just tell me what changed."
         )
 
     @bot.command(name="mstopday")
