@@ -128,6 +128,7 @@ class TimeSession:
     date_label: str
     last_timestamp: str
     active_task: Optional[str] = None
+    setup_complete: bool = False
     blocks: List[Dict[str, Any]] = field(default_factory=list)
     daily_tasks: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -1507,7 +1508,8 @@ def register_metiche(bot: commands.Bot):
     
             except ValueError:
                 await ctx.send("I couldn’t read that interval, so I skipped pings.")
-
+                
+        session.setup_complete = True
         await ctx.send(
             "Task accounting is active.\n"
             "When something changes, just tell me what changed."
@@ -1555,7 +1557,9 @@ def register_metiche(bot: commands.Bot):
             return
 
         ctx = await bot.get_context(message)
-        if message.channel.id in active_time_sessions:
+        session = active_time_sessions.get(message.channel.id)
+
+        if session and session.setup_complete:
             await log_raw_time_block(ctx, message.content, source="active_day")
             return
 
