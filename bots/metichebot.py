@@ -961,33 +961,44 @@ def current_weekly_context(week: str) -> Tuple[Dict[str, Any], WeeklyExecution, 
 
 
 # ---------- registration / commands ----------
-def autosort_braindump_items(items: List[str]) -> Dict[str, List[str]]:
+def parse_braindump_categories(response: str, items: List[str]) -> Dict[str, List[str]]:
     buckets = {
         "today": [],
-        "later": [],
-        "delegate": [],
-        "waiting": [],
-        "delete": [],
+        "week": [],
+        "hold": [],
     }
 
-    today_words = ["today", "lunch", "bus", "launch", "library", "work on", "finish", "pick up", "ride"]
-    waiting_words = ["waiting", "reach out", "follow up", "email", "call", "text", "schedule"]
-    later_words = ["plan", "menu", "clean", "fridge", "kitchen", "summer", "landscaping", "transportation"]
-    delegate_words = ["daniel", "samuel", "jesse", "delegate", "ask"]
+    lines = response.splitlines()
 
-    for item in items:
-        norm = normalize_task(item)
+    for line in lines:
+        line = line.strip()
 
-        if any(word in norm for word in waiting_words):
-            buckets["waiting"].append(item)
-        elif any(word in norm for word in delegate_words):
-            buckets["delegate"].append(item)
-        elif any(word in norm for word in today_words):
-            buckets["today"].append(item)
-        elif any(word in norm for word in later_words):
-            buckets["later"].append(item)
-        else:
-            buckets["later"].append(item)
+        if ":" not in line:
+            continue
+
+        prefix, values = line.split(":", 1)
+
+        prefix = prefix.strip().lower()
+
+        indexes = []
+
+        for part in values.split(","):
+            part = part.strip()
+
+            if part.isdigit():
+                idx = int(part) - 1
+
+                if 0 <= idx < len(items):
+                    indexes.append(items[idx])
+
+        if prefix == "t":
+            buckets["today"].extend(indexes)
+
+        elif prefix == "w":
+            buckets["week"].extend(indexes)
+
+        elif prefix == "h":
+            buckets["hold"].extend(indexes)
 
     return buckets
     
@@ -1285,65 +1296,73 @@ def register_metiche(bot: commands.Bot):
             await ctx.send("I didn’t catch any items. Try again with a list or a few lines.")
             return
 
-        buckets = autosort_braindump_items(dumped_items)
-
         preview = (
-            "🧠 Proposed sort:\n\n"
-            f"**Today**\n- " + "\n- ".join(buckets["today"] or ["(empty)"]) + "\n\n"
-            f"**Later**\n- " + "\n- ".join(buckets["later"] or ["(empty)"]) + "\n\n"
-            f"**Delegate**\n- " + "\n- ".join(buckets["delegate"] or ["(empty)"]) + "\n\n"
-            f"**Waiting**\n- " + "\n- ".join(buckets["waiting"] or ["(empty)"]) + "\n\n"
-            f"**Delete**\n- " + "\n- ".join(buckets["delete"] or ["(empty)"]) + "\n\n"
-            "Reply with:\n"
-            "`yes` to accept\n"
-            "`no` to cancel"
+            "🧠 Here's what you're holding:\n\n"
+            + "\n".join(
+                [f"{idx + 1}. {item}" for idx, item in enumerate(dumped_items)]
+            )
+            + "\n\n"
+            "What belongs:\n"
+            "`T:` Today\n"
+            "`W:` This Week\n"
+            "`H:` Hold\n\n"
+            "Example:\n"
+            "T: 1, 3\n"
+            "W: 2, 5\n"
+            "H: 4"
         )
-
+        
         await ctx.send(preview)
-
-        confirmation = (await bot.wait_for("message", check=check)).content.strip().lower()
-
-        if confirmation not in {"yes", "y"}:
-            await ctx.send("Okay. Brain dump canceled.")
-            return
-
+        
+        response = (await bot.wait_for("message", check=check)).content.strip()
+        buckets = parse_braindump_categories(response, dumped_items)
+        
         date_key = today_iso()
         person = "Heaven"
-
+        
         today_tasks = [{"text": item, "done": False, "source": "mbraindump"} for item in buckets["today"]]
-
+        
         existing_today = load_daily_tasks(person, date_key)
         merged_today = normalize_daily_items(existing_today) + today_tasks
-
+        
         calendar_json.setdefault(person, {})
         calendar_json[person][date_key] = merged_today
-
+        
         replace_daily_tasks(person, date_key, merged_today)
         save_weekly_snapshot(
-            ctx,
-            week,
-            execution,
-            calendar_json,
-            wants_bodydouble=False,
-            quarterly_goals=quarterly_goals,
-            yearly_goals=yearly_goals,
-        )
-
+                ctx,
+                week,
+                execution,
+                calendar_json,
+                wants_bodydouble=False,
+                quarterly_goals=quarterly_goals,
+                yearly_goals=yearly_goals,
+                )
+        
         push_result = metiche.push_calendar_json(person, calendar_json[person])
         status = "Pushed today’s brain dump to the calendar." if push_result.get("ok") else f"Saved, but dashboard push failed: {push_result.get('reason')}"
-
+        
         summary = (
             "🧠 Brain dump sorted.\n\n"
             f"Today: {len(buckets['today'])}\n"
-            f"Later: {len(buckets['later'])}\n"
-            f"Delegate: {len(buckets['delegate'])}\n"
-            f"Waiting: {len(buckets['waiting'])}\n"
-            f"Delete: {len(buckets['delete'])}\n\n"
+            f"This Week: {len(buckets['week'])}\n"
+            f"Hold: {len(buckets['hold'])}\n\n"
             f"{status}\n\n"
-            "Run `!mtoday` when you’re ready to structure the actual day."
+            "Do you want to launch today's work session now?\n"
+            "`yes` — continue into today's task accounting\n"
+            "`later` — stop here"
         )
-
+        
         await ctx.send(summary)
+        
+        launch_reply = (await bot.wait_for("message", check=check)).content.strip().lower()
+        
+        if launch_reply not in {"yes", "y"}:
+            await ctx.send("Okay. Brain dump is held. Come back when you're ready.")
+            return
+        
+        await ctx.send("Good. Next step is wiring this directly into the work session.")
+        
         
     @bot.command(name="mtoday")
     async def mtoday(ctx: commands.Context):
