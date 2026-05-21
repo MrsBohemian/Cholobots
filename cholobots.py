@@ -64,10 +64,36 @@ async def on_ready():
         
 @bot.listen()
 async def on_message(message: discord.Message):
-    
-    # ignore the bot's own messages
+
+    # Ignore the bot's own messages
     if message.author == bot.user:
         return
+
+    # Block attachments globally for now
+    if message.attachments:
+        print(
+            f"[ATTACHMENT BLOCKED] "
+            f"{message.author} sent attachment(s) "
+            f"in #{message.channel}"
+        )
+
+        await message.channel.send(
+            "Órale homie, I saw the attachment but file/image handling is disabled for now so I don't crash again."
+        )
+
+        return
+
+    # Keep the system alive if a bot crashes
+    try:
+        await bot.process_commands(message)
+
+    except Exception as e:
+        print(f"[MESSAGE ERROR] {e}")
+        traceback.print_exc()
+
+        await message.channel.send(
+            "Simón... something broke but the Cholobots stayed alive."
+        )
 
         
 @bot.command(name="cholobots")
