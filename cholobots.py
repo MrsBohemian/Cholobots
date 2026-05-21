@@ -63,8 +63,8 @@ async def on_ready():
             metiche.loop_task = bot.loop.create_task(metiche.start_loop())
         
 @bot.listen()
-async def on_message(message:message):
-
+async def on_message(message: discord.Message):
+    
     # Ignore the bot's own messages
     if message.author == bot.user:
         return
