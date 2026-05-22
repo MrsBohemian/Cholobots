@@ -789,6 +789,35 @@ def format_person_schedule(person: str, person_schedule: Dict[str, List[Any]]) -
     return "\n".join(lines)
 
 
+
+def strip_task_sources(person_schedule: Dict[str, List[Any]], hidden_sources: Optional[set] = None) -> Dict[str, List[Any]]:
+    hidden_sources = hidden_sources or {"mtoday", "mbraindump"}
+    cleaned: Dict[str, List[Any]] = {}
+    for iso_day, tasks in (person_schedule or {}).items():
+        kept = [
+            task for task in normalize_daily_items(tasks)
+            if task.get("source") not in hidden_sources
+        ]
+        if kept:
+            cleaned[iso_day] = kept
+    return cleaned
+
+
+def format_person_schedule_strategic(person: str, person_schedule: Dict[str, List[Any]]) -> str:
+    strategic = strip_task_sources(person_schedule)
+    hidden_count = 0
+    for tasks in (person_schedule or {}).values():
+        hidden_count += len([
+            task for task in normalize_daily_items(tasks)
+            if task.get("source") in {"mtoday", "mbraindump"}
+        ])
+
+    lines = [format_person_schedule(person, strategic)]
+    if hidden_count:
+        lines.append(f"\n({hidden_count} daily execution items hidden here. Use !mtoday to see today's working list.)")
+    return "\n".join(lines)
+
+
 def format_daily_tasks(tasks: List[Dict[str, Any]], person: str, date_label_str: str) -> str:
     tasks = normalize_daily_items(tasks)
     if not tasks:
@@ -1486,39 +1515,51 @@ def register_metiche(bot: commands.Bot):
         try:
             def check(m: discord.Message):
                 return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
-    
-            await ctx.send("What time should I run Daniel’s wakeup sequence? Example: `7:00 AM`")
-    
-            raw_time = (await bot.wait_for("message", check=check)).content.strip()
-            wake_time = parse_wakeup_time(raw_time)
-    
-            if raw_time.lower() in {"cancel", "done", "stop", "nevermind"}:
-                await ctx.send("Okay. Exiting wakeup setup.")
-                return
-            
-            if wake_time is None:
+
+            await ctx.send(
+                "What time should I run Daniel’s wakeup sequence?\n"
+                "Example: `7:00 AM` or `4:05 PM`\n"
+                "Reply `cancel` to stop."
+            )
+
+            while True:
+                raw_time = (await bot.wait_for("message", check=check)).content.strip()
+                lowered = raw_time.lower()
+
+                if lowered in {"cancel", "done", "stop", "nevermind"}:
+                    await ctx.send("Okay. Exiting wakeup setup.")
+                    return
+
+                if raw_time.startswith("!"):
+                    await ctx.send(
+                        "I got another command, so I’m exiting wakeup setup instead of treating that as a time."
+                    )
+                    return
+
+                wake_time = parse_wakeup_time(raw_time)
+
+                if wake_time is None:
+                    await ctx.send(
+                        "I couldn’t read that time. Try `7:00 AM`, `6:30`, or reply `cancel`."
+                    )
+                    continue
+
+                result = save_wakeup(
+                    channel_id=ctx.channel.id,
+                    person="Daniel",
+                    wake_time=wake_time,
+                    set_by=str(ctx.author),
+                )
+
+                if not result.get("ok"):
+                    await ctx.send(f"Failed to save wakeup: {result.get('reason')}")
+                    return
+
                 await ctx.send(
-                    "I couldn’t read that time.\n"
-                    "Try something like `7:00 AM` or `6:30`.\n"
-                    "Or reply `cancel`."
+                    f"✅ Daniel’s wakeup sequence is scheduled for {wake_time.strftime('%A, %B %-d at %-I:%M %p')}.\n"
+                    "Set his actual phone alarm too. I can ping Discord, but I can’t make the phone scream."
                 )
                 return
-    
-            result = save_wakeup(
-                channel_id=ctx.channel.id,
-                person="Daniel",
-                wake_time=wake_time,
-                set_by=str(ctx.author),
-            )
-    
-            if not result.get("ok"):
-                await ctx.send(f"Failed to save wakeup: {result.get('reason')}")
-                return
-    
-            await ctx.send(
-                f"✅ Daniel’s wakeup sequence is scheduled for {wake_time.strftime('%A, %B %-d at %-I:%M %p')}.\n"
-                "Set his actual phone alarm too. I can ping Discord, but I can’t make the phone scream."
-            )
         finally:
             channels_waiting_for_command.discard(ctx.channel.id)
 
@@ -1543,10 +1584,11 @@ def register_metiche(bot: commands.Bot):
             await ctx.send("I need one of: Heaven / Daniel / Handley Man")
             return
 
-        person_schedule = calendar_json.get(person, {})
+        full_person_schedule = calendar_json.get(person, {})
+        person_schedule = strip_task_sources(full_person_schedule)
         await ctx.send(
-            format_person_schedule(person, person_schedule)
-            + "\n\nWhat do you want to do?\n1. Add to schedule\n2. Change specific days\n3. Start over\nReply with 1, 2, or 3"
+            format_person_schedule_strategic(person, full_person_schedule)
+            + "\n\nWhat do you want to do?\n1. Add to weekly schedule\n2. Change specific weekly days\n3. Start weekly schedule over\nReply with 1, 2, or 3"
         )
         mode_raw = (await bot.wait_for("message", check=check)).content.strip().lower()
         if mode_raw in {"cancel", "exit", "stop"}:
