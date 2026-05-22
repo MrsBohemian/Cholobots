@@ -83,6 +83,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, date
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error, request
+from zoneinfo import ZoneInfo
+
+LOCAL_TZ = ZoneInfo("America/Chicago")
+
+def local_now():
+    return datetime.now(LOCAL_TZ)
 
 import discord
 from discord.ext import commands
@@ -155,14 +161,14 @@ def parse_iso(ts: str) -> datetime:
 
 def parse_wakeup_time(raw: str) -> Optional[datetime]:
     raw = raw.strip().lower().replace(".", "")
-    today = datetime.now().date()
+    today = local_now().date()
 
     for fmt in ("%I:%M %p", "%I %p", "%H:%M", "%H"):
         try:
             parsed = datetime.strptime(raw, fmt).time()
             wake_dt = datetime.combine(today, parsed)
 
-            if wake_dt <= datetime.now():
+            if wake_dt <= local_now():
                 wake_dt = wake_dt + timedelta(days=1)
 
             return wake_dt
@@ -178,12 +184,12 @@ def week_of_monday(d: datetime) -> str:
 
 
 def today_iso() -> str:
-    return datetime.now().date().isoformat()
+    return local_now().date().isoformat()
 
 
 def today_label() -> str:
     fmt = "%A, %B %-d" if os.name != "nt" else "%A, %B %#d"
-    return datetime.now().strftime(fmt)
+    return local_now().strftime(fmt)
 
 
 def money_to_float(raw: str) -> float:
@@ -216,7 +222,7 @@ def parse_task_list(text: str) -> List[Dict[str, Any]]:
 
 
 def day_to_iso(day_name: str, week_start: Optional[str] = None) -> str:
-    today = datetime.now().date()
+    today = local_now().date()
     target_index = DAY_NAMES.index(day_name.lower())
     today_index = today.weekday()
 
@@ -495,8 +501,8 @@ def save_ping_schedule(
     if not require_supabase():
         return {"ok": False, "reason": "Supabase not configured"}
 
-    next_ping_at = datetime.now() + timedelta(minutes=interval_minutes)
-
+    next_ping_at = local_now() + timedelta(minutes=interval_minutes)
+    
     response = (
         supabase.table("metiche_ping_schedules")
         .upsert({
@@ -532,12 +538,12 @@ def advance_ping_schedule(ping_id: str, interval_minutes: int):
     if not require_supabase():
         return
 
-    next_ping_at = datetime.now() + timedelta(minutes=interval_minutes)
+    next_ping_at = local_now() + timedelta(minutes=interval_minutes)
 
     (
         supabase.table("metiche_ping_schedules")
         .update({
-            "last_sent_at": datetime.now().isoformat(),
+            "last_sent_at": local_now().isoformat(),
             "next_ping_at": next_ping_at.isoformat(),
         })
         .eq("id", ping_id)
@@ -826,7 +832,7 @@ class MeticheManager:
         print("[METICHE LOOP] heartbeat")
         while True:
             await asyncio.sleep(30)
-            now = datetime.now()
+            now = local_now()
 
             due_wakeups = fetch_due_wakeups(now)
 
@@ -836,7 +842,7 @@ class MeticheManager:
                 if not channel:
                     continue
 
-                week = week_of_monday(datetime.now())
+                week = week_of_monday(local_now())
                 _, execution, _, _, _ = current_weekly_context(week)
                 routine = fetch_active_routine(wakeup.get("person", "Daniel"))
 
@@ -1012,7 +1018,7 @@ def register_metiche(bot: commands.Bot):
         if metiche is None or session.person not in VALID_PEOPLE:
             return
 
-        week = week_of_monday(datetime.now())
+        week = week_of_monday(local_now())
         _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
         person_schedule = calendar_json.get(session.person, {})
         person_schedule[session.date_iso] = normalize_daily_items(session.daily_tasks)
@@ -1050,7 +1056,7 @@ def register_metiche(bot: commands.Bot):
         if not activity_text:
             return None
 
-        now = datetime.now()
+        now = local_now()
         duration = max(0, int((now - parse_iso(session.last_timestamp)).total_seconds() // 60))
         block = {
             "date": session.date_iso,
@@ -1069,7 +1075,7 @@ def register_metiche(bot: commands.Bot):
             "ts": now_iso(),
             "discord_user": str(ctx.author),
             "channel_id": str(ctx.channel.id),
-            "week_of": week_of_monday(datetime.now()),
+            "week_of": week_of_monday(local_now()),
             "category": RAW_TIME_LABEL,
             "task": activity_text,
             "energy": None,
@@ -1130,7 +1136,7 @@ def register_metiche(bot: commands.Bot):
         def check(m: discord.Message):
             return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
 
-        week = week_of_monday(datetime.now())
+        week = week_of_monday(local_now())
         _, _, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
 
         await ctx.send("Weekly target amount for the week:")
@@ -1183,7 +1189,7 @@ def register_metiche(bot: commands.Bot):
 
     @bot.command(name="mplan")
     async def mplan(ctx: commands.Context):
-        week = week_of_monday(datetime.now())
+        week = week_of_monday(local_now())
         plan = fetch_latest_metiche_weekly(week) or {}
         if not plan:
             await ctx.send("No weekly plan saved yet. Run !mweekly first.")
@@ -1234,7 +1240,7 @@ def register_metiche(bot: commands.Bot):
         def check(m: discord.Message):
             return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
 
-        week = week_of_monday(datetime.now())
+        week = week_of_monday(local_now())
         _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
 
         await ctx.send("Who’s schedule are we working on?\n(Heaven / Daniel / Handley Man)")
@@ -1287,7 +1293,7 @@ def register_metiche(bot: commands.Bot):
         def check(m: discord.Message):
             return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
 
-        week = week_of_monday(datetime.now())
+        week = week_of_monday(local_now())
         _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
 
         await ctx.send(
@@ -1381,7 +1387,7 @@ def register_metiche(bot: commands.Bot):
         def check(m: discord.Message):
             return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
     
-        week = week_of_monday(datetime.now())
+        week = week_of_monday(local_now())
         _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
     
         person = "Heaven"
@@ -1535,7 +1541,7 @@ def register_metiche(bot: commands.Bot):
         def check(m: discord.Message):
             return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
 
-        week = week_of_monday(datetime.now())
+        week = week_of_monday(local_now())
         _, execution, calendar_json, _, _ = current_weekly_context(week)
 
         await ctx.send("What are the quarterly goals? Comma-separated, or `none`.")
