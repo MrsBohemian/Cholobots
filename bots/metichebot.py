@@ -136,8 +136,12 @@ class TimeSession:
     last_timestamp: str
     active_task: Optional[str] = None
     setup_complete: bool = False
+    current_state: str = "active"  # active / paused / drift / transition
+    paused_task: Optional[str] = None
     blocks: List[Dict[str, Any]] = field(default_factory=list)
     daily_tasks: List[Dict[str, Any]] = field(default_factory=list)
+    parked_items: List[str] = field(default_factory=list)
+    interruptions: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -918,7 +922,11 @@ def build_raw_time_payload(session: TimeSession) -> Dict[str, Any]:
         "date": session.date_iso,
         "person": session.person,
         "active_task": session.active_task,
+        "current_state": session.current_state,
+        "paused_task": session.paused_task,
         "last_timestamp": session.last_timestamp,
+        "parked_items": session.parked_items,
+        "interruptions": session.interruptions,
         "total_minutes": total_minutes(session.blocks),
         "total_label": minutes_to_label(total_minutes(session.blocks)),
         "blocks_logged": len(session.blocks),
@@ -1104,6 +1112,153 @@ def register_metiche(bot: commands.Bot):
             msg += f"\nSaved, but dashboard push failed: {push_result.get('reason')}"
         await ctx.send(msg)
         return block
+
+    async def show_active_day(ctx: commands.Context, session: TimeSession):
+        pending_tasks = [
+            task for task in normalize_daily_items(session.daily_tasks)
+            if not task.get("done")
+        ]
+        pending_text = "\n".join([f"- {task['text']}" for task in pending_tasks]) or "(nothing pending)"
+        parked_text = "\n".join([f"- {item}" for item in session.parked_items]) or "(nothing parked)"
+        await ctx.send(
+            f"📍 State: {session.current_state}\n"
+            f"🎯 Active: {session.active_task or session.paused_task or '(none)'}\n"
+            f"⏱️ Accounted today: {build_raw_time_payload(session)['total_label']}\n\n"
+            f"Pending:\n{pending_text}\n\n"
+            f"Parked for later:\n{parked_text}"
+        )
+
+    async def save_active_day_state(ctx: commands.Context, session: TimeSession):
+        week = week_of_monday(local_now())
+        _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
+        calendar_json.setdefault(session.person, {})
+        calendar_json[session.person][session.date_iso] = normalize_daily_items(session.daily_tasks)
+        replace_daily_tasks(session.person, session.date_iso, session.daily_tasks)
+        save_weekly_snapshot(
+            ctx,
+            week,
+            execution,
+            calendar_json,
+            wants_bodydouble=True,
+            quarterly_goals=quarterly_goals,
+            yearly_goals=yearly_goals,
+            raw_time=build_raw_time_payload(session),
+        )
+        metiche = get_metiche()
+        if metiche:
+            metiche.push_task_summary_json(build_raw_time_payload(session))
+
+    async def handle_active_day_command(ctx: commands.Context, message_text: str) -> bool:
+        """Tiny command router for active mtoday sessions.
+
+        This is intentionally boring and literal. It gives Metichebot stable V1 verbs
+        instead of trying to infer every update from freeform text.
+        """
+        session = active_time_sessions.get(ctx.channel.id)
+        if not session or not session.setup_complete:
+            return False
+
+        raw = message_text.strip()
+        lower = raw.lower()
+
+        if lower in {"show", "list", "status", "what was i doing", "what am i doing"}:
+            await show_active_day(ctx, session)
+            return True
+
+        if lower.startswith("add "):
+            item = raw[4:].strip()
+            if not item:
+                await ctx.send("Add what? Try `add call inspector`.")
+                return True
+            session.daily_tasks.append({"text": item, "done": False, "source": "mtoday_add"})
+            await save_active_day_state(ctx, session)
+            await ctx.send(f"➕ Added to today: {item}\nCurrent focus remains: {session.active_task or session.paused_task or '(none)'}")
+            return True
+
+        if lower.startswith("later ") or lower.startswith("park "):
+            item = re.sub(r"^(later|park)\s+", "", raw, flags=re.IGNORECASE).strip()
+            if not item:
+                await ctx.send("Park what for later?")
+                return True
+            session.parked_items.append(item)
+            await save_active_day_state(ctx, session)
+            await ctx.send(f"🅿️ Parked for later: {item}\nNot added to the active queue.")
+            return True
+
+        if lower.startswith("drift"):
+            label = re.sub(r"^drift\s*", "", raw, flags=re.IGNORECASE).strip() or "unspecified drift"
+            session.current_state = "drift"
+            block = await log_raw_time_block(ctx, f"drift: {label}", source="drift")
+            session.current_state = "active"
+            await save_active_day_state(ctx, session)
+            duration = block.get("duration_label") if block else "0m"
+            await ctx.send(f"🌀 Drift captured: {label}\nDuration since last marker: {duration}\nRecovered focus: {session.active_task or '(none)'}")
+            return True
+
+        if lower.startswith("pause"):
+            reason = re.sub(r"^pause\s*", "", raw, flags=re.IGNORECASE).strip() or "paused"
+            previous_focus = session.active_task
+            await log_raw_time_block(ctx, f"pause: {reason}", source="pause")
+            session.current_state = "paused"
+            session.paused_task = previous_focus
+            session.active_task = None
+            session.interruptions.append({
+                "type": "pause",
+                "reason": reason,
+                "ts": local_now().isoformat(),
+                "paused_task": previous_focus,
+            })
+            await save_active_day_state(ctx, session)
+            await ctx.send(f"⏸️ Paused: {previous_focus or '(no active focus)'}\nReason: {reason}")
+            return True
+
+        if lower.startswith("resume"):
+            target = re.sub(r"^resume\s*", "", raw, flags=re.IGNORECASE).strip() or session.paused_task or session.active_task
+            if not target:
+                await ctx.send("Resume what? Try `resume kitchen`.")
+                return True
+            await log_raw_time_block(ctx, f"resume: {target}", source="resume")
+            session.active_task = target
+            session.paused_task = None
+            session.current_state = "active"
+            await save_active_day_state(ctx, session)
+            await ctx.send(f"▶️ Resumed: {target}")
+            return True
+
+        if lower.startswith("switch "):
+            target = raw[7:].strip()
+            if not target:
+                await ctx.send("Switch to what?")
+                return True
+            previous_focus = session.active_task
+            await log_raw_time_block(ctx, f"switch from {previous_focus or 'unassigned'} to {target}", source="switch")
+            session.active_task = target
+            session.current_state = "active"
+            session.paused_task = None
+            await save_active_day_state(ctx, session)
+            await ctx.send(f"🔀 Switched focus:\nFrom: {previous_focus or '(none)'}\nTo: {target}")
+            return True
+
+        if lower.startswith("done"):
+            target = re.sub(r"^done\s*", "", raw, flags=re.IGNORECASE).strip() or session.active_task
+            if not target:
+                await ctx.send("Done with what? Try `done dishes`.")
+                return True
+            block = await log_raw_time_block(ctx, f"done: {target}", source="done")
+            tasks = normalize_daily_items(session.daily_tasks)
+            match_idx = find_best_task_match(tasks, target)
+            if match_idx is not None:
+                tasks[match_idx]["done"] = True
+                session.daily_tasks = tasks
+            if normalize_task(target) == normalize_task(session.active_task or ""):
+                session.active_task = None
+            await save_active_day_state(ctx, session)
+            duration = block.get("duration_label") if block else "0m"
+            checked = f"\n✅ Checked off: {tasks[match_idx]['text']}" if match_idx is not None else ""
+            await ctx.send(f"✅ Done: {target}\nTime since last marker: {duration}{checked}")
+            return True
+
+        return False
 
     @bot.command(name="metichebot")
     async def metichebot_help(ctx):
@@ -1434,6 +1589,22 @@ def register_metiche(bot: commands.Bot):
         if choice.lower() == "cancel":
             await ctx.send("Okay. I stopped before starting task accounting.")
             return
+
+        if choice.lower() == "show":
+            await ctx.send(format_daily_tasks(existing_today, person, today_label()))
+            choice = (await bot.wait_for("message", check=check)).content.strip()
+
+        if choice.lower().startswith("add "):
+            item = choice[4:].strip()
+            if item:
+                existing_today = normalize_daily_items(existing_today) + [{"text": item, "done": False, "source": "mtoday_add"}]
+                replace_daily_tasks(person, date_key, existing_today)
+                await ctx.send(
+                    f"➕ Added: {item}\n\n"
+                    + format_daily_tasks(existing_today, person, today_label())
+                    + "\n\nNow what are you working on right now?"
+                )
+                choice = (await bot.wait_for("message", check=check)).content.strip()
     
         if choice.lower() == "edit":
             await ctx.send(
@@ -1581,7 +1752,8 @@ def register_metiche(bot: commands.Bot):
         session = active_time_sessions.get(message.channel.id)
 
         if session and session.setup_complete:
+            handled = await handle_active_day_command(ctx, message.content)
+            if handled:
+                return
             await log_raw_time_block(ctx, message.content, source="active_day")
             return
-
-       
