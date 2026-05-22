@@ -826,6 +826,95 @@ def find_best_task_match(tasks: List[Dict[str, Any]], text: str) -> Optional[int
     return best_idx if best_score >= 2 else None
 
 
+def parse_task_indexes(raw: str, task_count: int) -> List[int]:
+    """Return zero-based task indexes from input like `4`, `4,5,6`, or `4 5 6`."""
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    if not re.fullmatch(r"\d+(?:\s*[, ]\s*\d+)*", raw):
+        return []
+    indexes: List[int] = []
+    for piece in re.split(r"[,\s]+", raw):
+        if not piece:
+            continue
+        idx = int(piece) - 1
+        if 0 <= idx < task_count and idx not in indexes:
+            indexes.append(idx)
+    return indexes
+
+
+def resolve_task_indexes(tasks: List[Dict[str, Any]], target: str) -> List[int]:
+    """Resolve a number list first, then fall back to literal/fuzzy matching."""
+    normalized_tasks = normalize_daily_items(tasks)
+    target = (target or "").strip()
+    numeric = parse_task_indexes(target, len(normalized_tasks))
+    if numeric:
+        return numeric
+    match_idx = find_best_task_match(normalized_tasks, target)
+    return [match_idx] if match_idx is not None else []
+
+
+def compact_task_lines(tasks: List[Dict[str, Any]]) -> str:
+    normalized_tasks = normalize_daily_items(tasks)
+    if not normalized_tasks:
+        return "(nothing listed)"
+    return "\n".join(
+        [f"{'✅' if task.get('done') else '⬜'} {idx}. {task.get('text', '')}" for idx, task in enumerate(normalized_tasks, start=1)]
+    )
+
+
+def apply_list_edit(tasks: List[Dict[str, Any]], instruction: str) -> Tuple[List[Dict[str, Any]], str]:
+    """Apply a literal list edit without turning bare task numbers into new task text."""
+    current = normalize_daily_items(tasks)
+    raw = (instruction or "").strip()
+    lower = raw.lower()
+
+    if not raw:
+        return current, "No change made."
+
+    if lower.startswith("add "):
+        new_items = parse_named_list(raw[4:].strip())
+        for item in new_items:
+            current.append({"text": item, "done": False, "source": "mtoday_add"})
+        return current, f"Added {len(new_items)} item(s)."
+
+    if lower.startswith("done ") or lower.startswith("check "):
+        target = re.sub(r"^(done|check)\s+", "", raw, flags=re.IGNORECASE).strip()
+        indexes = resolve_task_indexes(current, target)
+        for idx in indexes:
+            current[idx]["done"] = True
+        return current, f"Checked off {len(indexes)} item(s)." if indexes else "No matching tasks checked off."
+
+    if lower.startswith("remove ") or lower.startswith("drop "):
+        target = re.sub(r"^(remove|drop)\s+", "", raw, flags=re.IGNORECASE).strip()
+        indexes = set(resolve_task_indexes(current, target))
+        if not indexes:
+            return current, "No matching tasks removed."
+        current = [task for idx, task in enumerate(current) if idx not in indexes]
+        return current, f"Removed {len(indexes)} item(s)."
+
+    if lower.startswith("keep "):
+        target = re.sub(r"^keep\s+", "", raw, flags=re.IGNORECASE).strip()
+        indexes = resolve_task_indexes(current, target)
+        if not indexes:
+            return current, "No matching tasks kept. No change made."
+        current = [task for idx, task in enumerate(current) if idx in indexes]
+        return current, f"Kept {len(indexes)} item(s)."
+
+    if lower.startswith("rewrite "):
+        rewritten = parse_task_list(raw[8:].strip())
+        return (rewritten, f"Rewrote list with {len(rewritten)} item(s).") if rewritten else (current, "Could not parse rewrite. No change made.")
+
+    # Important UX patch: bare numbers in edit mode mean KEEP those task numbers, not create tasks named "4".
+    indexes = parse_task_indexes(raw, len(current))
+    if indexes:
+        current = [task for idx, task in enumerate(current) if idx in indexes]
+        return current, f"Kept {len(indexes)} selected item(s)."
+
+    rewritten = parse_task_list(raw)
+    return (rewritten, f"Rewrote list with {len(rewritten)} item(s).") if rewritten else (current, "I couldn’t read that edit. No change made.")
+
+
 # ---------- manager ----------
 
 class MeticheManager:
@@ -1259,23 +1348,25 @@ def register_metiche(bot: commands.Bot):
             await ctx.send(f"🔔 Que Onda pings set for every {interval} minutes.")
             return True
 
-        if lower.startswith("done"):
-            target = re.sub(r"^done\s*", "", raw, flags=re.IGNORECASE).strip() or session.active_task
+        if lower.startswith("done") or lower.startswith("check "):
+            target = re.sub(r"^(done|check)\s*", "", raw, flags=re.IGNORECASE).strip() or session.active_task
             if not target:
-                await ctx.send("Done with what? Try `done dishes`.")
+                await ctx.send("Done with what? Try `done 2` or `done clean kitchen`.")
                 return True
             block = await log_raw_time_block(ctx, f"done: {target}", source="done")
             tasks = normalize_daily_items(session.daily_tasks)
-            match_idx = find_best_task_match(tasks, target)
-            if match_idx is not None:
-                tasks[match_idx]["done"] = True
-                session.daily_tasks = tasks
-            if normalize_task(target) == normalize_task(session.active_task or ""):
+            indexes = resolve_task_indexes(tasks, target)
+            checked_labels = []
+            for idx in indexes:
+                tasks[idx]["done"] = True
+                checked_labels.append(tasks[idx].get("text", ""))
+            session.daily_tasks = tasks
+            if normalize_task(target) == normalize_task(session.active_task or "") or (len(indexes) == 1 and normalize_task(tasks[indexes[0]].get("text", "")) == normalize_task(session.active_task or "")):
                 session.active_task = None
             await save_active_day_state(ctx, session)
             duration = block.get("duration_label") if block else "0m"
-            checked = f"\n✅ Checked off: {tasks[match_idx]['text']}" if match_idx is not None else ""
-            await ctx.send(f"✅ Done: {target}\nTime since last marker: {duration}{checked}")
+            checked = "\n✅ Checked off:\n" + "\n".join([f"- {label}" for label in checked_labels]) if checked_labels else "\n⚠️ Logged time, but no matching task was checked off."
+            await ctx.send(f"✅ Done: {target}\nTime since last marker: {duration}{checked}\n\nType `show` to see the updated list, or `switch 3` to start another task.")
             return True
 
         return False
@@ -1611,7 +1702,7 @@ def register_metiche(bot: commands.Bot):
               "`metichebot`\n"
               "`customer communication`\n\n"
               "Or reply:\n"
-              "`edit` — change today’s list first\n"
+              "`edit` — add/remove/check off/keep items before starting\n"
               "`cancel` — stop"
         )
     
@@ -1637,25 +1728,31 @@ def register_metiche(bot: commands.Bot):
                 )
                 choice = (await bot.wait_for("message", check=check)).content.strip()
     
-        if choice.lower() == "edit":
+        while choice.lower() == "edit":
             await ctx.send(
-                "Tell me the corrected list. Use commas or separate lines.\n"
-                "Only include what still belongs in the rest of today."
+                "List edit mode. Use one of these:\n"
+                "`add task` — append a task\n"
+                "`done 4` or `done 4,5` — check off task numbers\n"
+                "`remove 4` — remove task numbers\n"
+                "`keep 4,5,6` — keep only those task numbers\n"
+                "`rewrite task, task` — replace the whole list\n\n"
+                "Bare numbers like `4,5,6` mean KEEP those task numbers. They will not become fake tasks."
             )
     
             edited = (await bot.wait_for("message", check=check)).content.strip()
-            parsed = parse_task_list(edited)
-    
-            if parsed:
-                existing_today = parsed
-            else:
-                await ctx.send("I couldn’t read that as a list, so I kept the current list.")
+            existing_today, edit_message = apply_list_edit(existing_today, edited)
+            replace_daily_tasks(person, date_key, existing_today)
     
             await ctx.send(
-                format_daily_tasks(existing_today, person, today_label())
-                + "\n\nNow what are you working on right now?"
+                f"{edit_message}\n\n"
+                + format_daily_tasks(existing_today, person, today_label())
+                + "\n\nNow what are you working on right now? Reply with a task number, focus label, `edit`, or `cancel`."
             )
             choice = (await bot.wait_for("message", check=check)).content.strip()
+
+            if choice.lower() == "cancel":
+                await ctx.send("Okay. I stopped before starting task accounting.")
+                return
     
         active_focus = choice
     
@@ -1751,19 +1848,21 @@ def register_metiche(bot: commands.Bot):
             return
         target = target.strip() or session.active_task
         if not target:
-            await ctx.send("Done with what? Try `!mdone clean kitchen`.")
+            await ctx.send("Done with what? Try `!mdone 2` or `!mdone clean kitchen`.")
             return
         block = await log_raw_time_block(ctx, f"done: {target}", source="done")
         tasks = normalize_daily_items(session.daily_tasks)
-        match_idx = find_best_task_match(tasks, target)
-        if match_idx is not None:
-            tasks[match_idx]["done"] = True
-            session.daily_tasks = tasks
-        if normalize_task(target) == normalize_task(session.active_task or ""):
+        indexes = resolve_task_indexes(tasks, target)
+        checked_labels = []
+        for idx in indexes:
+            tasks[idx]["done"] = True
+            checked_labels.append(tasks[idx].get("text", ""))
+        session.daily_tasks = tasks
+        if normalize_task(target) == normalize_task(session.active_task or "") or (len(indexes) == 1 and normalize_task(tasks[indexes[0]].get("text", "")) == normalize_task(session.active_task or "")):
             session.active_task = None
         await save_active_day_state(ctx, session)
         duration = block.get("duration_label") if block else "0m"
-        checked = f"\n✅ Checked off: {tasks[match_idx]['text']}" if match_idx is not None else "\n⚠️ I logged it, but I didn’t find a matching task to check off."
+        checked = "\n✅ Checked off:\n" + "\n".join([f"- {label}" for label in checked_labels]) if checked_labels else "\n⚠️ I logged it, but I didn’t find a matching task to check off."
         await ctx.send(f"✅ Done: {target}\nTime since last marker: {duration}{checked}")
 
     @bot.command(name="mgoals")
