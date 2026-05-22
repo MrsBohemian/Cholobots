@@ -121,6 +121,7 @@ DEFAULT_CHILLHOP_URL = os.getenv(
 
 metiche_instance = None
 active_time_sessions: Dict[int, "TimeSession"] = {}
+channels_waiting_for_command = set()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -853,6 +854,9 @@ class MeticheManager:
             print(f"[PING SCHEDULES DUE] {due_pings}")
 
             for ping in due_pings:
+                if int(ping["channel_id"]) in channels_waiting_for_command:
+                    continue
+                    
                 channel = self.bot.get_channel(int(ping["channel_id"]))
 
                 if not channel:
@@ -1201,33 +1205,45 @@ def register_metiche(bot: commands.Bot):
 
     @bot.command(name="mwakeup")
     async def mwakeup(ctx: commands.Context):
-        def check(m: discord.Message):
-            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
+        channels_waiting_for_command.add(ctx.channel.id)
+        try:
+            def check(m: discord.Message):
+                return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
     
-        await ctx.send("What time should I run Daniel’s wakeup sequence? Example: `7:00 AM`")
+            await ctx.send("What time should I run Daniel’s wakeup sequence? Example: `7:00 AM`")
     
-        raw_time = (await bot.wait_for("message", check=check)).content.strip()
-        wake_time = parse_wakeup_time(raw_time)
+            raw_time = (await bot.wait_for("message", check=check)).content.strip()
+            wake_time = parse_wakeup_time(raw_time)
     
-        if wake_time is None:
-            await ctx.send("I couldn’t read that time. Try something like `7:00 AM` or `6:30`.")
-            return
+            if raw_time.lower() in {"cancel", "done", "stop", "nevermind"}:
+                await ctx.send("Okay. Exiting wakeup setup.")
+                return
+            
+            if wake_time is None:
+                await ctx.send(
+                    "I couldn’t read that time.\n"
+                    "Try something like `7:00 AM` or `6:30`.\n"
+                    "Or reply `cancel`."
+                )
+                return
     
-        result = save_wakeup(
-            channel_id=ctx.channel.id,
-            person="Daniel",
-            wake_time=wake_time,
-            set_by=str(ctx.author),
-        )
-
-        if not result.get("ok"):
-            await ctx.send(f"Failed to save wakeup: {result.get('reason')}")
-            return
+            result = save_wakeup(
+                channel_id=ctx.channel.id,
+                person="Daniel",
+                wake_time=wake_time,
+                set_by=str(ctx.author),
+            )
     
-        await ctx.send(
-            f"✅ Daniel’s wakeup sequence is scheduled for {wake_time.strftime('%A, %B %-d at %-I:%M %p')}.\n"
-            "Set his actual phone alarm too. I can ping Discord, but I can’t make the phone scream."
-        )
+            if not result.get("ok"):
+                await ctx.send(f"Failed to save wakeup: {result.get('reason')}")
+                return
+    
+            await ctx.send(
+                f"✅ Daniel’s wakeup sequence is scheduled for {wake_time.strftime('%A, %B %-d at %-I:%M %p')}.\n"
+                "Set his actual phone alarm too. I can ping Discord, but I can’t make the phone scream."
+            )
+        finally:
+            channels_waiting_for_command.discard(ctx.channel.id)
 
     @bot.command(name="mschedule")
     async def mschedule(ctx: commands.Context):
