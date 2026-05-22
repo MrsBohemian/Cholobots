@@ -1239,6 +1239,26 @@ def register_metiche(bot: commands.Bot):
             await ctx.send(f"🔀 Switched focus:\nFrom: {previous_focus or '(none)'}\nTo: {target}")
             return True
 
+        if lower.startswith("ping ") or lower.startswith("pings "):
+            raw_interval = re.sub(r"^pings?\s+", "", raw, flags=re.IGNORECASE).strip().lower()
+            if raw_interval in {"none", "no", "off", "0"}:
+                stop_ping_schedules(ctx.channel.id)
+                await ctx.send("🔕 Que Onda pings are off for this channel.")
+                return True
+            try:
+                interval = int(raw_interval)
+            except ValueError:
+                await ctx.send("I couldn’t read that ping interval. Try `ping 30`, `ping 60`, or `ping none`.")
+                return True
+            save_ping_schedule(
+                channel_id=ctx.channel.id,
+                person=session.person,
+                interval_minutes=interval,
+                prompt=f"¿Qué onda? Still on {session.active_task or session.paused_task or 'your current focus'}, or did something change?",
+            )
+            await ctx.send(f"🔔 Que Onda pings set for every {interval} minutes.")
+            return True
+
         if lower.startswith("done"):
             target = re.sub(r"^done\s*", "", raw, flags=re.IGNORECASE).strip() or session.active_task
             if not target:
@@ -1285,7 +1305,18 @@ def register_metiche(bot: commands.Bot):
         "`!mbraindump` — capture and sort the messy pile before planning today\n"
         "`!mtoday` — structure today's work and optional check-in cadence\n"
         "`!mstopday` — stop today's time session\n"
-        "`!mquiet` — stop reminder/check-in pings"
+        "`!mquiet` — stop reminder/check-in pings\n\n"
+
+        "**During an active `!mtoday` session**\n"
+        "Type these without `!`:\n"
+        "`done` — complete the active focus and show elapsed time\n"
+        "`done clean kitchen` — complete a named task\n"
+        "`add call inspector` — append to today\n"
+        "`later clean garage` — park for later\n"
+        "`switch kitchen` — change focus\n"
+        "`drift phone game` — capture drift without shame\n"
+        "`show` — retrieve current state\n"
+        "`ping 30` — set Que Onda pings"
     )
 
     @bot.command(name="mweekly")
@@ -1674,37 +1705,15 @@ def register_metiche(bot: commands.Bot):
             [f"- {task['text']}" for task in pending_tasks]
         ) or "(nothing else pending)"
         
+        session.setup_complete = True
+        await save_active_day_state(ctx, session)
+
         await ctx.send(
             f"🟢 Active focus:\n{active_focus}\n\n"
             f"⏳ Pending:\n{pending_text}\n\n"
-            "Task accounting is now active."
-        )
-        
-        await ctx.send(
-            "Do you want Que Onda check-in pings today?\n"
-            "Reply with: `none`, `15`, `30`, `60`, or `120`"
-        )
-
-        ping_reply = (await bot.wait_for("message", check=check)).content.strip().lower()
-    
-        if ping_reply not in {"none", "no", "0"}:
-            try:
-                interval = int(ping_reply)
-    
-                save_ping_schedule(
-                    channel_id=ctx.channel.id,
-                    person=person,
-                    interval_minutes=interval,
-                    prompt=f"¿Qué onda? Still on {active_focus}, or did something change?",
-                )
-    
-            except ValueError:
-                await ctx.send("I couldn’t read that interval, so I skipped pings.")
-                
-        session.setup_complete = True
-        await ctx.send(
-            "Task accounting is active.\n"
-            "When something changes, just tell me what changed."
+            "Task accounting is active now. No extra setup step.\n\n"
+            "To check something off, type `done` or `done task name`.\n"
+            "Other useful commands: `show`, `add task`, `later task`, `switch task`, `drift label`, `pause reason`, `resume task`, `ping 30`."
         )
 
     @bot.command(name="mstopday")
@@ -1722,6 +1731,40 @@ def register_metiche(bot: commands.Bot):
     async def mquiet(ctx: commands.Context):
         stop_ping_schedules(ctx.channel.id)
         await ctx.send("Okay. I stopped the check-in pings.")
+
+    @bot.command(name="mshow")
+    async def mshow(ctx: commands.Context):
+        session = active_time_sessions.get(ctx.channel.id)
+        if not session:
+            person = "Heaven"
+            date_key = today_iso()
+            tasks = load_daily_tasks(person, date_key)
+            await ctx.send(format_daily_tasks(tasks, person, today_label()))
+            return
+        await show_active_day(ctx, session)
+
+    @bot.command(name="mdone")
+    async def mdone(ctx: commands.Context, *, target: str = ""):
+        session = active_time_sessions.get(ctx.channel.id)
+        if not session:
+            await ctx.send("No active `!mtoday` session is running. Start one with `!mtoday`, or use `!mshow` to see today's list.")
+            return
+        target = target.strip() or session.active_task
+        if not target:
+            await ctx.send("Done with what? Try `!mdone clean kitchen`.")
+            return
+        block = await log_raw_time_block(ctx, f"done: {target}", source="done")
+        tasks = normalize_daily_items(session.daily_tasks)
+        match_idx = find_best_task_match(tasks, target)
+        if match_idx is not None:
+            tasks[match_idx]["done"] = True
+            session.daily_tasks = tasks
+        if normalize_task(target) == normalize_task(session.active_task or ""):
+            session.active_task = None
+        await save_active_day_state(ctx, session)
+        duration = block.get("duration_label") if block else "0m"
+        checked = f"\n✅ Checked off: {tasks[match_idx]['text']}" if match_idx is not None else "\n⚠️ I logged it, but I didn’t find a matching task to check off."
+        await ctx.send(f"✅ Done: {target}\nTime since last marker: {duration}{checked}")
 
     @bot.command(name="mgoals")
     async def mgoals(ctx: commands.Context):
