@@ -105,15 +105,35 @@ DAY_NAMES = [
     "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
 ]
 
-VALID_PEOPLE = ["Heaven", "Daniel", "Handley Man"]
+VALID_PEOPLE = ["Heaven", "Daniel", "Jesse", "Samuel", "Handley Man"]
+
 PERSON_TO_CALENDAR_KEY = {
     "Heaven": "heaven",
     "Daniel": "daniel",
+    "Jesse": "jesse",
+    "Samuel": "samuel",
     "Handley Man": "handley_man",
 }
 
+DISCORD_USER_TO_PERSON = {
+    # Replace these with real Discord user IDs
+    123456789: "Heaven",
+    987654321: "Daniel",
+    555555555: "Jesse",
+}
+
+def get_person_from_discord(author_id: int) -> str:
+    return DISCORD_USER_TO_PERSON.get(author_id, "Heaven")
+    
 RAW_TIME_LABEL = "raw_time"
-DEFAULT_CALENDAR = {"Heaven": {}, "Daniel": {}, "Handley Man": {}}
+
+DEFAULT_CALENDAR = {
+    "Heaven": {},
+    "Daniel": {},
+    "Jesse": {},
+    "Samuel": {},
+    "Handley Man": {}
+}
 DEFAULT_CHILLHOP_URL = os.getenv(
     "DANIEL_MORNING_AUDIO_URL",
     "https://www.youtube.com/results?search_query=chillhop+morning+radio",
@@ -361,7 +381,6 @@ def minutes_to_label(minutes: int) -> str:
     if hours:
         return f"{hours}h"
     return f"{mins}m"
-
 
 # ---------- Supabase daily task persistence ----------
 
@@ -1586,13 +1605,8 @@ def register_metiche(bot: commands.Bot):
         week = week_of_monday(local_now())
         _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
 
-        await ctx.send("Who’s schedule are we working on?\n(Heaven / Daniel / Handley Man)")
-        person_raw = (await bot.wait_for("message", check=check)).content.strip()
-        person = next((p for p in VALID_PEOPLE if p.lower() == person_raw.lower()), None)
-        if not person:
-            await ctx.send("I need one of: Heaven / Daniel / Handley Man")
-            return
-
+        person = get_person_from_discord(ctx.author.id)
+        
         full_person_schedule = calendar_json.get(person, {})
         person_schedule = strip_task_sources(full_person_schedule)
         await ctx.send(
@@ -1675,7 +1689,7 @@ def register_metiche(bot: commands.Bot):
         buckets = parse_braindump_categories(response, dumped_items)
         
         date_key = today_iso()
-        person = "Heaven"
+        person = get_person_from_discord(ctx.author.id)
         
         today_tasks = [{"text": item, "done": False, "source": "mbraindump"} for item in buckets["today"]]
         
@@ -1734,7 +1748,7 @@ def register_metiche(bot: commands.Bot):
         week = week_of_monday(local_now())
         _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
     
-        person = "Heaven"
+        person = get_person_from_discord(ctx.author.id)
         date_key = today_iso()
     
         existing_today = load_daily_tasks(person, date_key)
@@ -1884,7 +1898,7 @@ def register_metiche(bot: commands.Bot):
     async def mshow(ctx: commands.Context):
         session = active_time_sessions.get(ctx.channel.id)
         if not session:
-            person = "Heaven"
+            person = get_person_from_discord(ctx.author.id)
             date_key = today_iso()
             tasks = load_daily_tasks(person, date_key)
             await ctx.send(format_daily_tasks(tasks, person, today_label()))
@@ -1931,6 +1945,14 @@ def register_metiche(bot: commands.Bot):
 
         save_weekly_snapshot(ctx, week, execution, calendar_json, quarterly_goals=quarterly_goals, yearly_goals=yearly_goals)
         await ctx.send("Locked. I saved your quarterly and yearly goals.")
+
+    @bot.command(name="mwhoami")
+    async def mwhoami(ctx):
+    await ctx.send(
+        f"Discord ID: {ctx.author.id}\n"
+        f"Discord Name: {ctx.author.name}\n"
+        f"Mapped Person: {get_person_from_discord(ctx.author.id)}"
+    )
 
     @bot.listen("on_message")
     async def metiche_time_listener(message: discord.Message):
