@@ -1012,7 +1012,8 @@ class MeticheManager:
 
                 if not channel:
                     continue
-                                session = active_time_sessions.get(int(ping["channel_id"]))
+                
+                session = active_time_sessions.get(int(ping["channel_id"]))
                 interval = int(ping.get("interval_minutes") or 120)
 
                 if session and session.last_activity_timestamp:
