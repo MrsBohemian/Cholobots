@@ -1172,25 +1172,16 @@ def register_metiche(bot: commands.Bot):
     metiche_instance = MeticheManager(bot)
 
     async def push_daily_tasks_to_calendar(ctx: commands.Context, session: TimeSession):
-        metiche = get_metiche()
-        if metiche is None or session.person not in VALID_PEOPLE:
-            return
+    metiche = get_metiche()
 
-        week = week_of_monday(local_now())
-        _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
-        person_schedule = calendar_json.get(session.person, {})
-        person_schedule[session.date_iso] = normalize_daily_items(session.daily_tasks)
-        calendar_json[session.person] = person_schedule
+    if metiche is None or session.person not in VALID_PEOPLE:
+        return
 
-        replace_daily_tasks(session.person, session.date_iso, session.daily_tasks)
-        save_weekly_snapshot(
-            ctx, week, execution, calendar_json,
-            wants_bodydouble=True,
-            quarterly_goals=quarterly_goals,
-            yearly_goals=yearly_goals,
-            raw_time=build_raw_time_payload(session),
-        )
-        metiche.push_calendar_json(session.person, person_schedule)
+    replace_daily_tasks(
+        session.person,
+        session.date_iso,
+        session.daily_tasks,
+    )
 
     async def log_raw_time_block(ctx: commands.Context, activity: str, source: str = "message") -> Optional[Dict[str, Any]]:
         metiche = get_metiche()
@@ -1277,8 +1268,6 @@ def register_metiche(bot: commands.Bot):
     async def save_active_day_state(ctx: commands.Context, session: TimeSession):
         week = week_of_monday(local_now())
         _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
-        calendar_json.setdefault(session.person, {})
-        calendar_json[session.person][session.date_iso] = normalize_daily_items(session.daily_tasks)
         replace_daily_tasks(session.person, session.date_iso, session.daily_tasks)
         save_weekly_snapshot(
             ctx,
@@ -1696,9 +1685,6 @@ def register_metiche(bot: commands.Bot):
         existing_today = load_daily_tasks(person, date_key)
         merged_today = normalize_daily_items(existing_today) + today_tasks
         
-        calendar_json.setdefault(person, {})
-        calendar_json[person][date_key] = merged_today
-        
         replace_daily_tasks(person, date_key, merged_today)
         save_weekly_snapshot(
                 ctx,
@@ -1840,9 +1826,7 @@ def register_metiche(bot: commands.Bot):
         )
     
         active_time_sessions[ctx.channel.id] = session
-        calendar_json.setdefault(person, {})
-        calendar_json[person][date_key] = session.daily_tasks
-    
+        
         replace_daily_tasks(person, date_key, session.daily_tasks)
     
         save_weekly_snapshot(
