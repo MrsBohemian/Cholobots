@@ -1172,16 +1172,16 @@ def register_metiche(bot: commands.Bot):
     metiche_instance = MeticheManager(bot)
 
     async def push_daily_tasks_to_calendar(ctx: commands.Context, session: TimeSession):
-    metiche = get_metiche()
-
-    if metiche is None or session.person not in VALID_PEOPLE:
-        return
-
-    replace_daily_tasks(
-        session.person,
-        session.date_iso,
-        session.daily_tasks,
-    )
+        metiche = get_metiche()
+    
+        if metiche is None or session.person not in VALID_PEOPLE:
+            return
+    
+        replace_daily_tasks(
+            session.person,
+            session.date_iso,
+            session.daily_tasks,
+        )
 
     async def log_raw_time_block(ctx: commands.Context, activity: str, source: str = "message") -> Optional[Dict[str, Any]]:
         metiche = get_metiche()
