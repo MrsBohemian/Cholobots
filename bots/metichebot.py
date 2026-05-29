@@ -123,7 +123,7 @@ DISCORD_USER_TO_PERSON = {
 }
 
 def get_person_from_discord(author_id: int) -> str:
-    return DISCORD_USER_TO_PERSON.get(author_id, "Heaven")
+    return DISCORD_USER_TO_PERSON.get(author_id, f"UNKNOWN:{author_id}")
     
 RAW_TIME_LABEL = "raw_time"
 
