@@ -154,6 +154,7 @@ class TimeSession:
     date_iso: str
     date_label: str
     last_timestamp: str
+    last_activity_timestamp: Optional[str] = None
     active_task: Optional[str] = None
     setup_complete: bool = False
     current_state: str = "active"  # active / paused / drift / transition
@@ -1011,13 +1012,23 @@ class MeticheManager:
 
                 if not channel:
                     continue
+                                session = active_time_sessions.get(int(ping["channel_id"]))
+                interval = int(ping.get("interval_minutes") or 120)
+
+                if session and session.last_activity_timestamp:
+                    last_activity = parse_iso(session.last_activity_timestamp)
+                    idle_minutes = (local_now() - last_activity).total_seconds() / 60
+
+                    if idle_minutes < interval:
+                        advance_ping_schedule(ping["id"], interval)
+                        continue
 
                 prompt = ping.get("prompt") or "¿Qué onda? What changed since the last time marker?"
                 await channel.send(prompt)
 
                 advance_ping_schedule(
                     ping["id"],
-                    int(ping.get("interval_minutes") or 120),
+                    interval,
                 )
 
     def post_json(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1821,6 +1832,7 @@ def register_metiche(bot: commands.Bot):
             date_iso=date_key,
             date_label=today_label(),
             last_timestamp=local_now().isoformat(),
+            last_activity_timestamp=local_now().isoformat(),
             active_task=active_focus,
             daily_tasks=normalize_daily_items(existing_today),
         )
@@ -1940,7 +1952,14 @@ def register_metiche(bot: commands.Bot):
 
     @bot.listen("on_message")
     async def metiche_time_listener(message: discord.Message):
-        if message.author.bot or message.content.startswith("!"):
+        if message.author.bot:
+            return
+        
+        session = active_time_sessions.get(message.channel.id)
+        if session:
+            session.last_activity_timestamp = local_now().isoformat()
+        
+        if message.content.startswith("!"):
             return
 
         metiche = get_metiche()
@@ -1948,7 +1967,6 @@ def register_metiche(bot: commands.Bot):
             return
 
         ctx = await bot.get_context(message)
-        session = active_time_sessions.get(message.channel.id)
 
         if session and session.setup_complete:
             handled = await handle_active_day_command(ctx, message.content)
