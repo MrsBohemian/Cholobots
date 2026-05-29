@@ -1948,11 +1948,11 @@ def register_metiche(bot: commands.Bot):
 
     @bot.command(name="mwhoami")
     async def mwhoami(ctx):
-    await ctx.send(
-        f"Discord ID: {ctx.author.id}\n"
-        f"Discord Name: {ctx.author.name}\n"
-        f"Mapped Person: {get_person_from_discord(ctx.author.id)}"
-    )
+        await ctx.send(
+            f"Discord ID: {ctx.author.id}\n"
+            f"Discord Name: {ctx.author.name}\n"
+            f"Mapped Person: {get_person_from_discord(ctx.author.id)}"
+        )
 
     @bot.listen("on_message")
     async def metiche_time_listener(message: discord.Message):
