@@ -116,10 +116,10 @@ PERSON_TO_CALENDAR_KEY = {
 }
 
 DISCORD_USER_TO_PERSON = {
-    # Replace these with real Discord user IDs
-    123456789: "Heaven",
-    987654321: "Daniel",
-    555555555: "Jesse",
+    823352347715174421: "Heaven",
+    532299697843601419: "Daniel",
+    1046820625840349244: "Jesse",
+    1477522070559654092: "Samuel",
 }
 
 def get_person_from_discord(author_id: int) -> str:
