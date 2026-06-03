@@ -1474,7 +1474,7 @@ def register_metiche(bot: commands.Bot):
 
         return False
 
-   @bot.command(name="metichebot")
+    @bot.command(name="metichebot")
     async def metichebot_help(ctx):
         await ctx.send(
             "🧠 **METICHEBOT**\n\n"
