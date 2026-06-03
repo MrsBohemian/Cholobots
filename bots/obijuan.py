@@ -22,7 +22,21 @@ from typing import Any, Dict, List, Optional
 
 import discord
 from discord.ext import commands
+import os
+from zoneinfo import ZoneInfo
+from supabase import create_client
 
+LOCAL_TZ = ZoneInfo("America/Chicago")
+
+def local_now():
+    return dt.datetime.now(LOCAL_TZ)
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+
+def require_supabase() -> bool:
+    return supabase is not None
 
 # -----------------------------------------------------------------------------
 # Temporary in-memory storage
@@ -171,7 +185,58 @@ async def crudobot_estimate_brain(quest: Dict[str, Any], notes: List[Dict[str, A
         "6. Good / better / best options if budget is uncertain"
     )
 
+async def save_timecard_clockin(channel_id, discord_user_id, person, customer, project):
+    if not require_supabase():
+        return {"ok": False, "reason": "Supabase not configured"}
 
+    response = (
+        supabase.table("obijuan_timecards")
+        .insert({
+            "channel_id": str(channel_id),
+            "discord_user_id": str(discord_user_id),
+            "person": person,
+            "customer": customer,
+            "project": project,
+            "clock_in_at": local_now().isoformat(),
+            "status": "open",
+        })
+        .execute()
+    )
+    return {"ok": True, "data": response.data}
+
+
+async def fetch_open_timecard(discord_user_id):
+    if not require_supabase():
+        return None
+
+    response = (
+        supabase.table("obijuan_timecards")
+        .select("*")
+        .eq("discord_user_id", str(discord_user_id))
+        .eq("status", "open")
+        .order("clock_in_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+
+    rows = response.data or []
+    return rows[0] if rows else None
+
+
+async def close_timecard(timecard_id):
+    if not require_supabase():
+        return {"ok": False, "reason": "Supabase not configured"}
+
+    response = (
+        supabase.table("obijuan_timecards")
+        .update({
+            "clock_out_at": local_now().isoformat(),
+            "status": "closed",
+        })
+        .eq("id", timecard_id)
+        .execute()
+    )
+    return {"ok": True, "data": response.data}
 # -----------------------------------------------------------------------------
 # Discord Cog
 # -----------------------------------------------------------------------------
@@ -181,6 +246,42 @@ class ObiJuan(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    @commands.command(name="oclockin")
+    async def oclockin(self, ctx: commands.Context, customer: str, *, project: str = ""):
+        existing = await fetch_open_timecard(ctx.author.id)
+        if existing:
+            await ctx.send("You already have an open timecard. Use `!oclockout` first.")
+            return
+
+        result = await save_timecard_clockin(
+            channel_id=ctx.channel.id,
+            discord_user_id=ctx.author.id,
+            person=ctx.author.display_name,
+            customer=customer,
+            project=project or "general work",
+        )
+
+        if result.get("ok"):
+            await ctx.send(f"🟢 Clocked in: {customer} — {project or 'general work'}")
+        else:
+            await ctx.send(f"Could not clock in: {result.get('reason')}")
+
+
+    @commands.command(name="oclockout")
+    async def oclockout(self, ctx: commands.Context):
+        card = await fetch_open_timecard(ctx.author.id)
+
+        if not card:
+            await ctx.send("No open timecard found.")
+            return
+
+        result = await close_timecard(card["id"])
+
+        if result.get("ok"):
+            await ctx.send(f"🔴 Clocked out: {card.get('customer')} — {card.get('project') or 'general work'}")
+        else:
+            await ctx.send(f"Could not clock out: {result.get('reason')}")
 
     @commands.command(name="questcreate")
     async def questcreate(
