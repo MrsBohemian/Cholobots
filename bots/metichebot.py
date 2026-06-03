@@ -434,12 +434,10 @@ def replace_daily_tasks(person: str, date_iso_value: str, tasks: List[Dict[str, 
 
 def save_default_ping_interval(
     user_id: str,
-    interval_minutes: int,
+    interval_minutes: int
 ):
     if not require_supabase():
-        return {"ok": False, "reason": "Supabase not configured"}
-
-    is_enabled = interval_minutes > 0
+        return {"ok": False}
 
     response = (
         supabase.table("metiche_ping_preferences")
@@ -447,7 +445,6 @@ def save_default_ping_interval(
             {
                 "user_id": user_id,
                 "interval_minutes": interval_minutes,
-                "is_enabled": is_enabled,
                 "updated_at": local_now().isoformat(),
             },
             on_conflict="user_id",
@@ -1968,7 +1965,6 @@ def register_metiche(bot: commands.Bot):
         
         if (
             pref
-            and pref.get("is_enabled")
             and int(pref.get("interval_minutes") or 0) > 0
         ):
             save_ping_schedule(
