@@ -431,6 +431,51 @@ def replace_daily_tasks(person: str, date_iso_value: str, tasks: List[Dict[str, 
     ]
     if inserts:
         supabase.table("daily_tasks").insert(inserts).execute()
+
+def save_default_ping_interval(
+    user_id: str,
+    interval_minutes: int,
+):
+    if not require_supabase():
+        return {"ok": False, "reason": "Supabase not configured"}
+
+    is_enabled = interval_minutes > 0
+
+    response = (
+        supabase.table("metiche_ping_preferences")
+        .upsert(
+            {
+                "user_id": user_id,
+                "interval_minutes": interval_minutes,
+                "is_enabled": is_enabled,
+                "updated_at": local_now().isoformat(),
+            },
+            on_conflict="user_id",
+        )
+        .execute()
+    )
+
+    return {"ok": True, "data": response.data}
+
+def fetch_default_ping_interval(user_id: str):
+    if not require_supabase():
+        return None
+
+    response = (
+        supabase.table("metiche_ping_preferences")
+        .select("*")
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+
+    rows = response.data or []
+
+    if not rows:
+        return None
+
+    return rows[0]
+    
 def save_wakeup(channel_id: int, person: str, wake_time: datetime, set_by: str):
     if not require_supabase():
         return {"ok": False, "reason": "Supabase not configured"}
@@ -547,7 +592,7 @@ def save_ping_schedule(
             "prompt": prompt,
             "source": source,
             "status": "active",
-        }, on_conflict="channel_id")
+        }, on_conflict="channel_id,person")
         .execute()
     )
 
@@ -1429,44 +1474,66 @@ def register_metiche(bot: commands.Bot):
 
         return False
 
-    @bot.command(name="metichebot")
+   @bot.command(name="metichebot")
     async def metichebot_help(ctx):
         await ctx.send(
-        "🧠 **METICHEBOT**\n\n"
+            "🧠 **METICHEBOT**\n\n"
     
-        "Metichebot helps structure:\n"
-        "• planning\n"
-        "• routines\n"
-        "• scheduling\n"
-        "• priorities\n"
-        "• operational flow\n"
-        "• task accounting\n\n"
+            "Metichebot helps structure:\n"
+            "• planning\n"
+            "• routines\n"
+            "• scheduling\n"
+            "• priorities\n"
+            "• operational flow\n"
+            "• task accounting\n"
+            "• body doubling\n"
+            "• time awareness\n\n"
     
-        "**Planning**\n"
-        "`!mweekly` — update weekly operating target and execution strategy\n"
-        "`!mplan` — show current weekly execution plan\n"
-        "`!mschedule` — add/change/replace a schedule\n"
-        "`!mgoals` — save quarterly and yearly goals\n\n"
+            "**Planning**\n"
+            "`!mweekly` — update weekly operating target and execution strategy\n"
+            "`!mplan` — show current weekly execution plan\n"
+            "`!mschedule` — add/change/replace weekly schedule\n"
+            "`!mgoals` — save quarterly and yearly goals\n\n"
     
-        "**Daily Operations**\n"
-        "`!mroutine` — view or edit morning routines\n"
-        "`!mwakeup` — schedule Daniel's morning boot sequence\n"
-        "`!mbraindump` — capture and sort the messy pile before planning today\n"
-        "`!mtoday` — structure today's work and optional check-in cadence\n"
-        "`!mstopday` — stop today's time session\n"
-        "`!mquiet` — stop reminder/check-in pings\n\n"
-
-        "**During an active `!mtoday` session**\n"
-        "Type these without `!`:\n"
-        "`done` — complete the active focus and show elapsed time\n"
-        "`done clean kitchen` — complete a named task\n"
-        "`add call inspector` — append to today\n"
-        "`later clean garage` — park for later\n"
-        "`switch kitchen` — change focus\n"
-        "`drift phone game` — capture drift without shame\n"
-        "`show` — retrieve current state\n"
-        "`ping 30` — set Que Onda pings"
-    )
+            "**Daily Operations**\n"
+            "`!mbraindump` — dump the messy pile and sort it\n"
+            "`!mtoday` — start today's work session\n"
+            "`!mshow` — show today's task list\n"
+            "`!mstopday` — stop today's work session\n"
+            "`!mquiet` — stop active Que Onda pings\n\n"
+    
+            "**Routines & Wakeups**\n"
+            "`!mroutine` — view or edit routines\n"
+            "`!mwakeup` — schedule a wakeup sequence\n"
+            "`!mping 37` — save a default Que Onda ping interval\n"
+            "`!mping off` — disable default Que Onda pings\n\n"
+    
+            "**During an active `!mtoday` session**\n"
+            "Type these WITHOUT `!`:\n\n"
+    
+            "`show` — current status and pending tasks\n"
+            "`done` — complete current focus\n"
+            "`done 3` — complete task #3\n"
+            "`done clean kitchen` — complete matching task\n\n"
+    
+            "`add call inspector` — add task to today\n"
+            "`later clean garage` — park task for later\n\n"
+    
+            "`switch estimate followups` — switch focus\n"
+            "`pause lunch` — pause current work\n"
+            "`resume estimate followups` — resume work\n\n"
+    
+            "`drift youtube rabbit hole` — log drift without shame\n\n"
+    
+            "`ping 30` — temporary Que Onda pings for this session\n"
+            "`ping none` — stop session pings\n\n"
+    
+            "**Que Onda**\n"
+            "Metichebot can periodically ask:\n"
+            "¿Qué onda?\n"
+            "Still on task, or did something change?\n"
+            "Responses are logged into task accounting."
+        )
 
     @bot.command(name="mweekly")
     async def mweekly(ctx: commands.Context):
@@ -1537,6 +1604,36 @@ def register_metiche(bot: commands.Bot):
         calendar_json = ensure_calendar(plan.get("calendar_json"))
         lines = [format_execution_summary(execution), "", format_person_schedule("Handley Man", calendar_json.get("Handley Man", {}))]
         await ctx.send("\n".join(lines))
+
+    @bot.command(name="mping")
+    async def mping(ctx, interval: str):
+    
+        person = get_person_from_discord(ctx.author.id)
+    
+        if interval.lower() in {"off", "none", "0"}:
+    
+            save_default_ping_interval(
+                user_id=person,
+                interval_minutes=0,
+            )
+    
+            await ctx.send("🔕 Default Que Onda pings disabled.")
+            return
+    
+        try:
+            minutes = int(interval)
+        except ValueError:
+            await ctx.send("Usage: !mping 37")
+            return
+    
+        save_default_ping_interval(
+            user_id=person,
+            interval_minutes=minutes,
+        )
+    
+        await ctx.send(
+            f"🔔 Default Que Onda ping interval saved: {minutes} minutes."
+        )
 
     @bot.command(name="mwakeup")
     async def mwakeup(ctx: commands.Context):
@@ -1866,6 +1963,20 @@ def register_metiche(bot: commands.Bot):
         
         session.setup_complete = True
         await save_active_day_state(ctx, session)
+
+        pref = fetch_default_ping_interval(person)
+        
+        if (
+            pref
+            and pref.get("is_enabled")
+            and int(pref.get("interval_minutes") or 0) > 0
+        ):
+            save_ping_schedule(
+                channel_id=ctx.channel.id,
+                person=person,
+                interval_minutes=int(pref["interval_minutes"]),
+                prompt=f"¿Qué onda? Still on {active_focus}, or did something change?",
+            )
 
         await ctx.send(
             f"🟢 Active focus:\n{active_focus}\n\n"
