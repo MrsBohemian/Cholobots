@@ -445,6 +445,7 @@ def save_default_ping_interval(
             {
                 "user_id": user_id,
                 "interval_minutes": interval_minutes,
+                "is_enabled": interval_minutes > 0,
                 "updated_at": local_now().isoformat(),
             },
             on_conflict="user_id",
@@ -569,6 +570,7 @@ def save_routine(person: str, routine_name: str, routine_text: str):
 
 def save_ping_schedule(
     channel_id: int,
+    user_id: int,
     person: str,
     interval_minutes: int,
     prompt: str,
@@ -583,6 +585,7 @@ def save_ping_schedule(
         supabase.table("metiche_ping_schedules")
         .upsert({
             "channel_id": str(channel_id),
+            "user_id": str(user_id),
             "person": person,
             "interval_minutes": interval_minutes,
             "next_ping_at": next_ping_at.isoformat(),
@@ -1441,6 +1444,7 @@ def register_metiche(bot: commands.Bot):
                 return True
             save_ping_schedule(
                 channel_id=ctx.channel.id,
+                user_id=ctx.author.id,
                 person=session.person,
                 interval_minutes=interval,
                 prompt=f"¿Qué onda? Still on {session.active_task or session.paused_task or 'your current focus'}, or did something change?",
@@ -1969,6 +1973,7 @@ def register_metiche(bot: commands.Bot):
         ):
             save_ping_schedule(
                 channel_id=ctx.channel.id,
+                user_id=ctx.author.id,
                 person=person,
                 interval_minutes=int(pref["interval_minutes"]),
                 prompt=f"¿Qué onda? Still on {active_focus}, or did something change?",
