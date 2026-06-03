@@ -641,6 +641,33 @@ def stop_ping_schedules(channel_id: int):
         .eq("status", "active")
         .execute()
     )
+#----------Behavior Identification/Reprogramming---------
+
+def save_mdice_entry(
+    person,
+    statement,
+    reason,
+    discord_user_id,
+    channel_id,
+):
+    if not require_supabase():
+        return {"ok": False, "reason": "Supabase not configured"}
+
+    response = (
+        supabase.table("metiche_reprogramming_logs")
+        .insert({
+            "person": person,
+            "statement": statement,
+            "reason": reason,
+            "discord_user_id": str(discord_user_id),
+            "channel_id": str(channel_id),
+            "status": "open",
+        })
+        .execute()
+    )
+
+    return {"ok": True, "data": response.data}
+
 # ---------- Weekly execution logic ----------
 
 def build_weekly_execution(
@@ -1227,7 +1254,9 @@ def parse_braindump_categories(response: str, items: List[str]) -> Dict[str, Lis
 def register_metiche(bot: commands.Bot):
     global metiche_instance
     metiche_instance = MeticheManager(bot)
-
+    
+    mdice_waiting = {}
+    
     async def push_daily_tasks_to_calendar(ctx: commands.Context, session: TimeSession):
         metiche = get_metiche()
     
@@ -1606,6 +1635,16 @@ def register_metiche(bot: commands.Bot):
         lines = [format_execution_summary(execution), "", format_person_schedule("Handley Man", calendar_json.get("Handley Man", {}))]
         await ctx.send("\n".join(lines))
 
+    @bot.command(name="mdice")
+    async def mdice(ctx: commands.Context, person: str, *, statement: str):
+        mdice_waiting[ctx.author.id] = {
+            "person": person,
+            "statement": statement,
+            "channel_id": ctx.channel.id,
+        }
+
+        await ctx.send("¿Por qué dice?")
+        
     @bot.command(name="mping")
     async def mping(ctx, interval: str):
     
@@ -2065,7 +2104,26 @@ def register_metiche(bot: commands.Bot):
 
     @bot.listen("on_message")
     async def metiche_time_listener(message: discord.Message):
+        
         if message.author.bot:
+            return
+            
+        if message.author.id in mdice_waiting:
+
+            pending = mdice_waiting.pop(message.author.id)
+
+            save_mdice_entry(
+                person=pending["person"],
+                statement=pending["statement"],
+                reason=message.content,
+                discord_user_id=message.author.id,
+                channel_id=message.channel.id,
+            )
+
+            await message.channel.send(
+                f"📝 Logged reprogramming entry for {pending['person']}."
+            )
+
             return
         
         session = active_time_sessions.get(message.channel.id)
