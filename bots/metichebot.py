@@ -201,7 +201,7 @@ def parse_wakeup_time(raw: str) -> Optional[datetime]:
     for fmt in ("%I:%M %p", "%I %p", "%H:%M", "%H"):
         try:
             parsed = datetime.strptime(raw, fmt).time()
-            wake_dt = datetime.combine(today, parsed)
+            wake_dt = datetime.combine(today, parsed, tzinfo=LOCAL_TZ)
 
             if wake_dt <= local_now():
                 wake_dt = wake_dt + timedelta(days=1)
