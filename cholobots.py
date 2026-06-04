@@ -53,6 +53,11 @@ async def on_ready():
         await setup_obijuan(bot)
         bot.obijuan_loaded = True
         print("✅ ObiJuan loaded")
+        
+    if not hasattr(bot, "vuelta_loaded"):
+        await bot.load_extension("bots.vuelta")
+        bot.vuelta_loaded = True
+        print("✅ Vueltabot loaded")
             
     print(f"✅ Logged in as {bot.user} | Guardabot DB: {GUARDABOT_DB}")
     
