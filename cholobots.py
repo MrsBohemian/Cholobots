@@ -53,7 +53,7 @@ async def on_ready():
         print("✅ ObiJuan loaded")
         
     if not hasattr(bot, "vuelta_loaded"):
-        await bot.load_extension("bots.Vueltabot")
+        await bot.load_extension("bots.vueltabot")
         bot.vuelta_loaded = True
         print("✅ Vueltabot loaded")
             
