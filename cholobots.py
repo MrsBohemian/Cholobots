@@ -18,7 +18,6 @@ from bots.metichebot import register_metiche, get_metiche
 from bots.guardabot import register_guard
 from bots.crudobot import register_crudo
 from bots.obijuan import setup_obijuan
-from bots.vuelta import register_vuelta
 
 from db.database import (
     init_guardabot_db,
@@ -37,7 +36,6 @@ register_chisme(bot)
 register_metiche(bot)
 register_guard(bot)
 register_crudo(bot)
-register_vuelta(bot)
 
 metiche = None
 
@@ -55,7 +53,7 @@ async def on_ready():
         print("✅ ObiJuan loaded")
         
     if not hasattr(bot, "vuelta_loaded"):
-        await bot.load_extension("bots.vuelta")
+        await bot.load_extension("bots.Vueltabot")
         bot.vuelta_loaded = True
         print("✅ Vueltabot loaded")
             
