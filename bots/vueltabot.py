@@ -140,5 +140,5 @@ class VueltaBot(commands.Cog):
         )
 
 
-async def setup(bot):
-    await bot.add_cog(VueltaBot(bot))
+def register_vuelta(bot):
+    bot.add_cog(VueltaBot(bot))
