@@ -617,32 +617,32 @@ class ObiJuan(commands.Cog):
         material_memory = await guardabot_material_memory(quest_id)
         await ctx.send(f"🛡️ **Guardabot check for `{slugify(quest_id)}`**\n{material_memory}")
 
-        @commands.command(name="oestimate")
-        async def oestimate(self, ctx: commands.Context, *, job_description: str):
-            """
-            Generate estimate prep from a plain job description.
-            Example:
-            !oestimate customer supplied pergola kit installation in backyard
-            """
-            wtp_result = await build_wtp_summary(job_description)
-            category = wtp_result.get("category")
-            risk_factors = await get_risk_factors(category)
+    @commands.command(name="oestimate")
+    async def oestimate(self, ctx: commands.Context, *, job_description: str):
+        """
+        Generate estimate prep from a plain job description.
+        Example:
+        !oestimate customer supplied pergola kit installation in backyard
+        """
+        wtp_result = await build_wtp_summary(job_description)
+        category = wtp_result.get("category")
+        risk_factors = await get_risk_factors(category)
     
-            if risk_factors:
-                risk_text = "\n".join(f"- {risk}" for risk in risk_factors)
-            else:
-                risk_text = "Insufficient risk data collected."
+        if risk_factors:
+            risk_text = "\n".join(f"- {risk}" for risk in risk_factors)
+        else:
+            risk_text = "Insufficient risk data collected."
     
-            await ctx.send(
-                f"🧾 **ObiJuan Estimate Prep**\n"
-                f"```text\n"
-                f"{wtp_result['summary']}\n\n"
-                f"Risk Factors:\n"
-                f"{risk_text}\n\n"
-                f"Job Description:\n"
-                f"{job_description}"
-                f"```"
-            )
+        await ctx.send(
+            f"🧾 **ObiJuan Estimate Prep**\n"
+            f"```text\n"
+            f"{wtp_result['summary']}\n\n"
+            f"Risk Factors:\n"
+            f"{risk_text}\n\n"
+            f"Job Description:\n"
+            f"{job_description}"
+            f"```"
+        )
 
     @commands.command(name="questdone")
     async def questdone(self, ctx: commands.Context, quest_id: str):
