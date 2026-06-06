@@ -327,6 +327,33 @@ class ObiJuan(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        
+    @commands.command(name="obijuan")
+    async def obijuan(self, ctx: commands.Context):
+        """
+        Show ObiJuan Ryobi command menu.
+        """
+        await ctx.send(
+            "🧭 **ObiJuan Ryobi Commands**\n\n"
+            "**Quest Flow**\n"
+            "`!questcreate <quest_id> \"Customer Name\" <title>` — create a quest\n"
+            "`!accept <quest_id>` — accept a quest\n"
+            "`!questinfo <quest_id>` — show quest status\n"
+            "`!setquest <quest_id> <field> <value>` — update location, budget, willingness, summary, or status\n\n"
+            "**Site Visit / Notes**\n"
+            "`!sitevisit <quest_id>` — start site visit prompts\n"
+            "`!note <quest_id> <type> <note>` — add structured quest note\n"
+            "`!materials <quest_id> <materials note>` — log material notes / Guardabot placeholder\n"
+            "`!update <quest_id> <update>` — add field progress update\n\n"
+            "**Estimates**\n"
+            "`!oestimate <quest_id>` — generate estimate prep using Crudobot WTP pricing intelligence\n\n"
+            "**Timecards**\n"
+            "`!oclockin <customer> <project>` — clock in\n"
+            "`!oclockout` — clock out\n\n"
+            "**Closeout**\n"
+            "`!questdone <quest_id>` — mark work complete pending invoice\n"
+            "`!paid <quest_id>` — mark quest paid and closed"
+        )
 
     @commands.command(name="oclockin")
     async def oclockin(self, ctx: commands.Context, customer: str, *, project: str = ""):
@@ -568,7 +595,7 @@ class ObiJuan(commands.Cog):
         material_memory = await guardabot_material_memory(quest_id)
         await ctx.send(f"🛡️ **Guardabot check for `{slugify(quest_id)}`**\n{material_memory}")
 
-    @commands.command(name="estimate")
+    @commands.command(name="oestimate")
     async def estimate(self, ctx: commands.Context, quest_id: str):
         """
         Generate estimate prep notes for Housecall Pro.
