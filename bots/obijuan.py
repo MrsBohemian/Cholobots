@@ -241,9 +241,9 @@ async def crudobot_estimate_brain(quest: Dict[str, Any], notes: List[Dict[str, A
     ) or "- No notes yet."
 
     analysis_text = " ".join([
-        quest.get("title", ""),
-        quest.get("job_summary", ""),
-        note_lines
+        str(quest.get("title") or ""),
+        str(quest.get("job_summary") or ""),
+        str(note_lines or "")
     ])
 
     wtp_summary = await build_wtp_summary(analysis_text)
