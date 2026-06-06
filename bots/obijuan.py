@@ -90,23 +90,45 @@ async def build_wtp_summary(text: str):
     match = await find_wtp_category(text)
 
     if not match:
-        return "No historical pricing category found."
+        return {
+            "summary": "No historical pricing category found.",
+            "category": None
+        }
 
     pricing = await get_wtp_pricing(match["category"])
 
     if not pricing:
-        return "Pricing category found but no pricing data available."
+        return {
+            "summary": "Pricing category found but no pricing data available.",
+            "category": match["category"]
+        }
 
-    return (
+    summary = (
         f"CRUDOBOT PRICING INTELLIGENCE\n\n"
         f"Category: {pricing['category']}\n"
         f"Sample Size: {pricing['sample_size']} jobs\n"
         f"Confidence Score: {match['score']}\n\n"
         f"Median Price: ${pricing['median_amount']:.2f}\n"
-        f"Recommended Starting Quote: ${pricing['p75_amount']:.2f}\n"
-        f"Premium Range: ${pricing['p90_amount']:.2f}"
+        f"Recommended Starting Quote: ${pricing['recommended_starting_price']:.2f}\n"
+        f"Premium Range: ${pricing['recommended_premium_anchor']:.2f}"
     )
 
+    return {
+        "summary": summary,
+        "category": pricing["category"]
+    }
+    
+async def get_risk_factors(category: Optional[str]):
+    """
+    Placeholder for future Crudobot risk intelligence.
+
+    Later this should query a Supabase table populated from completed job outcomes,
+    Metichebot time/activity data, and Guardabot material data.
+    """
+    if not category:
+        return []
+
+    return []
 
 
 # -----------------------------------------------------------------------------
@@ -595,30 +617,32 @@ class ObiJuan(commands.Cog):
         material_memory = await guardabot_material_memory(quest_id)
         await ctx.send(f"🛡️ **Guardabot check for `{slugify(quest_id)}`**\n{material_memory}")
 
-    @commands.command(name="oestimate")
-    async def oestimate(self, ctx: commands.Context, *, job_description: str):
-        """
-        Generate estimate prep from a plain job description.
-        Example:
-        !oestimate customer supplied pergola kit installation in backyard
-        """
-        wtp_summary = await build_wtp_summary(job_description)
+        @commands.command(name="oestimate")
+        async def oestimate(self, ctx: commands.Context, *, job_description: str):
+            """
+            Generate estimate prep from a plain job description.
+            Example:
+            !oestimate customer supplied pergola kit installation in backyard
+            """
+            wtp_result = await build_wtp_summary(job_description)
+            category = wtp_result.get("category")
+            risk_factors = await get_risk_factors(category)
     
-        await ctx.send(
-            f"🧾 **ObiJuan Estimate Prep**\n"
-            f"```text\n"
-            f"{wtp_summary}\n\n"
-            f"Job description:\n"
-            f"{job_description}\n\n"
-            f"Estimate buckets to fill before Housecall Pro:\n"
-            f"1. Base scope\n"
-            f"2. Hidden risks / contingencies\n"
-            f"3. Materials likely needed\n"
-            f"4. Labor hours\n"
-            f"5. Sub/helper opportunity if needed\n"
-            f"6. Good / better / best options if budget is uncertain"
-            f"```"
-        )
+            if risk_factors:
+                risk_text = "\n".join(f"- {risk}" for risk in risk_factors)
+            else:
+                risk_text = "Insufficient risk data collected."
+    
+            await ctx.send(
+                f"🧾 **ObiJuan Estimate Prep**\n"
+                f"```text\n"
+                f"{wtp_result['summary']}\n\n"
+                f"Risk Factors:\n"
+                f"{risk_text}\n\n"
+                f"Job Description:\n"
+                f"{job_description}"
+                f"```"
+            )
 
     @commands.command(name="questdone")
     async def questdone(self, ctx: commands.Context, quest_id: str):
