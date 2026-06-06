@@ -336,15 +336,15 @@ class ObiJuan(commands.Cog):
         await ctx.send(
             "🧭 **ObiJuan Ryobi Commands**\n\n"
             "**Quest Flow**\n"
-            "`!questcreate <quest_id> \"Customer Name\" <title>` — create a quest\n"
-            "`!accept <quest_id>` — accept a quest\n"
-            "`!questinfo <quest_id>` — show quest status\n"
-            "`!setquest <quest_id> <field> <value>` — update location, budget, willingness, summary, or status\n\n"
+            "`!oquestcreate <quest_id> \"Customer Name\" <title>` — create a quest\n"
+            "`!oaccept <quest_id>` — accept a quest\n"
+            "`!oquestinfo <quest_id>` — show quest status\n"
+            "`!osetquest <quest_id> <field> <value>` — update location, budget, willingness, summary, or status\n\n"
             "**Site Visit / Notes**\n"
-            "`!sitevisit <quest_id>` — start site visit prompts\n"
-            "`!note <quest_id> <type> <note>` — add structured quest note\n"
-            "`!materials <quest_id> <materials note>` — log material notes / Guardabot placeholder\n"
-            "`!update <quest_id> <update>` — add field progress update\n\n"
+            "`!ositevisit <quest_id>` — start site visit prompts\n"
+            "`!onote <quest_id> <type> <note>` — add structured quest note\n"
+            "`!omaterials <quest_id> <materials note>` — log material notes / Guardabot placeholder\n"
+            "`!oupdate <quest_id> <update>` — add field progress update\n\n"
             "**Estimates**\n"
             "`!oestimate <quest_id>` — generate estimate prep using Crudobot WTP pricing intelligence\n\n"
             "**Timecards**\n"
@@ -352,7 +352,7 @@ class ObiJuan(commands.Cog):
             "`!oclockout` — clock out\n\n"
             "**Closeout**\n"
             "`!questdone <quest_id>` — mark work complete pending invoice\n"
-            "`!paid <quest_id>` — mark quest paid and closed"
+            "`!opaid<quest_id>` — mark quest paid and closed"
         )
 
     @commands.command(name="oclockin")
@@ -404,7 +404,7 @@ class ObiJuan(commands.Cog):
         Create a quest opportunity.
 
         Example:
-        !questcreate kellie-mays "Kellie Mays" Deck stabilization and estimate visit
+        !oquestcreate kellie-mays "Kellie Mays" Deck stabilization and estimate visit
         """
         quest_id = slugify(quest_id)
         quest = Quest(
@@ -420,7 +420,7 @@ class ObiJuan(commands.Cog):
             f"**Customer:** {quest.customer_name}\n"
             f"**Title:** {quest.title}\n"
             f"**Status:** open\n\n"
-            f"Use `!accept {quest_id}` to claim it."
+            f"Use `!oaccept {quest_id}` to claim it."
         )
 
     @commands.command(name="accept")
@@ -429,7 +429,7 @@ class ObiJuan(commands.Cog):
         Accept a quest and unlock basic customer chisme.
 
         Example:
-        !accept kellie-mays
+        !oaccept kellie-mays
         """
         quest = await get_quest(quest_id)
         if not quest:
@@ -486,9 +486,9 @@ class ObiJuan(commands.Cog):
         Update simple quest fields.
 
         Examples:
-        !setquest kellie-mays location 123 Main St
-        !setquest kellie-mays customer_budget around 1200 if safety issue
-        !setquest kellie-mays customer_willingness willing to phase work
+        !osetquest kellie-mays location 123 Main St
+        !osetquest kellie-mays customer_budget around 1200 if safety issue
+        !osetquest kellie-mays customer_willingness willing to phase work
         """
         allowed = {"location", "customer_budget", "customer_willingness", "job_summary", "status"}
         field = field.strip().lower()
@@ -507,7 +507,7 @@ class ObiJuan(commands.Cog):
     async def sitevisit(self, ctx: commands.Context, quest_id: str):
         """
         Start the site visit interview prompt.
-        This does not collect answers automatically yet; use !note after each observation.
+        This does not collect answers automatically yet; use !onote after each observation.
         """
         quest = await get_quest(quest_id)
         if not quest:
@@ -523,7 +523,7 @@ class ObiJuan(commands.Cog):
 
         await ctx.send(
             f"🧭 **ObiJuan Site Visit Mode: `{slugify(quest_id)}`**\n\n"
-            "Answer these as you walk the job. Use `!note kellie-mays <type> <note>` when useful.\n\n"
+            "Answer these as you walk the job. Use `!onote kellie-mays <type> <note>` when useful.\n\n"
             "**Customer / Budget**\n"
             "1. What did the customer say they want done?\n"
             "2. What did they say about budget or willingness to pay?\n"
@@ -548,9 +548,9 @@ class ObiJuan(commands.Cog):
         Add a structured note to a quest.
 
         Examples:
-        !note kellie-mays budget customer said she can phase work if needed
-        !note kellie-mays materials likely needs joist hangers and exterior screws
-        !note kellie-mays risk hidden rot under deck boards
+        !onote kellie-mays budget customer said she can phase work if needed
+        !onote kellie-mays materials likely needs joist hangers and exterior screws
+        !onote kellie-mays risk hidden rot under deck boards
         """
         quest = await get_quest(quest_id)
         if not quest:
@@ -566,7 +566,7 @@ class ObiJuan(commands.Cog):
         Add a progress update from the field or subcontractor.
 
         Example:
-        !update kellie-mays demo complete, found rot on two joists, sending photos
+        !oupdate kellie-mays demo complete, found rot on two joists, sending photos
         """
         quest = await get_quest(quest_id)
         if not quest:
@@ -582,7 +582,7 @@ class ObiJuan(commands.Cog):
         Add material notes and ask Guardabot for material memory placeholder.
 
         Example:
-        !materials kellie-mays 2x6 joists, joist hangers, deck screws, exterior stain
+        !omaterials kellie-mays 2x6 joists, joist hangers, deck screws, exterior stain
         """
         quest = await get_quest(quest_id)
         if not quest:
@@ -596,18 +596,29 @@ class ObiJuan(commands.Cog):
         await ctx.send(f"🛡️ **Guardabot check for `{slugify(quest_id)}`**\n{material_memory}")
 
     @commands.command(name="oestimate")
-    async def estimate(self, ctx: commands.Context, quest_id: str):
+    async def oestimate(self, ctx: commands.Context, *, job_description: str):
         """
-        Generate estimate prep notes for Housecall Pro.
+        Generate estimate prep from a plain job description.
+        Example:
+        !oestimate customer supplied pergola kit installation in backyard
         """
-        quest = await get_quest(quest_id)
-        if not quest:
-            await ctx.send(f"No quest found for `{quest_id}`.")
-            return
-
-        notes = await get_notes_for_quest(quest_id)
-        estimate_prep = await crudobot_estimate_brain(quest, notes)
-        await ctx.send(f"🧾 **Crudobot estimate prep**\n```text\n{estimate_prep}\n```")
+        wtp_summary = await build_wtp_summary(job_description)
+    
+        await ctx.send(
+            f"🧾 **ObiJuan Estimate Prep**\n"
+            f"```text\n"
+            f"{wtp_summary}\n\n"
+            f"Job description:\n"
+            f"{job_description}\n\n"
+            f"Estimate buckets to fill before Housecall Pro:\n"
+            f"1. Base scope\n"
+            f"2. Hidden risks / contingencies\n"
+            f"3. Materials likely needed\n"
+            f"4. Labor hours\n"
+            f"5. Sub/helper opportunity if needed\n"
+            f"6. Good / better / best options if budget is uncertain"
+            f"```"
+        )
 
     @commands.command(name="questdone")
     async def questdone(self, ctx: commands.Context, quest_id: str):
