@@ -38,6 +38,77 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABAS
 def require_supabase() -> bool:
     return supabase is not None
 
+async def find_wtp_category(text: str):
+    if not require_supabase():
+        return None
+
+    response = (
+        supabase.table("wtp_category_keyword_rules")
+        .select("*")
+        .execute()
+    )
+
+    text = text.lower()
+    scores = {}
+
+    for row in response.data:
+        keyword = row["keyword"].lower()
+
+        if keyword in text:
+            category = row["category"]
+            priority = row.get("priority", 1)
+
+            scores[category] = scores.get(category, 0) + priority
+
+    if not scores:
+        return None
+
+    best_category = max(scores, key=scores.get)
+
+    return {
+        "category": best_category,
+        "score": scores[best_category]
+    }
+
+async def get_wtp_pricing(category: str):
+    if not require_supabase():
+        return None
+
+    response = (
+        supabase.table("wtp_category_pricing_rules")
+        .select("*")
+        .eq("category", category)
+        .limit(1)
+        .execute()
+    )
+
+    rows = response.data or []
+
+    return rows[0] if rows else None
+
+async def build_wtp_summary(text: str):
+    match = await find_wtp_category(text)
+
+    if not match:
+        return "No historical pricing category found."
+
+    pricing = await get_wtp_pricing(match["category"])
+
+    if not pricing:
+        return "Pricing category found but no pricing data available."
+
+    return (
+        f"CRUDOBOT PRICING INTELLIGENCE\n\n"
+        f"Category: {pricing['category']}\n"
+        f"Sample Size: {pricing['sample_size']} jobs\n"
+        f"Confidence Score: {match['score']}\n\n"
+        f"Median Price: ${pricing['median_amount']:.2f}\n"
+        f"Recommended Starting Quote: ${pricing['p75_amount']:.2f}\n"
+        f"Premium Range: ${pricing['p90_amount']:.2f}"
+    )
+
+
+
 # -----------------------------------------------------------------------------
 # Temporary in-memory storage
 # Replace these helpers with Supabase calls once the flow feels right.
@@ -162,19 +233,29 @@ async def guardabot_material_memory(quest_id: str) -> str:
         "- Common missing items: not connected yet."
     )
 
-
 async def crudobot_estimate_brain(quest: Dict[str, Any], notes: List[Dict[str, Any]]) -> str:
-    """
-    Placeholder. Later: send structured site notes + material memory to Crudobot estimate logic.
-    """
-    note_lines = "\n".join(f"- [{n['note_type']}] {n['body']}" for n in notes[-12:]) or "- No notes yet."
+
+    note_lines = "\n".join(
+        f"- [{n['note_type']}] {n['body']}"
+        for n in notes[-12:]
+    ) or "- No notes yet."
+
+    analysis_text = " ".join([
+        quest.get("title", ""),
+        quest.get("job_summary", ""),
+        note_lines
+    ])
+
+    wtp_summary = await build_wtp_summary(analysis_text)
+
     return (
+        f"{wtp_summary}\n\n"
         f"Estimate prep for {quest['title']}\n\n"
         f"Customer: {quest['customer_name']}\n"
         f"Location: {quest.get('location') or 'Not recorded yet'}\n"
         f"Customer budget: {quest.get('customer_budget') or 'Not recorded yet'}\n"
         f"Willingness to pay: {quest.get('customer_willingness') or 'Not recorded yet'}\n\n"
-        "Recent notes:\n"
+        f"Recent notes:\n"
         f"{note_lines}\n\n"
         "Estimate buckets to fill before Housecall Pro:\n"
         "1. Base scope\n"
