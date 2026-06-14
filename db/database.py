@@ -2,6 +2,12 @@ import json
 import sqlite3
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
+import os
+from supabase import create_client
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 from config import GUARDABOT_DB
 
@@ -211,30 +217,26 @@ def build_guard_last_known_index() -> Dict[str, Tuple]:
 
 
 def insert_metiche_weekly(row: Dict[str, Any]):
-    with db_connect() as conn:
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO metiche_weekly (
-                ts, discord_user, channel_id,
-                week_of, weekly_goal,
-                jobs_json, pending_estimates_json, invoices_to_send_json,
-                calendar_json, task_summary_json,
-                quarterly_goals_json, yearly_goals_json,
-                wants_accountant
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            row["ts"], row.get("discord_user"), row.get("channel_id"),
-            row["week_of"], row.get("weekly_goal"),
-            row.get("jobs_json"),
-            row.get("pending_estimates_json"),
-            row.get("invoices_to_send_json"),
-            row.get("calendar_json"),
-            row.get("task_summary_json"),
-            row.get("quarterly_goals_json"),
-            row.get("yearly_goals_json"),
-            1 if row.get("wants_accountant") else 0
-        ))
-        conn.commit()
+    if supabase is None:
+        raise RuntimeError("Supabase is not configured")
+
+    payload = {
+        "ts": row["ts"],
+        "discord_user": row.get("discord_user"),
+        "channel_id": row.get("channel_id"),
+        "week_of": row["week_of"],
+        "weekly_goal": row.get("weekly_goal"),
+        "jobs_json": json.loads(row.get("jobs_json") or "[]"),
+        "pending_estimates_json": json.loads(row.get("pending_estimates_json") or "[]"),
+        "invoices_to_send_json": json.loads(row.get("invoices_to_send_json") or "[]"),
+        "calendar_json": json.loads(row.get("calendar_json") or "{}"),
+        "task_summary_json": json.loads(row.get("task_summary_json") or "{}"),
+        "quarterly_goals_json": json.loads(row.get("quarterly_goals_json") or "[]"),
+        "yearly_goals_json": json.loads(row.get("yearly_goals_json") or "[]"),
+        "wants_accountant": bool(row.get("wants_accountant")),
+    }
+
+    supabase.table("metiche_weekly").insert(payload).execute()
 
 
 def insert_metiche_checkin(row: Dict[str, Any]):
@@ -252,43 +254,25 @@ def insert_metiche_checkin(row: Dict[str, Any]):
         ))
         conn.commit()
 
-
 def fetch_latest_metiche_weekly(week_of: str) -> Optional[Dict[str, Any]]:
-    with db_connect() as conn:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT ts, discord_user, channel_id, week_of, weekly_goal,
-               jobs_json, pending_estimates_json, invoices_to_send_json,
-               calendar_json, task_summary_json,
-               quarterly_goals_json, yearly_goals_json,
-               wants_accountant
-            FROM metiche_weekly
-            WHERE week_of = ?
-            ORDER BY id DESC
-            LIMIT 1
-        """, (week_of,))
-        r = cur.fetchone()
+    if supabase is None:
+        raise RuntimeError("Supabase is not configured")
 
-    if not r:
+    response = (
+        supabase.table("metiche_weekly")
+        .select("*")
+        .eq("week_of", week_of)
+        .order("id", desc=True)
+        .limit(1)
+        .execute()
+    )
+
+    rows = response.data or []
+
+    if not rows:
         return None
 
-    ts, discord_user, channel_id, week_of, weekly_goal, jobs_json, est_json, inv_json, calendar_json, task_summary_json, quarterly_goals_json, yearly_goals_json, wants_acc = r
-    return {
-        "ts": ts,
-        "discord_user": discord_user,
-        "channel_id": channel_id,
-        "week_of": week_of,
-        "weekly_goal": weekly_goal,
-        "jobs": json.loads(jobs_json) if jobs_json else [],
-        "pending_estimates": json.loads(est_json) if est_json else [],
-        "invoices_to_send": json.loads(inv_json) if inv_json else [],
-        "calendar_json": calendar_json,
-        "task_summary_json": task_summary_json,
-        "quarterly_goals_json": quarterly_goals_json,
-        "yearly_goals_json": yearly_goals_json,
-        "wants_accountant": bool(wants_acc),
-    }
-
+    return rows[0]
 
 def insert_crudo_report(data):
     with db_connect() as conn:
