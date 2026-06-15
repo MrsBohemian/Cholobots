@@ -522,8 +522,8 @@ def register_chisme(bot):
 
         await send_long(ctx, "\n".join(lines))
 
-        @bot.command(name="cbuckets")
-        async def cbuckets(ctx, target: int = 20):
+    @bot.command(name="cbuckets")
+    async def cbuckets(ctx, target: int = 20):
         """
         Daily customer communication bucket builder.
         Daniel dumps customer communications, sorts them into buckets,
