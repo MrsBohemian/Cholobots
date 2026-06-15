@@ -6,6 +6,7 @@ from config import client
 import os
 from urllib import request, error
 from supabase import create_client
+from datetime import date, timedelta
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -51,6 +52,131 @@ def load_followups():
         .execute()
     )
     return response.data or []
+
+def today_date():
+    return date.today().isoformat()
+
+
+def get_due_chisme_contacts(limit: int = 20):
+    response = (
+        supabase.table("chisme_contacts")
+        .select("*")
+        .lte("next_contact_date", today_date())
+        .in_("status", ["past_customer", "vip_customer", "repeat_customer", "lead", "estimate_sent", "active_project"])
+        .order("next_contact_date")
+        .order("job_count", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return response.data or []
+
+
+def build_queue_reason(contact):
+    status = contact.get("status") or "past_customer"
+
+    if status == "active_project":
+        return "Active workflow communication"
+    if status == "lead":
+        return "New lead follow-up"
+    if status == "estimate_sent":
+        return "Estimate follow-up"
+    if status == "vip_customer":
+        return "VIP customer check-in"
+    if status == "repeat_customer":
+        return "Repeat customer relationship touchpoint"
+
+    return "Past customer seasonal check-in"
+
+
+def build_script_hint(contact):
+    name = contact.get("name") or "there"
+    status = contact.get("status") or "past_customer"
+
+    if status in ["past_customer", "vip_customer", "repeat_customer"]:
+        return (
+            f"Hi {name}, this is Daniel with Handley Man. "
+            "We worked on your house a while back, and I wanted to check in. "
+            "How has everything been holding up? Is there anything on your project list "
+            "you'd like us to take a look at?"
+        )
+
+    if status == "estimate_sent":
+        return (
+            f"Hi {name}, this is Daniel with Handley Man. "
+            "I'm following up on the estimate we sent over. "
+            "Did you have any questions or would you like us to look at scheduling?"
+        )
+
+    if status == "active_project":
+        return (
+            f"Hi {name}, this is Daniel with Handley Man. "
+            "I'm checking in on the next step for your current project."
+        )
+
+    return (
+        f"Hi {name}, this is Daniel with Handley Man. "
+        "I'm following up on your request to see how we can help."
+    )
+
+
+def create_chisme_daily_queue(target_count: int = 20, assigned_to: str = "Daniel"):
+    # Avoid duplicating today's queue.
+    existing = (
+        supabase.table("chisme_communication_queue")
+        .select("*")
+        .eq("queue_date", today_date())
+        .neq("status", "done")
+        .execute()
+    ).data or []
+
+    if existing:
+        return existing
+
+    contacts = get_due_chisme_contacts(target_count)
+
+    rows = []
+    for idx, contact in enumerate(contacts, start=1):
+        rows.append({
+            "queue_date": today_date(),
+            "contact_id": contact["id"],
+            "bucket": contact.get("status") or "past_customer",
+            "reason": build_queue_reason(contact),
+            "script_hint": build_script_hint(contact),
+            "priority": idx,
+            "status": "queued",
+            "assigned_to": assigned_to,
+        })
+
+    if not rows:
+        return []
+
+    response = supabase.table("chisme_communication_queue").insert(rows).execute()
+    return response.data or []
+
+
+def get_today_queue():
+    response = (
+        supabase.table("chisme_communication_queue")
+        .select("*, chisme_contacts(*)")
+        .eq("queue_date", today_date())
+        .order("priority")
+        .execute()
+    )
+    return response.data or []
+
+
+def get_next_queued_item():
+    response = (
+        supabase.table("chisme_communication_queue")
+        .select("*, chisme_contacts(*)")
+        .eq("queue_date", today_date())
+        .eq("status", "queued")
+        .order("priority")
+        .limit(1)
+        .execute()
+    )
+    data = response.data or []
+    return data[0] if data else None
 
 def push_followups_to_dashboard(items):
     if not DATA_SERVICE_URL:
@@ -258,6 +384,110 @@ def register_chisme(bot):
 
         await send_long(ctx, "\n".join(lines))
 
+        @bot.command(name="cqueue")
+    async def cqueue(ctx, target: int = 20):
+        """
+        Build today's Chismebot customer communication queue.
+        """
+        items = create_chisme_daily_queue(target_count=target, assigned_to=str(ctx.author))
+
+        queue = get_today_queue()
+        total = len(queue)
+        done = len([x for x in queue if x.get("status") == "done"])
+
+        buckets = {}
+        for item in queue:
+            bucket = item.get("bucket") or "unknown"
+            buckets[bucket] = buckets.get(bucket, 0) + 1
+
+        bucket_lines = "\n".join([f"- {k}: {v}" for k, v in buckets.items()]) or "No calls due."
+
+        await ctx.send(
+            f"📞 Chisme communication queue ready.\n\n"
+            f"Today: {done} / {total} complete\n\n"
+            f"{bucket_lines}\n\n"
+            f"Use `!cnext` to pull the next customer."
+        )
+
+
+    @bot.command(name="cnext")
+    async def cnext(ctx):
+        """
+        Show the next queued customer communication.
+        """
+        item = get_next_queued_item()
+
+        if not item:
+            await ctx.send("No queued customer communication left for today.")
+            return
+
+        contact = item.get("chisme_contacts") or {}
+
+        await ctx.send(
+            f"📞 Next customer communication\n\n"
+            f"**{contact.get('name', 'Unknown')}**\n"
+            f"Bucket: {item.get('bucket')}\n"
+            f"Reason: {item.get('reason')}\n\n"
+            f"Last job date: {contact.get('last_job_date') or 'unknown'}\n"
+            f"Job count: {contact.get('job_count') or 0}\n"
+            f"Chisme: {contact.get('chisme_summary') or 'No chisme yet.'}\n\n"
+            f"Script:\n{item.get('script_hint')}\n\n"
+            f"When done, use:\n"
+            f"`!cdone <what happened>`"
+        )
+
+
+    @bot.command(name="cdone")
+    async def cdone(ctx, *, notes: str = ""):
+        """
+        Mark the current next queued communication as done.
+        """
+        item = get_next_queued_item()
+
+        if not item:
+            await ctx.send("No queued customer communication left for today.")
+            return
+
+        contact = item.get("chisme_contacts") or {}
+        contact_id = item.get("contact_id")
+        contact_name = contact.get("name", "Unknown")
+
+        notes = notes.strip() or "completed"
+
+        supabase.table("chisme_communication_queue").update({
+            "status": "done",
+            "completed_at": now_iso(),
+            "outcome": notes,
+            "notes": notes,
+        }).eq("id", item["id"]).execute()
+
+        supabase.table("chisme_interactions").insert({
+            "contact_id": contact_id,
+            "interaction_type": "call",
+            "notes": notes,
+            "outcome": notes,
+            "created_by": str(ctx.author),
+        }).execute()
+
+        # Default next contact rhythm for now.
+        next_date = (date.today() + timedelta(days=60)).isoformat()
+
+        supabase.table("chisme_contacts").update({
+            "last_contact_date": today_date(),
+            "next_contact_date": next_date,
+            "last_outcome": notes,
+        }).eq("id", contact_id).execute()
+
+        queue = get_today_queue()
+        total = len(queue)
+        done = len([x for x in queue if x.get("status") == "done"])
+
+        await ctx.send(
+            f"✅ Completed: {contact_name}\n"
+            f"Outcome: {notes}\n\n"
+            f"Progress: {done} / {total}"
+        )
+        
     @bot.command(name="followup")
     async def followup(ctx, *, note: str = ""):
         """
