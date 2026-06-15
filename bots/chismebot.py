@@ -442,17 +442,24 @@ def bucket_label(bucket: str) -> str:
 def find_queue_item(query: str):
     q = (query or "").strip().lower()
     queue = get_today_queue()
-    open_items = [item for item in queue if item.get("status") != "done"]
 
     if not q:
         return get_next_queued_item()
 
+    # Match the number shown in !clist
     if q.isdigit():
-        idx = int(q) - 1
-        if 0 <= idx < len(open_items):
-            return open_items[idx]
+        display_idx = int(q) - 1
+        if 0 <= display_idx < len(queue):
+            item = queue[display_idx]
+            if item.get("status") != "done":
+                return item
+            return None
 
-    for item in open_items:
+    # Match by name/reason/bucket
+    for item in queue:
+        if item.get("status") == "done":
+            continue
+
         contact = item.get("chisme_contacts") or {}
         name = (contact.get("name") or "").lower()
         reason = (item.get("reason") or "").lower()
@@ -462,6 +469,7 @@ def find_queue_item(query: str):
             return item
 
     return None
+    
 # ---------- CHISMEBOT COMMANDS ----------
 
 def register_chisme(bot):
