@@ -384,7 +384,7 @@ def register_chisme(bot):
 
         await send_long(ctx, "\n".join(lines))
 
-        @bot.command(name="cqueue")
+    @bot.command(name="cqueue")
     async def cqueue(ctx, target: int = 20):
         """
         Build today's Chismebot customer communication queue.
