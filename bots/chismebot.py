@@ -280,7 +280,145 @@ def find_followup_index(items, query: str):
 
     return None
 
+def parse_cbuckets_categories(response: str, items: list) -> dict:
+    buckets = {
+        "active_workflow": [],
+        "hot_inbound": [],
+        "estimate_followup": [],
+        "pro_referral": [],
+    }
 
+    prefix_map = {
+        "a": "active_workflow",
+        "h": "hot_inbound",
+        "e": "estimate_followup",
+        "p": "pro_referral",
+    }
+
+    for line in response.splitlines():
+        line = line.strip()
+        if ":" not in line:
+            continue
+
+        prefix, values = line.split(":", 1)
+        bucket = prefix_map.get(prefix.strip().lower())
+
+        if not bucket:
+            continue
+
+        for part in values.split(","):
+            part = part.strip()
+            if part.isdigit():
+                idx = int(part) - 1
+                if 0 <= idx < len(items):
+                    buckets[bucket].append(items[idx])
+
+    return buckets
+
+
+def bucket_reason(bucket: str) -> str:
+    reasons = {
+        "active_workflow": "Active workflow communication",
+        "hot_inbound": "Hot inbound customer request",
+        "estimate_followup": "Estimate follow-up",
+        "pro_referral": "Pro referral qualification",
+        "past_customer": "Past customer seasonal check-in",
+    }
+    return reasons.get(bucket, "Customer communication")
+
+
+def bucket_script(bucket: str, name: str) -> str:
+    if bucket == "active_workflow":
+        return f"Hi {name}, this is Daniel with Handley Man. I’m checking in on the next step for your current project."
+
+    if bucket == "hot_inbound":
+        return f"Hi {name}, this is Daniel with Handley Man. I’m following up on your recent message/request."
+
+    if bucket == "estimate_followup":
+        return f"Hi {name}, this is Daniel with Handley Man. I’m following up on the estimate we sent over."
+
+    if bucket == "pro_referral":
+        return f"Hi {name}, this is Daniel with Handley Man. I’m following up on your Home Depot Pro Referral request."
+
+    return (
+        f"Hi {name}, this is Daniel with Handley Man. "
+        "We worked on your house a while back, and I wanted to check in. "
+        "How has everything been holding up? Is there anything on your project list?"
+    )
+
+
+def create_manual_contact_if_needed(name: str, bucket: str):
+    status_map = {
+        "active_workflow": "active_project",
+        "hot_inbound": "lead",
+        "estimate_followup": "estimate_sent",
+        "pro_referral": "lead",
+    }
+
+    existing = (
+        supabase.table("chisme_contacts")
+        .select("*")
+        .ilike("name", name)
+        .limit(1)
+        .execute()
+    ).data or []
+
+    if existing:
+        contact = existing[0]
+        supabase.table("chisme_contacts").update({
+            "status": status_map.get(bucket, contact.get("status") or "lead"),
+            "next_contact_date": today_date(),
+            "updated_at": now_iso(),
+        }).eq("id", contact["id"]).execute()
+        return contact
+
+    response = supabase.table("chisme_contacts").insert({
+        "name": name,
+        "source": "cbuckets",
+        "status": status_map.get(bucket, "lead"),
+        "next_contact_date": today_date(),
+        "contact_frequency_days": 14,
+        "chisme_summary": f"Added from daily customer communication bucket: {bucket}",
+    }).execute()
+
+    return (response.data or [None])[0]
+
+
+def clear_today_queued_items():
+    supabase.table("chisme_communication_queue").delete().eq("queue_date", today_date()).eq("status", "queued").execute()
+
+
+def add_queue_item(contact, bucket: str, priority: int):
+    if not contact:
+        return
+
+    supabase.table("chisme_communication_queue").insert({
+        "queue_date": today_date(),
+        "contact_id": contact["id"],
+        "bucket": bucket,
+        "reason": bucket_reason(bucket),
+        "script_hint": bucket_script(bucket, contact.get("name", "there")),
+        "priority": priority,
+        "status": "queued",
+        "assigned_to": "Daniel",
+    }).execute()
+
+
+def fill_with_past_customers(start_priority: int, target_total: int = 20):
+    current = get_today_queue()
+    current_count = len(current)
+
+    remaining = max(0, target_total - current_count)
+    if remaining <= 0:
+        return
+
+    contacts = get_due_chisme_contacts(remaining)
+
+    priority = start_priority
+    for contact in contacts:
+        add_queue_item(contact, "past_customer", priority)
+        priority += 1
+        
 # ---------- CHISMEBOT COMMANDS ----------
 
 def register_chisme(bot):
@@ -383,6 +521,86 @@ def register_chisme(bot):
             lines.append(f"{idx}. {short_text(card)}")
 
         await send_long(ctx, "\n".join(lines))
+
+        @bot.command(name="cbuckets")
+        async def cbuckets(ctx, target: int = 20):
+        """
+        Daily customer communication bucket builder.
+        Daniel dumps customer communications, sorts them into buckets,
+        and Chismebot fills the rest with past customer touchpoints.
+        """
+        def check(m):
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
+
+        await ctx.send(
+            "🪣 Customer communication bucket dump.\n\n"
+            "List every customer/person/project interaction already in your head.\n"
+            "Use commas or separate lines.\n\n"
+            "Example:\n"
+            "Gardina\n"
+            "Vasquez\n"
+            "Dr Garcia\n"
+            "Outdoor Kitchen"
+        )
+
+        raw_dump = (await bot.wait_for("message", check=check)).content.strip()
+        dumped_items = parse_named_list(raw_dump)
+
+        if not dumped_items:
+            await ctx.send("I didn’t catch any customer communication items.")
+            return
+
+        preview = (
+            "🪣 Here's the customer communication pile:\n\n"
+            + "\n".join([f"{idx + 1}. {item}" for idx, item in enumerate(dumped_items)])
+            + "\n\n"
+            "Sort them into buckets:\n"
+            "`A:` Active workflow\n"
+            "`H:` Hot inbound\n"
+            "`E:` Estimate follow-up\n"
+            "`P:` Pro referral\n\n"
+            "Example:\n"
+            "A: 1, 2\n"
+            "H: 3\n"
+            "E: 4"
+        )
+
+        await ctx.send(preview)
+
+        response = (await bot.wait_for("message", check=check)).content.strip()
+        buckets = parse_cbuckets_categories(response, dumped_items)
+
+        clear_today_queued_items()
+
+        priority = 1
+        created_counts = {}
+
+        for bucket, names in buckets.items():
+            created_counts[bucket] = len(names)
+            for name in names:
+                contact = create_manual_contact_if_needed(name, bucket)
+                add_queue_item(contact, bucket, priority)
+                priority += 1
+
+        fill_with_past_customers(priority, target_total=target)
+
+        queue = get_today_queue()
+        total = len(queue)
+        done = len([x for x in queue if x.get("status") == "done"])
+
+        final_buckets = {}
+        for item in queue:
+            bucket = item.get("bucket") or "unknown"
+            final_buckets[bucket] = final_buckets.get(bucket, 0) + 1
+
+        bucket_lines = "\n".join([f"- {k}: {v}" for k, v in final_buckets.items()])
+
+        await ctx.send(
+            f"✅ Chisme buckets built.\n\n"
+            f"Today: {done} / {total} complete\n\n"
+            f"{bucket_lines}\n\n"
+            f"Use `!cnext` to start."
+        )
 
     @bot.command(name="cqueue")
     async def cqueue(ctx, target: int = 20):
