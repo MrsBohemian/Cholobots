@@ -1885,28 +1885,28 @@ def register_metiche(bot: commands.Bot):
         
         status = "Added today’s brain dump items to mtoday."
         
-      summary = (
-            "🧠 Brain dump sorted.\n\n"
-            f"Today: {len(buckets['today'])}\n"
-            f"This Week: {len(buckets['week'])}\n"
-            f"Hold: {len(buckets['hold'])}\n"
-            f"Important: {len(buckets['important'])}\n\n"
-            f"{status}\n\n"
-            "Do you want to launch today's work session now?\n"
-            "`yes` — continue into today's task accounting\n"
-            "`later` — stop here"
-        )
-                
-        await ctx.send(summary)
-        
-        launch_reply = (await bot.wait_for("message", check=check)).content.strip().lower()
-        
-        if launch_reply not in {"yes", "y"}:
-            await ctx.send("Okay. Brain dump is held. Come back when you're ready.")
-            return
-        
-        await ctx.send("Good. use !mtoday to begin task accounting for today")
-        
+          summary = (
+                "🧠 Brain dump sorted.\n\n"
+                f"Today: {len(buckets['today'])}\n"
+                f"This Week: {len(buckets['week'])}\n"
+                f"Hold: {len(buckets['hold'])}\n"
+                f"Important: {len(buckets['important'])}\n\n"
+                f"{status}\n\n"
+                "Do you want to launch today's work session now?\n"
+                "`yes` — continue into today's task accounting\n"
+                "`later` — stop here"
+            )
+                    
+            await ctx.send(summary)
+            
+            launch_reply = (await bot.wait_for("message", check=check)).content.strip().lower()
+            
+            if launch_reply not in {"yes", "y"}:
+                await ctx.send("Okay. Brain dump is held. Come back when you're ready.")
+                return
+            
+            await ctx.send("Good. use !mtoday to begin task accounting for today")
+            
         
     @bot.command(name="mtoday")
     async def mtoday(ctx: commands.Context):
