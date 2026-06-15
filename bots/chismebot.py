@@ -427,7 +427,41 @@ def parse_named_list(text: str) -> list:
     parts = [p.strip() for p in normalized.split(",")]
 
     return [p for p in parts if p]
-        
+
+def bucket_label(bucket: str) -> str:
+    labels = {
+        "active_workflow": "Active Workflow",
+        "hot_inbound": "Hot Inbound",
+        "estimate_followup": "Estimate Follow-Up",
+        "pro_referral": "Pro Referral",
+        "past_customer": "Past Customer",
+    }
+    return labels.get(bucket, bucket or "Other")
+
+
+def find_queue_item(query: str):
+    q = (query or "").strip().lower()
+    queue = get_today_queue()
+    open_items = [item for item in queue if item.get("status") != "done"]
+
+    if not q:
+        return get_next_queued_item()
+
+    if q.isdigit():
+        idx = int(q) - 1
+        if 0 <= idx < len(open_items):
+            return open_items[idx]
+
+    for item in open_items:
+        contact = item.get("chisme_contacts") or {}
+        name = (contact.get("name") or "").lower()
+        reason = (item.get("reason") or "").lower()
+        bucket = (item.get("bucket") or "").lower()
+
+        if q in name or q in reason or q in bucket:
+            return item
+
+    return None
 # ---------- CHISMEBOT COMMANDS ----------
 
 def register_chisme(bot):
@@ -636,7 +670,50 @@ def register_chisme(bot):
             f"Use `!cnext` to pull the next customer."
         )
 
+    @bot.command(name="clist")
+    async def clist(ctx):
+        """
+        Show today's customer communication list grouped by bucket.
+        """
+        queue = get_today_queue()
 
+        if not queue:
+            await ctx.send("No customer communication queue for today. Use `!cbuckets` first.")
+            return
+
+        done = len([x for x in queue if x.get("status") == "done"])
+        total = len(queue)
+
+        grouped = {}
+
+        for idx, item in enumerate(queue, start=1):
+            bucket = item.get("bucket") or "other"
+            grouped.setdefault(bucket, [])
+
+            contact = item.get("chisme_contacts") or {}
+            name = contact.get("name") or "Unknown"
+            status = item.get("status") or "queued"
+            mark = "✅" if status == "done" else "⬜"
+
+            grouped[bucket].append(f"{mark} {idx}. {name} — {item.get('reason')}")
+
+        lines = [f"📞 Customer Communication Today\n\nProgress: {done} / {total}\n"]
+
+        bucket_order = [
+            "active_workflow",
+            "hot_inbound",
+            "estimate_followup",
+            "pro_referral",
+            "past_customer",
+        ]
+
+        for bucket in bucket_order:
+            if bucket in grouped:
+                lines.append(f"\n**{bucket_label(bucket)}**")
+                lines.extend(grouped[bucket])
+
+        await send_long(ctx, "\n".join(lines))
+        
     @bot.command(name="cnext")
     async def cnext(ctx):
         """
@@ -665,44 +742,58 @@ def register_chisme(bot):
 
 
     @bot.command(name="cdone")
-    async def cdone(ctx, *, notes: str = ""):
+    async def cdone(ctx, selector: str = "", *, notes: str = ""):
         """
-        Mark the current next queued communication as done.
+        Mark a customer communication done by number, name, or next item.
+
+        Examples:
+        !cdone
+        !cdone 1 no answer
+        !cdone Hilda left voicemail
         """
-        item = get_next_queued_item()
+        item = find_queue_item(selector)
 
         if not item:
-            await ctx.send("No queued customer communication left for today.")
+            await ctx.send("I couldn't find that queued customer communication. Try `!clist`.")
             return
 
         contact = item.get("chisme_contacts") or {}
         contact_id = item.get("contact_id")
         contact_name = contact.get("name", "Unknown")
 
-        notes = notes.strip() or "completed"
+        final_notes = notes.strip()
+
+        # If user typed: !cdone no answer
+        # and "no" is not a valid selector, treat whole thing as notes for next item.
+        if not final_notes and selector and not selector.isdigit():
+            maybe_item = find_queue_item(selector)
+            if maybe_item is None:
+                item = get_next_queued_item()
+                final_notes = selector
+
+        final_notes = final_notes or "completed"
 
         supabase.table("chisme_communication_queue").update({
             "status": "done",
             "completed_at": now_iso(),
-            "outcome": notes,
-            "notes": notes,
+            "outcome": final_notes,
+            "notes": final_notes,
         }).eq("id", item["id"]).execute()
 
         supabase.table("chisme_interactions").insert({
             "contact_id": contact_id,
             "interaction_type": "call",
-            "notes": notes,
-            "outcome": notes,
+            "notes": final_notes,
+            "outcome": final_notes,
             "created_by": str(ctx.author),
         }).execute()
 
-        # Default next contact rhythm for now.
         next_date = (date.today() + timedelta(days=60)).isoformat()
 
         supabase.table("chisme_contacts").update({
             "last_contact_date": today_date(),
             "next_contact_date": next_date,
-            "last_outcome": notes,
+            "last_outcome": final_notes,
         }).eq("id", contact_id).execute()
 
         queue = get_today_queue()
@@ -711,8 +802,9 @@ def register_chisme(bot):
 
         await ctx.send(
             f"✅ Completed: {contact_name}\n"
-            f"Outcome: {notes}\n\n"
-            f"Progress: {done} / {total}"
+            f"Outcome: {final_notes}\n\n"
+            f"Progress: {done} / {total}\n\n"
+            f"Use `!clist` to see what remains."
         )
         
     @bot.command(name="followup")
