@@ -418,6 +418,15 @@ def fill_with_past_customers(start_priority: int, target_total: int = 20):
     for contact in contacts:
         add_queue_item(contact, "past_customer", priority)
         priority += 1
+
+def parse_named_list(text: str) -> list:
+    if not text:
+        return []
+
+    normalized = text.replace("\n", ",")
+    parts = [p.strip() for p in normalized.split(",")]
+
+    return [p for p in parts if p]
         
 # ---------- CHISMEBOT COMMANDS ----------
 
