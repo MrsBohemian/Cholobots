@@ -667,7 +667,34 @@ def save_mdice_entry(
     )
 
     return {"ok": True, "data": response.data}
+    
+def save_important_items(
+    person: str,
+    discord_user: str,
+    channel_id: str,
+    items: List[str],
+):
+    if not require_supabase():
+        return {"ok": False, "reason": "Supabase not configured"}
 
+    inserts = [
+        {
+            "person": person,
+            "discord_user": discord_user,
+            "channel_id": channel_id,
+            "item": item,
+            "status": "open",
+        }
+        for item in items
+        if item.strip()
+    ]
+
+    if not inserts:
+        return {"ok": True, "data": []}
+
+    response = supabase.table("metiche_important_items").insert(inserts).execute()
+    return {"ok": True, "data": response.data}
+    
 # ---------- Weekly execution logic ----------
 
 def build_weekly_execution(
@@ -1215,6 +1242,7 @@ def parse_braindump_categories(response: str, items: List[str]) -> Dict[str, Lis
         "today": [],
         "week": [],
         "hold": [],
+        "important": [],
     }
 
     lines = response.splitlines()
@@ -1226,7 +1254,6 @@ def parse_braindump_categories(response: str, items: List[str]) -> Dict[str, Lis
             continue
 
         prefix, values = line.split(":", 1)
-
         prefix = prefix.strip().lower()
 
         indexes = []
@@ -1242,12 +1269,12 @@ def parse_braindump_categories(response: str, items: List[str]) -> Dict[str, Lis
 
         if prefix == "t":
             buckets["today"].extend(indexes)
-
         elif prefix == "w":
             buckets["week"].extend(indexes)
-
         elif prefix == "h":
             buckets["hold"].extend(indexes)
+        elif prefix == "i":
+            buckets["important"].extend(indexes)
 
     return buckets
     
@@ -1814,17 +1841,28 @@ def register_metiche(bot: commands.Bot):
             "What belongs:\n"
             "`T:` Today\n"
             "`W:` This Week\n"
-            "`H:` Hold\n\n"
+            "`H:` Hold\n"
+            "`I:` Important / Attention Required\n\n"
             "Example:\n"
             "T: 1, 3\n"
             "W: 2, 5\n"
-            "H: 4"
+            "H: 4\n"
+            "I: 6"
         )
         
         await ctx.send(preview)
         
         response = (await bot.wait_for("message", check=check)).content.strip()
         buckets = parse_braindump_categories(response, dumped_items)
+
+        person = get_person_from_discord(ctx.author.id)
+
+        important_result = save_important_items(
+            person=person,
+            discord_user=str(ctx.author),
+            channel_id=str(ctx.channel.id),
+            items=buckets["important"],
+        )    
         
         date_key = today_iso()
         person = get_person_from_discord(ctx.author.id)
@@ -1847,17 +1885,18 @@ def register_metiche(bot: commands.Bot):
         
         status = "Added today’s brain dump items to mtoday."
         
-        summary = (
+      summary = (
             "🧠 Brain dump sorted.\n\n"
             f"Today: {len(buckets['today'])}\n"
             f"This Week: {len(buckets['week'])}\n"
-            f"Hold: {len(buckets['hold'])}\n\n"
+            f"Hold: {len(buckets['hold'])}\n"
+            f"Important: {len(buckets['important'])}\n\n"
             f"{status}\n\n"
             "Do you want to launch today's work session now?\n"
             "`yes` — continue into today's task accounting\n"
             "`later` — stop here"
         )
-        
+                
         await ctx.send(summary)
         
         launch_reply = (await bot.wait_for("message", check=check)).content.strip().lower()
@@ -1866,7 +1905,7 @@ def register_metiche(bot: commands.Bot):
             await ctx.send("Okay. Brain dump is held. Come back when you're ready.")
             return
         
-        await ctx.send("Good. Next step is wiring this directly into the work session.")
+        await ctx.send("Good. use !mtoday to begin task accounting for today")
         
         
     @bot.command(name="mtoday")
