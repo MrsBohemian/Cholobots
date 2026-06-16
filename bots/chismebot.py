@@ -513,6 +513,40 @@ def infer_contact_status_from_notes(notes: str):
         return None
 
     return None
+
+def guess_contact_name(note: str) -> str:
+    words = (note or "").strip().split()
+    if not words:
+        return "Unknown"
+
+    if len(words) >= 2:
+        return " ".join(words[:2])
+
+    return words[0]
+
+
+def find_or_create_chisme_contact(name: str):
+    existing = (
+        supabase.table("chisme_contacts")
+        .select("*")
+        .ilike("name", name)
+        .limit(1)
+        .execute()
+    ).data or []
+
+    if existing:
+        return existing[0]
+
+    response = supabase.table("chisme_contacts").insert({
+        "name": name,
+        "source": "chisme",
+        "status": "lead",
+        "next_contact_date": today_date(),
+        "contact_frequency_days": 14,
+        "chisme_summary": "Created from !chisme note.",
+    }).execute()
+
+    return (response.data or [None])[0]
 # ---------- CHISMEBOT COMMANDS ----------
 
 def register_chisme(bot):
@@ -578,24 +612,89 @@ def register_chisme(bot):
 
             text = safe_text_from_openai_response(resp)
 
-            items = load_chisme()
-            entry = {
-                "timestamp": now_iso(),
-                "raw_note": note,
-                "narrative_card": text,
-                "type": "chisme_note"
-            }
-            items.append(entry)
-            save_chisme(items)
+            contact_name = guess_contact_name(note)
+            contact = find_or_create_chisme_contact(contact_name)
+            
+            if contact:
+                contact_id = contact["id"]
+            
+                supabase.table("chisme_interactions").insert({
+                    "contact_id": contact_id,
+                    "interaction_type": "chisme",
+                    "notes": note,
+                    "outcome": text,
+                    "created_by": str(ctx.author),
+                }).execute()
+            
+                supabase.table("chisme_contacts").update({
+                    "chisme_summary": text[:1000],
+                    "last_contact_date": today_date(),
+                    "last_outcome": note[:500],
+                    "updated_at": now_iso(),
+                }).eq("id", contact_id).execute()
+            
+                        items = load_chisme()
+                        entry = {
+                            "timestamp": now_iso(),
+                            "raw_note": note,
+                            "narrative_card": text,
+                            "type": "chisme_note"
+                        }
+                        items.append(entry)
+                        save_chisme(items)
+            
+                        await send_long(ctx, text)
+                        await ctx.send("✅ Saved to Chismebot narrative database.")
+            
+                    except Exception:
+                        print("=== FULL ERROR TRACEBACK ===")
+                        traceback.print_exc()
+                        print("=== END TRACEBACK ===")
+                        await ctx.send("⚠️ Error. Check the terminal traceback.")
 
-            await send_long(ctx, text)
-            await ctx.send("✅ Saved to Chismebot narrative database.")
+        @bot.command(name="cshow")
+        async def cshow(ctx, *, name: str = ""):
+        if not name.strip():
+            await ctx.send("Show customer chisme like: `!cshow Grecia Garcia`")
+            return
 
-        except Exception:
-            print("=== FULL ERROR TRACEBACK ===")
-            traceback.print_exc()
-            print("=== END TRACEBACK ===")
-            await ctx.send("⚠️ Error. Check the terminal traceback.")
+        contacts = (
+            supabase.table("chisme_contacts")
+            .select("*")
+            .ilike("name", f"%{name}%")
+            .limit(1)
+            .execute()
+        ).data or []
+
+        if not contacts:
+            await ctx.send(f"No Chisme contact found for: {name}")
+            return
+
+        contact = contacts[0]
+
+        interactions = (
+            supabase.table("chisme_interactions")
+            .select("*")
+            .eq("contact_id", contact["id"])
+            .order("created_at", desc=True)
+            .limit(10)
+            .execute()
+        ).data or []
+
+        lines = [
+            f"💬 **{contact.get('name')}**",
+            "",
+            f"Status: {contact.get('status') or 'unknown'}",
+            f"Next contact: {contact.get('next_contact_date') or 'not set'}",
+            f"Last outcome: {contact.get('last_outcome') or 'none'}",
+            "",
+            "Chisme history:"
+        ]
+
+        for item in interactions:
+            lines.append(f"- {item.get('created_at')}: {item.get('notes')}")
+
+        await send_long(ctx, "\n".join(lines))
 
     @bot.command(name="chismelist")
     async def chismelist(ctx):
