@@ -573,8 +573,7 @@ def register_chisme(bot):
     @bot.command(name="chisme")
     async def chisme(ctx, *, note: str = ""):
         """
-        Save long-term narrative/customer/network data.
-        This does NOT automatically become a follow-up.
+        Save long-term narrative/customer/network data and attach it to chisme_contacts.
         """
         if not note.strip():
             await ctx.send("Tell me chisme like: `!chisme Gail wants light fixtures and mentioned budget concerns.`")
@@ -591,7 +590,6 @@ def register_chisme(bot):
                         "role": "system",
                         "content": (
                             "You are Chismebot. Turn messy customer/network notes into a clean narrative data card.\n"
-                            "Do NOT turn this into a to-do list unless the user explicitly says it is a follow-up.\n\n"
                             "Use these fields:\n"
                             "Name\n"
                             "Org / Relationship\n"
@@ -614,10 +612,10 @@ def register_chisme(bot):
 
             contact_name = guess_contact_name(note)
             contact = find_or_create_chisme_contact(contact_name)
-            
+
             if contact:
                 contact_id = contact["id"]
-            
+
                 supabase.table("chisme_interactions").insert({
                     "contact_id": contact_id,
                     "interaction_type": "chisme",
@@ -625,35 +623,35 @@ def register_chisme(bot):
                     "outcome": text,
                     "created_by": str(ctx.author),
                 }).execute()
-            
+
                 supabase.table("chisme_contacts").update({
                     "chisme_summary": text[:1000],
                     "last_contact_date": today_date(),
                     "last_outcome": note[:500],
                     "updated_at": now_iso(),
                 }).eq("id", contact_id).execute()
-            
-                        items = load_chisme()
-                        entry = {
-                            "timestamp": now_iso(),
-                            "raw_note": note,
-                            "narrative_card": text,
-                            "type": "chisme_note"
-                        }
-                        items.append(entry)
-                        save_chisme(items)
-            
-                        await send_long(ctx, text)
-                        await ctx.send("✅ Saved to Chismebot narrative database.")
-            
-                    except Exception:
-                        print("=== FULL ERROR TRACEBACK ===")
-                        traceback.print_exc()
-                        print("=== END TRACEBACK ===")
-                        await ctx.send("⚠️ Error. Check the terminal traceback.")
 
-        @bot.command(name="cshow")
-        async def cshow(ctx, *, name: str = ""):
+            items = load_chisme()
+            entry = {
+                "timestamp": now_iso(),
+                "raw_note": note,
+                "narrative_card": text,
+                "type": "chisme_note"
+            }
+            items.append(entry)
+            save_chisme(items)
+
+            await send_long(ctx, text)
+            await ctx.send("✅ Saved to Chismebot narrative database and customer record.")
+
+        except Exception:
+            print("=== FULL ERROR TRACEBACK ===")
+            traceback.print_exc()
+            print("=== END TRACEBACK ===")
+            await ctx.send("⚠️ Error. Check the terminal traceback.")
+
+    @bot.command(name="cshow")
+    async def cshow(ctx, *, name: str = ""):
         if not name.strip():
             await ctx.send("Show customer chisme like: `!cshow Grecia Garcia`")
             return
