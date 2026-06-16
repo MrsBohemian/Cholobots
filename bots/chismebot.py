@@ -624,12 +624,27 @@ def register_chisme(bot):
                     "created_by": str(ctx.author),
                 }).execute()
 
-                supabase.table("chisme_contacts").update({
+                followup_date = extract_followup_date(note)
+                estimate_value = extract_money_amount(note)
+                new_status = infer_contact_status_from_notes(note)
+                
+                contact_updates = {
                     "chisme_summary": text[:1000],
                     "last_contact_date": today_date(),
                     "last_outcome": note[:500],
                     "updated_at": now_iso(),
-                }).eq("id", contact_id).execute()
+                }
+                
+                if followup_date:
+                    contact_updates["next_contact_date"] = followup_date
+                
+                if estimate_value is not None:
+                    contact_updates["estimate_value"] = estimate_value
+                
+                if new_status:
+                    contact_updates["status"] = new_status
+                
+                supabase.table("chisme_contacts").update(contact_updates).eq("id", contact_id).execute()
 
             items = load_chisme()
             entry = {
