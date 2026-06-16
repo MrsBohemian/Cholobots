@@ -470,6 +470,49 @@ def find_queue_item(query: str):
 
     return None
     
+def extract_money_amount(text: str):
+    import re
+    match = re.search(r"\$?\s*(\d+(?:\.\d{1,2})?)", text or "")
+    return float(match.group(1)) if match else None
+
+
+def extract_followup_date(text: str):
+    import re
+    text = text or ""
+
+    # Best format: follow up 2026-06-24
+    match = re.search(r"follow\s*up\s*(?:on)?\s*(\d{4}-\d{2}-\d{2})", text, re.I)
+    if match:
+        return match.group(1)
+
+    # Shortcut: last week of month
+    if "last week of month" in text.lower() or "last week of the month" in text.lower():
+        today = date.today()
+        if today.month == 12:
+            first_next_month = date(today.year + 1, 1, 1)
+        else:
+            first_next_month = date(today.year, today.month + 1, 1)
+
+        last_day = first_next_month - timedelta(days=1)
+        followup_day = last_day - timedelta(days=5)
+        return followup_day.isoformat()
+
+    return None
+
+
+def infer_contact_status_from_notes(notes: str):
+    lowered = (notes or "").lower()
+
+    if "quoted" in lowered or "estimate" in lowered:
+        return "estimate_sent"
+
+    if "scheduled" in lowered or "booked" in lowered:
+        return "active_project"
+
+    if "no answer" in lowered or "voicemail" in lowered:
+        return None
+
+    return None
 # ---------- CHISMEBOT COMMANDS ----------
 
 def register_chisme(bot):
@@ -796,13 +839,29 @@ def register_chisme(bot):
             "created_by": str(ctx.author),
         }).execute()
 
-        next_date = (date.today() + timedelta(days=60)).isoformat()
-
-        supabase.table("chisme_contacts").update({
+        followup_date = extract_followup_date(final_notes)
+        estimate_value = extract_money_amount(final_notes)
+        new_status = infer_contact_status_from_notes(final_notes)
+        
+        # Default fallback if no follow-up date is named.
+        next_date = followup_date or (date.today() + timedelta(days=60)).isoformat()
+        
+        contact_updates = {
             "last_contact_date": today_date(),
             "next_contact_date": next_date,
             "last_outcome": final_notes,
-        }).eq("id", contact_id).execute()
+            "chisme_summary": final_notes,
+        }
+        
+        if new_status:
+            contact_updates["status"] = new_status
+        
+        # Only include this if your chisme_contacts table has estimate_value.
+        # If it errors, remove these 2 lines.
+        if estimate_value is not None:
+            contact_updates["estimate_value"] = estimate_value
+        
+        supabase.table("chisme_contacts").update(contact_updates).eq("id", contact_id).execute()
 
         queue = get_today_queue()
         total = len(queue)
