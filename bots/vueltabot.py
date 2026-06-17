@@ -45,7 +45,7 @@ class VueltaBot(commands.Cog):
             f"**Status:** identified"
         )
 
-    @commands.command(name="necessito")
+    @commands.command(name="necesito")
     async def necessito(self, ctx, *, description: str = None):
         """
         Example:
