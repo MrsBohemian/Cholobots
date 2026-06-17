@@ -46,18 +46,71 @@ class VueltaBot(commands.Cog):
         )
 
     @commands.command(name="necesito")
-    async def necessito(self, ctx, *, description: str = None):
+    async def necesito(self, ctx, *, description: str = None):
         """
         Example:
-        !necessito corrugated metal roofing for bus stop project
+        !necesito clothing racks for clothing swap
         """
         if not description:
             await ctx.send(
                 "¿Qué necesitas? Example:\n"
-                "`!necessito corrugated metal roofing for bus stop project`"
+                "`!necesito clothing racks for clothing swap`"
             )
             return
-
+    
+        query = description.lower()
+    
+        # keyword buckets for prototype matching
+        if "clothing" in query or "clothes" in query or "donation" in query:
+            keywords = ["clothing", "clothes", "textile", "resale", "thrift", "donation"]
+        elif "rack" in query or "hanger" in query:
+            keywords = ["rack", "clothing rack", "hanger", "MIC"]
+        elif "food" in query or "hospitality" in query or "sponsor" in query:
+            keywords = ["food", "hospitality", "sponsor", "diversion", "catering"]
+        else:
+            keywords = query.split()
+    
+        matches = []
+    
+        for keyword in keywords:
+            result = (
+                supabase.table("vuelta_inventory")
+                .select("*")
+                .eq("entry_type", "have")
+                .in_("status", ["identified", "available", "open"])
+                .ilike("match_keywords", f"%{keyword}%")
+                .execute()
+            )
+    
+            if result.data:
+                matches.extend(result.data)
+    
+        # de-dupe by id
+        unique_matches = {item["id"]: item for item in matches}.values()
+    
+        if unique_matches:
+            response = f"🔎 **Matches for:** {description}\n\n"
+    
+            for item in list(unique_matches)[:8]:
+                response += (
+                    f"**{item.get('organization_name') or 'Unknown organization'}**\n"
+                    f"Item: {item.get('item_name') or item.get('description')}\n"
+                    f"Category: {item.get('category') or 'uncategorized'}\n"
+                    f"Delivery: {'Yes' if item.get('delivery_available') else 'Pickup / ask directly'}\n"
+                )
+    
+                if item.get("delivery_notes"):
+                    response += f"Delivery notes: {item.get('delivery_notes')}\n"
+    
+                if item.get("directory_url"):
+                    response += f"Directory: {item.get('directory_url')}\n"
+    
+                response += "\n"
+    
+            await ctx.send(response)
+            return
+    
+        # If no match, save the need
         record = {
             "discord_user_id": str(ctx.author.id),
             "discord_user_name": str(ctx.author),
@@ -66,14 +119,15 @@ class VueltaBot(commands.Cog):
             "entry_type": "need",
             "current_location": None,
             "next_destination": None,
-            "project": None,
+            "project": "clothing swap" if "clothing swap" in query else None,
+            "match_keywords": query,
         }
-
+    
         supabase.table("vuelta_inventory").insert(record).execute()
-
+    
         await ctx.send(
-            f"📌 Need captured.\n\n"
-            f"**Necessito:** {description}\n"
+            f"📌 No matches found yet. Need saved.\n\n"
+            f"**Necesito:** {description}\n"
             f"**Status:** open"
         )
 
