@@ -106,9 +106,17 @@ class VueltaBot(commands.Cog):
                     response += f"Delivery notes: {item.get('delivery_notes')}\n"
     
                 if item.get("directory_url"):
-                    response += f"Directory: {item.get('directory_url')}\n"
-    
-                response += "\n"
+                    response += (
+                    f"🏢 {item.get('organization_name')}\n"
+                    f"📦 {item.get('item_name') or item.get('description')}\n"
+                    f"🏷️ {item.get('category') or 'uncategorized'}\n"
+                    f"🚚 {'Delivery Available' if item.get('delivery_available') else 'Pickup / Contact Organization'}\n"
+                )
+                
+                if item.get("directory_url"):
+                    response += f"🔗 <{item.get('directory_url')}>\n"
+
+                response += "\n────────────\n\n"
     
             await ctx.send(response)
             return
