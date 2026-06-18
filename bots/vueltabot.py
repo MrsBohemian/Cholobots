@@ -61,12 +61,15 @@ class VueltaBot(commands.Cog):
         query = description.lower()
     
         # keyword buckets for prototype matching
-        if "clothing" in query or "clothes" in query or "donation" in query:
-            keywords = ["clothing", "clothes", "textile", "resale", "thrift", "donation"]
-        elif "rack" in query or "hanger" in query:
-            keywords = ["rack", "clothing rack", "hanger", "MIC"]
-        elif "food" in query or "hospitality" in query or "sponsor" in query:
-            keywords = ["food", "hospitality", "sponsor", "diversion", "catering"]
+        if "rack" in query or "racks" in query or "hanger" in query:
+            keywords = ["rack", "racks", "clothing rack", "garment rack", "hanger", "event infrastructure", "table", "tables"]
+        
+        elif "food" in query or "hospitality" in query or "sponsor" in query or "catering" in query:
+            keywords = ["food", "hospitality", "sponsor", "diversion", "catering", "meals"]
+        
+        elif "clothing" in query or "clothes" in query or "donation" in query or "textile" in query:
+            keywords = ["clothing", "clothes", "textile", "resale", "thrift", "donation", "swap"]
+        
         else:
             keywords = query.split()
     
