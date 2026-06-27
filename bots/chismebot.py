@@ -99,7 +99,7 @@ def create_contact_stub(label, raw_note=""):
             "source_customer_name": name,
             "phone": phone,
             "status": "lead",
-            "temperature": 25,
+            "lead_temperature"": 25,
             "chisme_summary": f"Placeholder Rolodex card created from: {raw_note or label}",
             "updated_at": now_iso(),
         })
@@ -279,8 +279,9 @@ def parse_fields(raw):
         "address": "address",
         "source": "source",
         "status": "status",
-        "temp": "temperature",
-        "temperature": "temperature",
+        "temp": "lead_temperature",
+        "temperature": "lead_temperature",
+        "lead_temperature": "lead_temperature",
         "preferred": "preferred_contact_method",
         "preferred contact": "preferred_contact_method",
         "next": "next_action",
@@ -304,7 +305,7 @@ def parse_fields(raw):
         if not col or not value:
             continue
 
-        if col == "temperature":
+        if col == "lead_temperature"":
             try:
                 value = max(0, min(100, int(value)))
             except ValueError:
@@ -345,7 +346,7 @@ def register_chisme(bot):
             "`!cremove Name | follow up 2026-07-01 | note`\n"
             "Remove from active list and leave follow-up note.\n\n"
             "`!cshow Name`\n"
-            "Show Rolodex card, temperature, active status, and recent chisme."
+            "Show Rolodex card, lead_temperature", active status, and recent chisme."
         )
 
     @bot.command(name="chisme")
@@ -376,7 +377,7 @@ def register_chisme(bot):
             lines = [
                 f"📓 **Chisme journal: {contact.get('name')}**",
                 f"Phone: {contact.get('phone') or 'not saved'}",
-                f"Temperature: {contact.get('temperature') or 0}",
+                f"Temperature: {contact.get('lead_temperature') or 0}",
                 "",
             ]
 
@@ -474,7 +475,7 @@ def register_chisme(bot):
             lines.append(
                 f"Burner {row.get('burner_position')}: **{c.get('name')}**\n"
                 f"  Reason: {row.get('active_reason') or 'none'}\n"
-                f"  Temp: {c.get('temperature') or 0}\n"
+                f"  Temp: {c.get('lead_temperature"') or 0}\n"
                 f"  Phone: {c.get('phone') or 'not saved'}\n"
             )
 
@@ -509,7 +510,7 @@ def register_chisme(bot):
             f"Email: {c.get('email') or 'not saved'}",
             f"Address: {c.get('address') or 'not saved'}",
             f"Source: {c.get('source') or 'not saved'}",
-            f"Temperature: {c.get('temperature') or 0}",
+            f"Temperature: {c.get('lead_temperature') or 0}",
             f"Status: {c.get('status') or 'unknown'}",
             f"Summary: {c.get('chisme_summary') or 'none'}",
             "",
