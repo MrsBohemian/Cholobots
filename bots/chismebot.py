@@ -11,6 +11,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+cremove_sessions = {}
 
 def today_date():
     return date.today().isoformat()
@@ -326,6 +327,40 @@ def get_active():
         .execute()
     ).data or []
 
+def update_temperature(contact, event_type):
+    temp = contact.get("lead_temperature", 0)
+
+    if event_type == "customer_inbound_message":
+        temp += 15
+
+    elif event_type == "quote_accepted":
+        temp = 100
+
+    elif event_type == "quote_sent_no_response":
+        temp -= 10
+
+    elif event_type == "reschedule":
+        temp -= 10
+
+    elif event_type == "followup_missed":
+        temp -= 15
+
+    elif event_type == "job_completed":
+        temp = max(temp, 20)
+
+    elif event_type == "reengaged":
+        temp += 20
+
+    # clamp values
+    temp = max(0, min(100, temp))
+
+    supabase.table("chisme_contacts") \
+        .update({"lead_temperature": temp}) \
+        .eq("id", contact["id"]) \
+        .execute()
+
+    return temp
+
 
 def register_chisme(bot):
 
@@ -339,12 +374,12 @@ def register_chisme(bot):
             "Add a chisme note to that customer’s journal.\n\n"
             "`!cset Name | phone: 210... | address: ... | temp: 75`\n"
             "Complete or update the Rolodex card.\n\n"
-            "`!cactive Name | burner: 1 | reason: estimate tomorrow`\n"
-            "Put customer on active communication list. Burner 1 is hottest active spot; 4 is least active.\n\n"
-            "`!clist`\n"
-            "Show active customer communication list by burner position.\n\n"
-            "`!cremove Name | follow up 2026-07-01 | note`\n"
-            "Remove from active list and leave follow-up note.\n\n"
+            "`!cactive Name | burner: 1 | reason: project needs attention`\n"
+            "Put active project on the stovetop. Burner 1 is front burner; 4 is back burner.\n\n"
+            "`!stovetop`\n"
+            "Show stovetop / active projects by burner position.\n\n"
+            "`!cremove Name`\n"
+            "Take a project off the stovetop with guided follow-up prompts.\n\n"
             "`!cshow Name`\n"
             "Show Rolodex card, lead_temperature, active status, and recent chisme."
         )
@@ -381,14 +416,14 @@ def register_chisme(bot):
                 "",
             ]
 
-            real_notes = [n for n in notes if n.get("note_type") != "journal_anchor" and (n.get("note") or "").strip()]
+            real_notes = [n for n in notes if n.get("note_type") != "journal_anchor" and (n.get("note_text") or "").strip()]
 
             if not real_notes:
                 lines.append("No chisme notes yet.")
                 lines.append(f"Add one with: `!chisme {contact.get('name')} | <note>`")
             else:
                 for n in real_notes[:8]:
-                    lines.append(f"- {n.get('note_date')}: {short(n.get('note'), 250)}")
+                    lines.append(f"- {n.get('note_date')}: {short(n.get('note_text'), 250)}")
 
             await send_long(ctx, "\n".join(lines))
             return
@@ -427,17 +462,17 @@ def register_chisme(bot):
 
         await ctx.send(f"✅ Rolodex updated for **{updates.get('name') or contact.get('name')}**")
 
-    @bot.command(name="cactive")
+    @bot.command(name="cactive", aliases=["stove"])
     async def cactive(ctx, *, raw=""):
         if not raw.strip():
-            await ctx.send("Use: `!cactive Name | burner: 1 | reason: estimate tomorrow`")
+            await ctx.send("Use: `!stove Name | burner: 1 | reason: project needs attention`")
             return
 
         parts = [p.strip() for p in raw.split("|") if p.strip()]
         lookup = parts[0]
         burner = 4
-        reason = "Active customer communication"
-
+        reason = "Project on stovetop"
+        
         for p in parts[1:]:
             lower = p.lower()
             if lower.startswith("burner"):
@@ -459,23 +494,23 @@ def register_chisme(bot):
         set_active(contact, reason=reason, burner_position=burner)
         ensure_journal(contact["id"])
 
-        await ctx.send(f"✅ Active: **{contact.get('name')}** on burner {burner} — {reason}")
+        await ctx.send(f"✅ Stovetop: **{contact.get('name')}** on burner {burner} — {reason}")
 
-    @bot.command(name="clist")
+    @bot.command(name="clist", aliases=["stovetop"])
     async def clist(ctx):
         rows = get_active()
         if not rows:
-            await ctx.send("No active customer communication right now.")
+            await ctx.send("No projects on the stovetop right now.")
             return
 
-        lines = ["🔥 **Active Customer Communication**\n"]
+        lines = ["🔥 **Stovetop / Active Projects**\n"]
 
         for row in rows:
             c = row.get("chisme_contacts") or {}
             lines.append(
                 f"Burner {row.get('burner_position')}: **{c.get('name')}**\n"
                 f"  Reason: {row.get('active_reason') or 'none'}\n"
-                f"  Temp: {c.get('lead_temperature"') or 0}\n"
+                f"  Temp: {c.get('lead_temperature') or 0}\n"
                 f"  Phone: {c.get('phone') or 'not saved'}\n"
             )
 
@@ -519,50 +554,192 @@ def register_chisme(bot):
         if active:
             a = active[0]
             lines.extend([
-                f"🔥 Active burner: {a.get('burner_position')}",
+                f"🔥 Stovetop burner: {a.get('burner_position')}",
                 f"Reason: {a.get('active_reason')}",
                 "",
             ])
 
         lines.append("Recent chisme:")
-        real_notes = [n for n in notes if n.get("note_type") != "journal_anchor" and (n.get("note") or "").strip()]
+        real_notes = [n for n in notes if n.get("note_type") != "journal_anchor" and (n.get("note_text") or "").strip()]
         if not real_notes:
             lines.append("No chisme notes yet.")
         else:
             for n in real_notes[:8]:
-                lines.append(f"- {n.get('note_date')}: {short(n.get('note'), 220)}")
+                lines.append(f"- {n.get('note_date')}: {short(n.get('note_text'), 220)}")
 
         await send_long(ctx, "\n".join(lines))
 
     @bot.command(name="cremove")
-    async def cremove(ctx, *, raw=""):
-        if not raw.strip():
-            await ctx.send("Use: `!cremove Name | follow up 2026-07-01 | note`")
+    async def cremove(ctx, *, lookup=""):
+        if not lookup.strip():
+            await ctx.send("Use: `!cremove Name`")
             return
 
-        parts = [p.strip() for p in raw.split("|") if p.strip()]
-        lookup = parts[0]
-        note = " | ".join(parts[1:]) if len(parts) > 1 else "Removed from active list."
-        followup = extract_followup_date(note)
-
         matches = find_contacts(lookup)
+
         if len(matches) > 1:
             await send_long(ctx, format_match_list(matches))
             return
+
         if not matches:
             await ctx.send(f"No Rolodex card found for **{lookup}**.")
             return
 
-        c = matches[0]
+        contact = matches[0]
 
-        supabase.table("chisme_active").delete().eq("contact_id", c["id"]).execute()
+        cremove_sessions[ctx.author.id] = {
+            "contact": contact,
+            "step": "reason"
+        }
 
-        updates = {"updated_at": now_iso()}
-        if followup:
-            updates["next_followup_date"] = followup
-            updates["next_contact_date"] = followup
-        supabase.table("chisme_contacts").update(updates).eq("id", c["id"]).execute()
+        await ctx.send(
+            f"Why are we taking **{contact.get('name')}** off the stovetop?\n\n"
+            "1. Not ready / needs to reschedule\n"
+            "2. Not responding\n"
+            "3. Chose someone else\n"
+            "4. Changed mind\n"
+            "5. Job completed\n"
+            "6. Other"
+        )
+        
+    @bot.listen("on_message")
+    async def handle_cremove_session(message):
+        if message.author.bot:
+            return
+        
+        if message.content.startswith("!"):
+            return
 
-        add_note(c, f"Removed from active list. {note}", created_by=str(ctx.author), note_type="active_removed")
+        session = cremove_sessions.get(message.author.id)
+        if not session:
+            return
 
-        await ctx.send(f"✅ Removed **{c.get('name')}** from active list.")
+        content = message.content.strip()
+        contact = session["contact"]
+
+        reason_map = {
+            "1": ("not_ready", "Not ready / needs to reschedule", 50),
+            "2": ("not_responding", "Not responding", 40),
+            "3": ("chose_someone_else", "Chose someone else", 10),
+            "4": ("changed_mind", "Changed mind", 20),
+            "5": ("job_completed", "Job completed", 25),
+            "6": ("other", "Other", contact.get("lead_temperature") or 0),
+        }
+
+        if session["step"] == "reason":
+            if content not in reason_map:
+                await message.channel.send("Reply with 1, 2, 3, 4, 5, or 6.")
+                return
+
+            if content == "6":
+                session["step"] = "custom_reason"
+                await message.channel.send("What is the reason?")
+                return
+            
+            reason_key, reason_label, new_temp = reason_map[content]
+            session["reason_key"] = reason_key
+            session["reason_label"] = reason_label
+            session["new_temp"] = new_temp
+            session["step"] = "followup"
+
+            await message.channel.send(
+                f"When should we follow up with **{contact.get('name')}**?\n\n"
+                "1. 1 week\n"
+                "2. 2 weeks\n"
+                "3. 1 month\n"
+                "4. Custom date like `7/3/2026`\n"
+                "5. No follow-up"
+            )
+            return
+            
+        if session["step"] == "custom_reason":
+            session["reason_key"] = "other"
+            session["reason_label"] = content
+            session["new_temp"] = contact.get("lead_temperature") or 0
+            session["step"] = "followup"
+        
+            await message.channel.send(
+                f"When should we follow up with **{contact.get('name')}**?\n\n"
+                "1. 1 week\n"
+                "2. 2 weeks\n"
+                "3. 1 month\n"
+                "4. Custom date like `7/3/2026`\n"
+                "5. No follow-up"
+            )
+            return
+            
+        if session["step"] == "followup":
+            followup_date = None
+
+            if content == "1":
+                followup_date = (date.today() + timedelta(days=7)).isoformat()
+            elif content == "2":
+                followup_date = (date.today() + timedelta(days=14)).isoformat()
+            elif content == "3":
+                followup_date = (date.today() + timedelta(days=30)).isoformat()
+            elif content == "4":
+                session["step"] = "custom_date"
+                await message.channel.send("Type the follow-up date like `7/3/2026`.")
+                return
+            elif content == "5":
+                followup_date = None
+            else:
+                await message.channel.send("Reply with 1, 2, 3, 4, or 5.")
+                return
+
+            session["followup_date"] = followup_date
+            session["step"] = "note"
+            await message.channel.send("Add a note for the chisme log:")
+            return
+
+        if session["step"] == "custom_date":
+            try:
+                parsed = datetime.strptime(content, "%m/%d/%Y").date()
+                session["followup_date"] = parsed.isoformat()
+                session["step"] = "note"
+                await message.channel.send("Add a note for the chisme log:")
+            except ValueError:
+                await message.channel.send("Use date format like `7/3/2026`.")
+            return
+
+        if session["step"] == "note":
+            followup_date = session.get("followup_date")
+            reason_label = session["reason_label"]
+            new_temp = session["new_temp"]
+            user_note = content
+
+            supabase.table("chisme_active").delete().eq("contact_id", contact["id"]).execute()
+
+            updates = {
+                "lead_temperature": new_temp,
+                "last_outcome": f"Took off stovetop: {reason_label}",
+                "updated_at": now_iso(),
+            }
+
+            if followup_date:
+                updates["next_followup_date"] = followup_date
+                updates["next_contact_date"] = followup_date
+
+            supabase.table("chisme_contacts").update(updates).eq("id", contact["id"]).execute()
+
+            add_note(
+                contact,
+                (
+                    f"Took off stovetop.\n"
+                    f"Reason: {reason_label}\n"
+                    f"Follow-up: {followup_date or 'none'}\n"
+                    f"Lead temperature set to: {new_temp}\n"
+                    f"Note: {user_note}"
+                ),
+                created_by=str(message.author),
+                note_type="active_removed"
+            )
+
+            del cremove_sessions[message.author.id]
+
+            await message.channel.send(
+                f"✅ Took **{contact.get('name')}** off the stovetop.\n"
+                f"Reason: {reason_label}\n"
+                f"Follow-up: {followup_date or 'none'}\n"
+                f"Temperature: {new_temp}"
+            )
