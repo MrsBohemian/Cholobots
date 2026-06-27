@@ -346,7 +346,7 @@ def register_chisme(bot):
             "`!cremove Name | follow up 2026-07-01 | note`\n"
             "Remove from active list and leave follow-up note.\n\n"
             "`!cshow Name`\n"
-            "Show Rolodex card, lead_temperature", active status, and recent chisme."
+            "Show Rolodex card, lead_temperature, active status, and recent chisme."
         )
 
     @bot.command(name="chisme")
