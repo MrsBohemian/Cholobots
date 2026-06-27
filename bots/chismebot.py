@@ -305,7 +305,7 @@ def parse_fields(raw):
         if not col or not value:
             continue
 
-        if col == "lead_temperature"":
+        if col == "lead_temperature":
             try:
                 value = max(0, min(100, int(value)))
             except ValueError:
