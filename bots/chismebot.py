@@ -211,7 +211,7 @@ def add_note(contact, note, created_by=None, note_type="chisme"):
             "contact_id": contact["id"],
             "note_date": today_date(),
             "note_type": note_type,
-            "note": note,
+            "note_text": note,   # ✅ correct
             "created_by": created_by,
         })
         .execute()
