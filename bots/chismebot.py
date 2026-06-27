@@ -99,7 +99,7 @@ def create_contact_stub(label, raw_note=""):
             "source_customer_name": name,
             "phone": phone,
             "status": "lead",
-            "lead_temperature"": 25,
+            "lead_temperature": 25,
             "chisme_summary": f"Placeholder Rolodex card created from: {raw_note or label}",
             "updated_at": now_iso(),
         })
