@@ -36,6 +36,14 @@ def phone_digits(text):
     return re.sub(r"\D", "", m.group(1)) if m else None
 
 
+def split_lookup_note(raw):
+    raw = (raw or "").strip()
+    if "|" in raw:
+        lookup, note = raw.split("|", 1)
+        return lookup.strip(), note.strip()
+    return raw, None
+
+
 def extract_followup_date(text):
     text = text or ""
 
@@ -52,30 +60,10 @@ def extract_followup_date(text):
     return None
 
 
-def infer_lookup(raw):
-    raw = (raw or "").strip()
-    phone = phone_digits(raw)
-
-    if phone:
-        return phone
-
-    if "|" in raw:
-        return raw.split("|", 1)[0].strip()
-
-    if "-" in raw:
-        return raw.split("-", 1)[0].strip()
-
-    words = raw.split()
-    if len(words) >= 2:
-        return " ".join(words[:2])
-
-    return raw
-
-
-def find_contact(lookup):
+def find_contacts(lookup, limit=5):
     lookup = (lookup or "").strip()
     if not lookup:
-        return None
+        return []
 
     phone = phone_digits(lookup)
 
@@ -84,77 +72,101 @@ def find_contact(lookup):
             supabase.table("chisme_contacts")
             .select("*")
             .ilike("phone", f"%{phone}%")
-            .limit(1)
+            .limit(limit)
             .execute()
         ).data or []
         if rows:
-            return rows[0]
+            return rows
 
-    rows = (
+    return (
         supabase.table("chisme_contacts")
         .select("*")
         .ilike("name", f"%{lookup}%")
+        .limit(limit)
+        .execute()
+    ).data or []
+
+
+def create_contact_stub(label, raw_note=""):
+    phone = phone_digits(label) or phone_digits(raw_note)
+    name = label.strip() or phone or "Unknown customer"
+
+    rows = (
+        supabase.table("chisme_contacts")
+        .insert({
+            "name": name,
+            "source": "chismebot",
+            "source_customer_name": name,
+            "phone": phone,
+            "status": "lead",
+            "temperature": 25,
+            "chisme_summary": f"Placeholder Rolodex card created from: {raw_note or label}",
+            "updated_at": now_iso(),
+        })
+        .execute()
+    ).data or []
+
+    contact = rows[0] if rows else None
+    if contact:
+        ensure_journal(contact["id"])
+    return contact
+
+
+def choose_one_contact(matches):
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def format_match_list(matches):
+    lines = ["I found multiple possible Rolodex cards:\n"]
+    for i, c in enumerate(matches, 1):
+        lines.append(
+            f"{i}. **{c.get('name')}** — "
+            f"{c.get('phone') or 'no phone'} — "
+            f"{c.get('address') or c.get('source') or 'no clue'}"
+        )
+    lines.append("\nUse a more specific lookup, like phone number or address clue.")
+    return "\n".join(lines)
+
+
+def ensure_journal(contact_id):
+    existing = (
+        supabase.table("chisme_journals")
+        .select("*")
+        .eq("contact_id", contact_id)
         .limit(1)
         .execute()
     ).data or []
 
-    return rows[0] if rows else None
-
-
-def create_contact_stub(lookup, raw_note=""):
-    phone = phone_digits(lookup) or phone_digits(raw_note)
-    name = lookup.strip() or phone or "Unknown customer"
-
-    payload = {
-        "name": name,
-        "source": "chismebot",
-        "source_customer_name": name,
-        "phone": phone,
-        "status": "lead",
-        "active_communication": True,
-        "active_reason": raw_note[:300] if raw_note else "Needs reconstruction",
-        "active_since": today_date(),
-        "active_priority": 50,
-        "next_followup_date": today_date(),
-        "next_contact_date": today_date(),
-        "chisme_summary": f"Placeholder contact created from Chismebot note: {raw_note[:500]}",
-        "last_outcome": raw_note[:500],
-        "updated_at": now_iso(),
-    }
+    if existing:
+        return existing[0]
 
     rows = (
-        supabase.table("chisme_contacts")
-        .insert(payload)
+        supabase.table("chisme_journals")
+        .insert({"contact_id": contact_id})
         .execute()
     ).data or []
 
     return rows[0] if rows else None
 
 
-def find_or_create_contact(raw):
-    lookup = infer_lookup(raw)
-    contact = find_contact(lookup)
-    if contact:
-        return contact
-    return create_contact_stub(lookup, raw)
+def get_journal(contact_id):
+    journal = ensure_journal(contact_id)
+    if not journal:
+        return None, []
+    notes = (
+        supabase.table("chisme_notes")
+        .select("*")
+        .eq("journal_id", journal["id"])
+        .order("created_at", desc=True)
+        .limit(10)
+        .execute()
+    ).data or []
+    return journal, notes
 
 
-def interaction_type(raw):
-    t = (raw or "").lower()
-    if "text" in t:
-        return "text"
-    if "estimate" in t or "quote" in t:
-        return "estimate"
-    if "paid" in t or "payment" in t:
-        return "payment"
-    if "invoice" in t:
-        return "invoice"
-    if "call" in t or "called" in t or "voicemail" in t:
-        return "call"
-    return "chisme"
-
-
-def synthesize_summary(contact, raw_note):
+def synthesize_summary(contact, note):
     existing = contact.get("chisme_summary") or ""
 
     try:
@@ -165,71 +177,57 @@ def synthesize_summary(contact, raw_note):
                 {
                     "role": "system",
                     "content": (
-                        "Update a practical contractor CRM customer summary. "
-                        "Use only the facts provided. Do not invent. "
-                        "Keep it useful for future calls, estimates, and subcontractor handoffs. "
-                        "If the contact is incomplete, say what still needs reconstruction."
+                        "Update a practical contractor customer summary. "
+                        "Use only known facts. Do not invent. "
+                        "Make it useful for future calls, estimates, and subcontractor handoffs."
                     ),
                 },
                 {
                     "role": "user",
                     "content": (
-                        f"Customer/contact label: {contact.get('name')}\n\n"
-                        f"Existing summary:\n{existing}\n\n"
-                        f"New note:\n{raw_note}"
+                        f"Customer: {contact.get('name')}\n"
+                        f"Old summary:\n{existing}\n\n"
+                        f"New chisme note:\n{note}"
                     ),
                 },
             ],
             max_output_tokens=500,
         )
-
         text = getattr(resp, "output_text", "") or ""
-        return text.strip()[:1800] if text.strip() else (existing + "\n" + raw_note)[:1800]
-
+        return text.strip()[:1800] if text.strip() else (existing + "\n" + note)[:1800]
     except Exception:
-        return (existing + "\n" + raw_note).strip()[:1800]
+        return (existing + "\n" + note).strip()[:1800]
 
 
-def save_interaction(contact, raw_note, created_by=None, counts_today=True):
-    followup = extract_followup_date(raw_note)
+def add_note(contact, note, created_by=None, note_type="chisme"):
+    journal = ensure_journal(contact["id"])
+    if not journal:
+        return None
 
-    payload = {
-        "contact_id": contact["id"],
-        "interaction_date": today_date(),
-        "interaction_type": interaction_type(raw_note),
-        "notes": raw_note,
-        "outcome": raw_note[:500],
-        "next_action": None,
-        "next_contact_date": followup,
-        "next_followup_date": followup,
-        "created_by": created_by,
-        "touch_counts_for_today": counts_today,
-    }
-
-    return (
-        supabase.table("chisme_interactions")
-        .insert(payload)
+    rows = (
+        supabase.table("chisme_notes")
+        .insert({
+            "journal_id": journal["id"],
+            "contact_id": contact["id"],
+            "note_date": today_date(),
+            "note_type": note_type,
+            "note": note,
+            "created_by": created_by,
+        })
         .execute()
-    )
+    ).data or []
 
-
-def update_contact_from_chisme(contact, raw_note):
-    followup = extract_followup_date(raw_note)
-    summary = synthesize_summary(contact, raw_note)
+    summary = synthesize_summary(contact, note)
+    followup = extract_followup_date(note)
 
     updates = {
         "chisme_summary": summary,
         "last_contact_date": today_date(),
-        "last_outcome": raw_note[:500],
-        "active_communication": True,
-        "active_reason": raw_note[:300],
-        "active_since": contact.get("active_since") or today_date(),
-        "daily_touch_date": today_date(),
-        "daily_touch_counted": True,
+        "last_outcome": note[:500],
         "updated_at": now_iso(),
     }
 
-    phone = phone_digits(raw_note)
+    phone = phone_digits(note)
     if phone and not contact.get("phone"):
         updates["phone"] = phone
 
@@ -237,15 +235,36 @@ def update_contact_from_chisme(contact, raw_note):
         updates["next_followup_date"] = followup
         updates["next_contact_date"] = followup
 
-    (
-        supabase.table("chisme_contacts")
-        .update(updates)
-        .eq("id", contact["id"])
+    supabase.table("chisme_contacts").update(updates).eq("id", contact["id"]).execute()
+    return rows[0] if rows else None
+
+
+def set_active(contact, reason=None, burner_position=4, owner="Daniel"):
+    followup = extract_followup_date(reason or "")
+    existing = (
+        supabase.table("chisme_active")
+        .select("*")
+        .eq("contact_id", contact["id"])
+        .limit(1)
         .execute()
-    )
+    ).data or []
+
+    payload = {
+        "contact_id": contact["id"],
+        "active_reason": reason or "Active customer communication",
+        "burner_position": burner_position,
+        "next_followup_date": followup,
+        "active_owner": owner,
+        "updated_at": now_iso(),
+    }
+
+    if existing:
+        supabase.table("chisme_active").update(payload).eq("contact_id", contact["id"]).execute()
+    else:
+        supabase.table("chisme_active").insert(payload).execute()
 
 
-def parse_cset(raw):
+def parse_fields(raw):
     parts = [p.strip() for p in raw.split("|") if p.strip()]
     if not parts:
         return "", {}
@@ -260,6 +279,8 @@ def parse_cset(raw):
         "address": "address",
         "source": "source",
         "status": "status",
+        "temp": "temperature",
+        "temperature": "temperature",
         "preferred": "preferred_contact_method",
         "preferred contact": "preferred_contact_method",
         "next": "next_action",
@@ -278,46 +299,31 @@ def parse_cset(raw):
 
         key = key.strip().lower()
         value = value.strip()
-
         col = field_map.get(key)
-        if col and value:
-            updates[col] = value
+
+        if not col or not value:
+            continue
+
+        if col == "temperature":
+            try:
+                value = max(0, min(100, int(value)))
+            except ValueError:
+                continue
+
+        updates[col] = value
 
     updates["updated_at"] = now_iso()
     return lookup, updates
 
 
-def get_recent_interactions(contact_id, limit=8):
+def get_active():
     return (
-        supabase.table("chisme_interactions")
-        .select("*")
-        .eq("contact_id", contact_id)
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    ).data or []
-
-
-def get_active_contacts():
-    return (
-        supabase.table("chisme_contacts")
-        .select("*")
-        .eq("active_communication", True)
-        .order("active_priority", desc=False)
+        supabase.table("chisme_active")
+        .select("*, chisme_contacts(*)")
+        .order("burner_position", desc=False)
         .order("next_followup_date", desc=False)
         .execute()
     ).data or []
-
-
-def get_today_touch_count():
-    res = (
-        supabase.table("chisme_interactions")
-        .select("id", count="exact")
-        .eq("interaction_date", today_date())
-        .eq("touch_counts_for_today", True)
-        .execute()
-    )
-    return res.count or 0
 
 
 def register_chisme(bot):
@@ -326,202 +332,236 @@ def register_chisme(bot):
     async def chismebot_help(ctx):
         await ctx.send(
             "💬 **CHISMEBOT**\n\n"
-            "`!chisme <messy customer note>`\n"
-            "Capture anything: name, phone number, job note, reminder, source, or reconstruction clue. "
-            "Chismebot finds/creates a Rolodex card, saves the journal note, and keeps it active.\n"
-            "Example: `!chisme 2107235619 TV mount`\n\n"
-            "`!cset <lookup> | field: value | field: value`\n"
-            "Complete or update the Rolodex card.\n"
-            "Example: `!cset 2107235619 | name: John Dreese | phone: 2102887136 | address: 5230 Sagerock Pass`\n\n"
+            "`!chisme Name`\n"
+            "Show that customer’s chisme journal.\n\n"
+            "`!chisme Name | note`\n"
+            "Add a chisme note to that customer’s journal.\n\n"
+            "`!cset Name | phone: 210... | address: ... | temp: 75`\n"
+            "Complete or update the Rolodex card.\n\n"
+            "`!cactive Name | burner: 1 | reason: estimate tomorrow`\n"
+            "Put customer on active communication list. Burner 1 is hottest active spot; 4 is least active.\n\n"
             "`!clist`\n"
-            "Show active customer communication list.\n\n"
-            "`!cshow <lookup>`\n"
-            "Show Rolodex card plus recent chisme notes.\n\n"
-            "`!cremove <lookup> | follow up YYYY-MM-DD | note`\n"
-            "Remove from active list and schedule future follow-up.\n\n"
-            "`!cprogress 10`\n"
-            "Show today’s customer communication progress."
+            "Show active customer communication list by burner position.\n\n"
+            "`!cremove Name | follow up 2026-07-01 | note`\n"
+            "Remove from active list and leave follow-up note.\n\n"
+            "`!cshow Name`\n"
+            "Show Rolodex card, temperature, active status, and recent chisme."
         )
 
     @bot.command(name="chisme")
     async def chisme(ctx, *, raw=""):
         if not raw.strip():
-            await ctx.send("Use: `!chisme <messy customer note>`")
+            await ctx.send("Use: `!chisme Name` or `!chisme Name | note`")
             return
 
-        try:
-            contact = find_or_create_contact(raw)
-            if not contact:
-                await ctx.send("⚠️ Could not create/find Rolodex card.")
+        lookup, note = split_lookup_note(raw)
+        matches = find_contacts(lookup)
+
+        if not matches:
+            if note is None:
+                await ctx.send(
+                    f"No Rolodex card found for **{lookup}**.\n"
+                    f"To create one, use: `!chisme {lookup} | <note>`"
+                )
                 return
+            contact = create_contact_stub(lookup, note)
+        elif len(matches) > 1:
+            await send_long(ctx, format_match_list(matches))
+            return
+        else:
+            contact = matches[0]
 
-            save_interaction(contact, raw, created_by=str(ctx.author), counts_today=True)
-            update_contact_from_chisme(contact, raw)
+        if note is None:
+            journal, notes = get_journal(contact["id"])
+            lines = [
+                f"📓 **Chisme journal: {contact.get('name')}**",
+                f"Phone: {contact.get('phone') or 'not saved'}",
+                f"Temperature: {contact.get('temperature') or 0}",
+                "",
+            ]
 
-            await ctx.send(
-                f"✅ Chisme captured.\n"
-                f"Rolodex: **{contact.get('name')}**\n"
-                f"Active card: yes\n"
-                f"Note: {short(raw, 300)}"
-            )
+            real_notes = [n for n in notes if n.get("note_type") != "journal_anchor" and (n.get("note") or "").strip()]
 
-        except Exception:
-            print("=== CHISME ERROR ===")
-            traceback.print_exc()
-            await ctx.send("⚠️ Chismebot error. Check Railway logs.")
+            if not real_notes:
+                lines.append("No chisme notes yet.")
+                lines.append(f"Add one with: `!chisme {contact.get('name')} | <note>`")
+            else:
+                for n in real_notes[:8]:
+                    lines.append(f"- {n.get('note_date')}: {short(n.get('note'), 250)}")
+
+            await send_long(ctx, "\n".join(lines))
+            return
+
+        add_note(contact, note, created_by=str(ctx.author))
+        set_active(contact, reason=note, burner_position=4)
+
+        await ctx.send(
+            f"✅ Chisme saved for **{contact.get('name')}**.\n"
+            f"Added to active list on burner 4."
+        )
 
     @bot.command(name="cset")
     async def cset(ctx, *, raw=""):
-        if not raw.strip():
-            await ctx.send("Use: `!cset <lookup> | name: X | phone: X | address: X`")
+        lookup, updates = parse_fields(raw)
+
+        if not lookup:
+            await ctx.send("Use: `!cset Name | phone: ... | address: ... | temp: 75`")
             return
 
-        try:
-            lookup, updates = parse_cset(raw)
-            contact = find_contact(lookup)
+        matches = find_contacts(lookup)
 
-            if not contact:
-                contact = create_contact_stub(lookup, f"Created during cset: {raw}")
+        if len(matches) > 1:
+            await send_long(ctx, format_match_list(matches))
+            return
 
-            if not updates:
-                await ctx.send("I found/created the card, but I didn’t see fields to update.")
-                return
+        contact = matches[0] if matches else create_contact_stub(lookup, raw)
 
-            (
-                supabase.table("chisme_contacts")
-                .update(updates)
-                .eq("id", contact["id"])
-                .execute()
-            )
+        if not updates:
+            await ctx.send("No update fields found.")
+            return
 
-            save_interaction(
-                contact,
-                f"Rolodex updated: {raw}",
-                created_by=str(ctx.author),
-                counts_today=False,
-            )
+        supabase.table("chisme_contacts").update(updates).eq("id", contact["id"]).execute()
+        ensure_journal(contact["id"])
+        add_note(contact, f"Rolodex updated: {raw}", created_by=str(ctx.author), note_type="rolodex_update")
 
-            await ctx.send(f"✅ Rolodex updated for **{updates.get('name') or contact.get('name')}**")
+        await ctx.send(f"✅ Rolodex updated for **{updates.get('name') or contact.get('name')}**")
 
-        except Exception:
-            print("=== CSET ERROR ===")
-            traceback.print_exc()
-            await ctx.send("⚠️ Could not update Rolodex card.")
+    @bot.command(name="cactive")
+    async def cactive(ctx, *, raw=""):
+        if not raw.strip():
+            await ctx.send("Use: `!cactive Name | burner: 1 | reason: estimate tomorrow`")
+            return
+
+        parts = [p.strip() for p in raw.split("|") if p.strip()]
+        lookup = parts[0]
+        burner = 4
+        reason = "Active customer communication"
+
+        for p in parts[1:]:
+            lower = p.lower()
+            if lower.startswith("burner"):
+                m = re.search(r"([1-4])", lower)
+                if m:
+                    burner = int(m.group(1))
+            elif lower.startswith("reason"):
+                reason = p.split(":", 1)[1].strip() if ":" in p else p
+            else:
+                reason = p
+
+        matches = find_contacts(lookup)
+
+        if len(matches) > 1:
+            await send_long(ctx, format_match_list(matches))
+            return
+
+        contact = matches[0] if matches else create_contact_stub(lookup, reason)
+        set_active(contact, reason=reason, burner_position=burner)
+        ensure_journal(contact["id"])
+
+        await ctx.send(f"✅ Active: **{contact.get('name')}** on burner {burner} — {reason}")
 
     @bot.command(name="clist")
     async def clist(ctx):
-        contacts = get_active_contacts()
-
-        if not contacts:
+        rows = get_active()
+        if not rows:
             await ctx.send("No active customer communication right now.")
             return
 
-        lines = ["📇 **Active Customer Communication**\n"]
+        lines = ["🔥 **Active Customer Communication**\n"]
 
-        for i, c in enumerate(contacts, 1):
+        for row in rows:
+            c = row.get("chisme_contacts") or {}
             lines.append(
-                f"{i}. **{c.get('name') or 'Unknown'}**\n"
-                f"   Reason: {c.get('active_reason') or 'Needs reconstruction'}\n"
-                f"   Phone: {c.get('phone') or 'not saved'}\n"
-                f"   Follow-up: {c.get('next_followup_date') or c.get('next_contact_date') or 'not set'}\n"
-                f"   Chisme: {short(c.get('chisme_summary'), 160)}\n"
+                f"Burner {row.get('burner_position')}: **{c.get('name')}**\n"
+                f"  Reason: {row.get('active_reason') or 'none'}\n"
+                f"  Temp: {c.get('temperature') or 0}\n"
+                f"  Phone: {c.get('phone') or 'not saved'}\n"
             )
 
         await send_long(ctx, "\n".join(lines))
 
     @bot.command(name="cshow")
     async def cshow(ctx, *, lookup=""):
-        if not lookup.strip():
-            await ctx.send("Use: `!cshow <name or phone>`")
+        matches = find_contacts(lookup)
+
+        if not matches:
+            await ctx.send(f"No Rolodex card found for **{lookup}**.")
             return
 
-        contact = find_contact(lookup)
-
-        if not contact:
-            await ctx.send(f"No Rolodex card found for: {lookup}")
+        if len(matches) > 1:
+            await send_long(ctx, format_match_list(matches))
             return
 
-        interactions = get_recent_interactions(contact["id"])
+        c = matches[0]
+        journal, notes = get_journal(c["id"])
+
+        active = (
+            supabase.table("chisme_active")
+            .select("*")
+            .eq("contact_id", c["id"])
+            .limit(1)
+            .execute()
+        ).data or []
 
         lines = [
-            f"📇 **{contact.get('name')}**",
-            f"Phone: {contact.get('phone') or 'not saved'}",
-            f"Email: {contact.get('email') or 'not saved'}",
-            f"Address: {contact.get('address') or 'not saved'}",
-            f"Source: {contact.get('source') or 'not saved'}",
-            f"Status: {contact.get('status') or 'unknown'}",
-            f"Active: {contact.get('active_communication')}",
-            f"Reason: {contact.get('active_reason') or 'none'}",
-            f"Next follow-up: {contact.get('next_followup_date') or contact.get('next_contact_date') or 'not set'}",
+            f"📇 **{c.get('name')}**",
+            f"Phone: {c.get('phone') or 'not saved'}",
+            f"Email: {c.get('email') or 'not saved'}",
+            f"Address: {c.get('address') or 'not saved'}",
+            f"Source: {c.get('source') or 'not saved'}",
+            f"Temperature: {c.get('temperature') or 0}",
+            f"Status: {c.get('status') or 'unknown'}",
+            f"Summary: {c.get('chisme_summary') or 'none'}",
             "",
-            "**Chisme summary:**",
-            contact.get("chisme_summary") or "No summary yet.",
-            "",
-            "**Recent journal:**",
         ]
 
-        if not interactions:
+        if active:
+            a = active[0]
+            lines.extend([
+                f"🔥 Active burner: {a.get('burner_position')}",
+                f"Reason: {a.get('active_reason')}",
+                "",
+            ])
+
+        lines.append("Recent chisme:")
+        real_notes = [n for n in notes if n.get("note_type") != "journal_anchor" and (n.get("note") or "").strip()]
+        if not real_notes:
             lines.append("No chisme notes yet.")
         else:
-            for item in interactions:
-                lines.append(
-                    f"- {item.get('interaction_date')}: "
-                    f"{item.get('interaction_type') or 'note'} — {short(item.get('notes'), 180)}"
-                )
+            for n in real_notes[:8]:
+                lines.append(f"- {n.get('note_date')}: {short(n.get('note'), 220)}")
 
         await send_long(ctx, "\n".join(lines))
 
     @bot.command(name="cremove")
     async def cremove(ctx, *, raw=""):
         if not raw.strip():
-            await ctx.send("Use: `!cremove <lookup> | follow up YYYY-MM-DD | note`")
+            await ctx.send("Use: `!cremove Name | follow up 2026-07-01 | note`")
             return
 
         parts = [p.strip() for p in raw.split("|") if p.strip()]
         lookup = parts[0]
-        note = " | ".join(parts[1:]) if len(parts) > 1 else "Removed from active communication."
-        followup = extract_followup_date(note) or (date.today() + timedelta(days=30)).isoformat()
+        note = " | ".join(parts[1:]) if len(parts) > 1 else "Removed from active list."
+        followup = extract_followup_date(note)
 
-        contact = find_contact(lookup)
-        if not contact:
-            await ctx.send(f"No Rolodex card found for: {lookup}")
+        matches = find_contacts(lookup)
+        if len(matches) > 1:
+            await send_long(ctx, format_match_list(matches))
+            return
+        if not matches:
+            await ctx.send(f"No Rolodex card found for **{lookup}**.")
             return
 
-        (
-            supabase.table("chisme_contacts")
-            .update({
-                "active_communication": False,
-                "active_reason": None,
-                "next_followup_date": followup,
-                "next_contact_date": followup,
-                "last_outcome": note[:500],
-                "updated_at": now_iso(),
-            })
-            .eq("id", contact["id"])
-            .execute()
-        )
+        c = matches[0]
 
-        save_interaction(
-            contact,
-            f"Removed from active list. {note}",
-            created_by=str(ctx.author),
-            counts_today=False,
-        )
+        supabase.table("chisme_active").delete().eq("contact_id", c["id"]).execute()
 
-        await ctx.send(
-            f"✅ Removed from active list: **{contact.get('name')}**\n"
-            f"Next follow-up: {followup}"
-        )
+        updates = {"updated_at": now_iso()}
+        if followup:
+            updates["next_followup_date"] = followup
+            updates["next_contact_date"] = followup
+        supabase.table("chisme_contacts").update(updates).eq("id", c["id"]).execute()
 
-    @bot.command(name="cprogress")
-    async def cprogress(ctx, target: int = 10):
-        count = get_today_touch_count()
-        pct = min(100, round((count / target) * 100)) if target else 0
-        filled = max(0, min(10, round(pct / 10)))
-        bar = "█" * filled + "░" * (10 - filled)
+        add_note(c, f"Removed from active list. {note}", created_by=str(ctx.author), note_type="active_removed")
 
-        await ctx.send(
-            f"📞 **Customer Communication Progress**\n\n"
-            f"{bar} {count} / {target}\n"
-            f"{pct}% complete today"
-        )
+        await ctx.send(f"✅ Removed **{c.get('name')}** from active list.")
