@@ -569,6 +569,38 @@ def register_chisme(bot):
 
         await send_long(ctx, "\n".join(lines))
 
+    @bot.command(name="hotlist")
+    async def hotlist(ctx):
+        rows = (
+            supabase.table("chisme_contacts")
+            .select("*")
+            .gt("lead_temperature", 0)
+            .order("lead_temperature", desc=True)
+            .execute()
+        ).data or []
+    
+        if not rows:
+            await ctx.send("No hot leads right now.")
+            return
+    
+        lines = ["🌡 **HOTLIST**", ""]
+    
+        for c in rows[:15]:
+            temp = c.get("lead_temperature") or 0
+            name = c.get("name") or "Unknown"
+            followup = c.get("next_followup_date") or "none"
+            outcome = c.get("last_outcome") or "No outcome logged"
+    
+            emoji = "🔥" if temp >= 75 else "🟡" if temp >= 30 else "❄️"
+    
+            lines.append(
+                f"{emoji} **{temp}° {name}**\n"
+                f"Follow up: {followup}\n"
+                f"{outcome}\n"
+            )
+    
+        await send_long(ctx, "\n".join(lines))
+
     @bot.command(name="cremove")
     async def cremove(ctx, *, lookup=""):
         if not lookup.strip():
