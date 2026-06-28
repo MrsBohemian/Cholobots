@@ -525,7 +525,6 @@ def register_chisme(bot):
             lines.append(
                 f"Burner {row.get('burner_position')}: **{c.get('name')}**\n"
                 f"  Reason: {row.get('active_reason') or 'none'}\n"
-                f"  Temp: {c.get('lead_temperature') or 0}\n"
                 f"  Phone: {c.get('phone') or 'not saved'}\n"
             )
 
