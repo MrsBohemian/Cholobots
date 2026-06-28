@@ -361,6 +361,23 @@ def update_temperature(contact, event_type):
 
     return temp
 
+def derive_temperature_from_removal(reason_key, current_temp):
+    if reason_key == "not_ready":
+        return max(current_temp - 10, 30)
+
+    if reason_key == "not_responding":
+        return max(current_temp - 25, 10)
+
+    if reason_key == "chose_someone_else":
+        return max(current_temp - 40, 0)
+
+    if reason_key == "changed_mind":
+        return max(current_temp - 30, 10)
+
+    if reason_key == "job_completed":
+        return max(current_temp - 5, 20)
+
+    return current_temp
 
 def register_chisme(bot):
 
@@ -429,11 +446,9 @@ def register_chisme(bot):
             return
 
         add_note(contact, note, created_by=str(ctx.author))
-        set_active(contact, reason=note, burner_position=4)
-
+       
         await ctx.send(
-            f"✅ Chisme saved for **{contact.get('name')}**.\n"
-            f"Added to active list on burner 4."
+            f"✅ Chisme saved for **{contact.get('name')}**."
         )
 
     @bot.command(name="cset")
@@ -571,34 +586,42 @@ def register_chisme(bot):
 
     @bot.command(name="hotlist")
     async def hotlist(ctx):
+        active_rows = (
+            supabase.table("chisme_active")
+            .select("contact_id")
+            .execute()
+        ).data or []
+
+        active_ids = {r["contact_id"] for r in active_rows}
+
         rows = (
             supabase.table("chisme_contacts")
             .select("*")
-            .gt("lead_temperature", 0)
+            .gte("lead_temperature", 75)
             .order("lead_temperature", desc=True)
             .execute()
         ).data or []
-    
+
+        rows = [c for c in rows if c["id"] not in active_ids]
+
         if not rows:
             await ctx.send("No hot leads right now.")
             return
-    
-        lines = ["🌡 **HOTLIST**", ""]
-    
+
+        lines = ["🌡 **HOTLIST — 75°+ leads**", ""]
+
         for c in rows[:15]:
             temp = c.get("lead_temperature") or 0
             name = c.get("name") or "Unknown"
             followup = c.get("next_followup_date") or "none"
             outcome = c.get("last_outcome") or "No outcome logged"
-    
-            emoji = "🔥" if temp >= 75 else "🟡" if temp >= 30 else "❄️"
-    
+
             lines.append(
-                f"{emoji} **{temp}° {name}**\n"
+                f"🔥 **{temp}° {name}**\n"
                 f"Follow up: {followup}\n"
                 f"{outcome}\n"
             )
-    
+
         await send_long(ctx, "\n".join(lines))
 
     @bot.command(name="cremove")
@@ -668,10 +691,10 @@ def register_chisme(bot):
                 await message.channel.send("What is the reason?")
                 return
             
-            reason_key, reason_label, new_temp = reason_map[content]
+            reason_key, reason_label, _ = reason_map[content]
             session["reason_key"] = reason_key
             session["reason_label"] = reason_label
-            session["new_temp"] = new_temp
+            session["base_temp"] = contact.get("lead_temperature") or 0
             session["step"] = "followup"
 
             await message.channel.send(
@@ -687,7 +710,7 @@ def register_chisme(bot):
         if session["step"] == "custom_reason":
             session["reason_key"] = "other"
             session["reason_label"] = content
-            session["new_temp"] = contact.get("lead_temperature") or 0
+            session["base_temp"] = contact.get("lead_temperature") or 0
             session["step"] = "followup"
         
             await message.channel.send(
@@ -737,7 +760,9 @@ def register_chisme(bot):
         if session["step"] == "note":
             followup_date = session.get("followup_date")
             reason_label = session["reason_label"]
-            new_temp = session["new_temp"]
+            base_temp = session["base_temp"]
+            reason_key = session["reason_key"]
+            new_temp = derive_temperature_from_removal(reason_key, base_temp)
             user_note = content
 
             supabase.table("chisme_active").delete().eq("contact_id", contact["id"]).execute()
