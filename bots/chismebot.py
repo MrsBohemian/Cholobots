@@ -398,7 +398,9 @@ def register_chisme(bot):
             "`!cremove Name`\n"
             "Take a project off the stovetop with guided follow-up prompts.\n\n"
             "`!cshow Name`\n"
-            "Show Rolodex card, lead_temperature, active status, and recent chisme."
+            "Show Rolodex card, lead_temperature, active status, and recent chisme.\n\n"
+            "`!hotlist`\n"
+            "Show lead communication cards: name, temp, phone, next action, last outcome/chisme, follow-up date."
         )
 
     @bot.command(name="chisme")
@@ -585,40 +587,36 @@ def register_chisme(bot):
 
     @bot.command(name="hotlist")
     async def hotlist(ctx):
-        active_rows = (
-            supabase.table("chisme_active")
-            .select("contact_id")
-            .execute()
-        ).data or []
-
-        active_ids = {r["contact_id"] for r in active_rows}
-
         rows = (
             supabase.table("chisme_contacts")
             .select("*")
-            .gte("lead_temperature", 75)
+            .eq("status", "lead")
             .order("lead_temperature", desc=True)
+            .order("next_followup_date", desc=False)
             .execute()
         ).data or []
 
-        rows = [c for c in rows if c["id"] not in active_ids]
-
         if not rows:
-            await ctx.send("No hot leads right now.")
+            await ctx.send("No lead communication cards right now.")
             return
 
-        lines = ["🌡 **HOTLIST — 75°+ leads**", ""]
+        lines = ["🌡 **HOT LIST — LEAD COMMUNICATION CARDS**", ""]
 
         for c in rows[:15]:
             temp = c.get("lead_temperature") or 0
             name = c.get("name") or "Unknown"
-            followup = c.get("next_followup_date") or "none"
-            outcome = c.get("last_outcome") or "No outcome logged"
+            phone = c.get("phone") or "No phone saved"
+            next_action = c.get("next_action") or "None"
+            outcome = c.get("last_outcome") or c.get("chisme_summary") or "No outcome/chisme logged"
+            followup = c.get("next_followup_date") or c.get("next_contact_date") or "None"
 
             lines.append(
-                f"🔥 **{temp}° {name}**\n"
-                f"Follow up: {followup}\n"
-                f"{outcome}\n"
+                f"**{name}**\n"
+                f"Temperature: {temp}°\n"
+                f"Phone: {phone}\n"
+                f"Next action: {next_action}\n"
+                f"Last outcome / chisme: {short(outcome, 240)}\n"
+                f"Follow-up date: {followup}\n"
             )
 
         await send_long(ctx, "\n".join(lines))
