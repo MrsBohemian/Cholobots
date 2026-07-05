@@ -521,6 +521,135 @@ def mark_wakeup_sent(wakeup_id: str):
         .eq("id", wakeup_id)
         .execute()
     )
+
+# ---------- Project task persistence ----------
+
+def find_chisme_contacts(lookup, limit=5):
+    lookup = (lookup or "").strip()
+    if not lookup or not require_supabase():
+        return []
+
+    return (
+        supabase.table("chisme_contacts")
+        .select("*")
+        .ilike("name", f"%{lookup}%")
+        .limit(limit)
+        .execute()
+    ).data or []
+
+
+def format_chisme_match_list(matches):
+    lines = ["I found multiple possible Rolodex cards:\n"]
+    for i, c in enumerate(matches, 1):
+        lines.append(
+            f"{i}. **{c.get('name')}** — "
+            f"{c.get('phone') or 'no phone'} — "
+            f"{c.get('address') or c.get('source') or 'no clue'}"
+        )
+    lines.append("\nUse a more specific lookup.")
+    return "\n".join(lines)
+
+
+def fetch_project_tasks(contact_id, project_name=None):
+    if not require_supabase():
+        return []
+
+    query = (
+        supabase.table("metiche_project_tasks")
+        .select("*")
+        .eq("contact_id", contact_id)
+    )
+
+    if project_name:
+        query = query.eq("project_name", project_name)
+
+    return (
+        query
+        .order("sort_order")
+        .order("created_at")
+        .execute()
+    ).data or []
+
+
+def insert_project_tasks(contact_id, project_name, task_texts):
+    if not require_supabase():
+        return []
+
+    rows = []
+    for idx, text in enumerate(task_texts, start=1):
+        text = str(text or "").strip()
+        if not text:
+            continue
+
+        rows.append({
+            "contact_id": contact_id,
+            "project_name": project_name,
+            "task_text": text,
+            "sort_order": idx,
+            "completed": False,
+            "actual_minutes": 0,
+            "estimated_minutes": 0,
+        })
+
+    if not rows:
+        return []
+
+    return supabase.table("metiche_project_tasks").insert(rows).execute().data or []
+
+
+def calculate_project_progress(tasks):
+    total = len(tasks or [])
+    done = len([t for t in tasks if t.get("completed")])
+    percent = round((done / total) * 100) if total else 0
+    actual_minutes = sum(int(t.get("actual_minutes") or 0) for t in tasks)
+
+    return {
+        "done": done,
+        "total": total,
+        "percent": percent,
+        "actual_minutes": actual_minutes,
+    }
+def fetch_customer_projects(contact_id):
+    if not require_supabase():
+        return []
+
+    rows = (
+        supabase.table("metiche_project_tasks")
+        .select("project_name")
+        .eq("contact_id", contact_id)
+        .execute()
+    ).data or []
+
+    projects = []
+    seen = set()
+
+    for row in rows:
+        name = row.get("project_name")
+        if name and name not in seen:
+            projects.append(name)
+            seen.add(name)
+
+    return projects
+def format_project_tasks(contact, project_name, tasks):
+    progress = calculate_project_progress(tasks)
+    lines = [
+        f"📋 **{contact.get('name')} — {project_name}**",
+        f"Ready: {progress['percent']}% ({progress['done']} / {progress['total']})",
+        "",
+    ]
+
+    if not tasks:
+        lines.append("No tasks yet.")
+        return "\n".join(lines)
+
+    for idx, task in enumerate(tasks, start=1):
+        mark = "✅" if task.get("completed") else "⬜"
+        minutes = int(task.get("actual_minutes") or 0)
+        time_label = f" ({minutes_to_label(minutes)})" if minutes else ""
+        lines.append(f"{mark} {idx}. {task.get('task_text')}{time_label}")
+
+    return "\n".join(lines)
+    
 # ---------- Routine persistence ----------
 
 def fetch_active_routine(person: str = "Daniel") -> Optional[Dict[str, Any]]:
@@ -2079,6 +2208,106 @@ def register_metiche(bot: commands.Bot):
     async def mquiet(ctx: commands.Context):
         stop_ping_schedules(ctx.channel.id)
         await ctx.send("Okay. I stopped the check-in pings.")
+        
+    @bot.command(name="mtasks")
+    async def mtasks(ctx: commands.Context, *, lookup: str = ""):
+        if not lookup.strip():
+            await ctx.send("Use: `!mtasks Customer Name`")
+            return
+
+        def check(m: discord.Message):
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
+
+        matches = find_chisme_contacts(lookup)
+
+        if not matches:
+            await ctx.send(
+                f"No Chismebot Rolodex card found for **{lookup}**.\n"
+                f"Create the customer first with Chismebot, then come back to `!mtasks`."
+            )
+            return
+
+        if len(matches) > 1:
+            await ctx.send(format_chisme_match_list(matches))
+            return
+
+        contact = matches[0]
+        projects = fetch_customer_projects(contact["id"])
+
+        if not projects:
+            await ctx.send(
+                f"Found Rolodex card: **{contact.get('name')}**.\n\n"
+                "What project are we working on?"
+            )
+            project_name = (await bot.wait_for("message", check=check)).content.strip()
+
+            if not project_name or project_name.lower() in {"cancel", "stop", "nevermind"}:
+                await ctx.send("Okay. No project task list created.")
+                return
+
+            await ctx.send(
+                f"Cool. **{contact.get('name')}**, we are working on **{project_name}**.\n\n"
+                "Paste the honey-do list now — **one task per line**."
+            )
+
+            raw_tasks = (await bot.wait_for("message", check=check)).content.strip()
+
+            if not raw_tasks or raw_tasks.lower() in {"cancel", "stop", "nevermind"}:
+                await ctx.send("Okay. No tasks added.")
+                return
+
+            task_texts = [
+                line.strip("-• 1234567890.").strip()
+                for line in raw_tasks.splitlines()
+                if line.strip()
+            ]
+
+            inserted = insert_project_tasks(contact["id"], project_name, task_texts)
+            tasks = fetch_project_tasks(contact["id"], project_name)
+
+            await ctx.send(
+                f"✅ Added {len(inserted)} task(s).\n\n"
+                + format_project_tasks(contact, project_name, tasks)
+            )
+            return
+
+        if len(projects) == 1:
+            project_name = projects[0]
+            tasks = fetch_project_tasks(contact["id"], project_name)
+
+            await ctx.send(
+                f"🔥 **{contact.get('name')}**\n"
+                f"We are working on **{project_name}**.\n\n"
+                + format_project_tasks(contact, project_name, tasks)
+            )
+            return
+
+        lines = [
+            f"**{contact.get('name')}** has multiple projects:",
+            "",
+        ]
+        for idx, project in enumerate(projects, start=1):
+            lines.append(f"{idx}. {project}")
+
+        lines.append("\nWhich project? Reply with the number.")
+        await ctx.send("\n".join(lines))
+
+        choice = (await bot.wait_for("message", check=check)).content.strip()
+
+        if not choice.isdigit():
+            await ctx.send("I couldn’t read that project number.")
+            return
+
+        idx = int(choice) - 1
+
+        if idx < 0 or idx >= len(projects):
+            await ctx.send("That project number is out of range.")
+            return
+
+        project_name = projects[idx]
+        tasks = fetch_project_tasks(contact["id"], project_name)
+
+        await ctx.send(format_project_tasks(contact, project_name, tasks))
 
     @bot.command(name="mshow")
     async def mshow(ctx: commands.Context):
@@ -2183,3 +2412,4 @@ def register_metiche(bot: commands.Bot):
                 return
             await log_raw_time_block(ctx, message.content, source="active_day")
             return
+
