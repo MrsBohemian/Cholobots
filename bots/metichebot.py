@@ -546,7 +546,7 @@ def format_chisme_match_list(matches):
             f"{c.get('phone') or 'no phone'} — "
             f"{c.get('address') or c.get('source') or 'no clue'}"
         )
-    lines.append("\nUse a more specific lookup.")
+    lines.append("\nReply with the number.")
     return "\n".join(lines)
 
 
@@ -2228,16 +2228,33 @@ def register_metiche(bot: commands.Bot):
             return
 
         if len(matches) > 1:
-            await ctx.send(format_chisme_match_list(matches))
-            return
-
-        contact = matches[0]
+            await ctx.send(
+                format_chisme_match_list(matches) +
+                "\n\nReply with the number."
+            )
+        
+            choice = (await bot.wait_for("message", check=check)).content.strip()
+        
+            if not choice.isdigit():
+                await ctx.send("I couldn’t read that number.")
+                return
+        
+            idx = int(choice) - 1
+        
+            if idx < 0 or idx >= len(matches):
+                await ctx.send("That number is out of range.")
+                return
+        
+            contact = matches[idx]
+        else:
+            contact = matches[0]
+    
         projects = fetch_customer_projects(contact["id"])
 
         if not projects:
             await ctx.send(
                 f"Found Rolodex card: **{contact.get('name')}**.\n\n"
-                "What project are we working on?"
+                "What project are we working on?"-
             )
             project_name = (await bot.wait_for("message", check=check)).content.strip()
 
