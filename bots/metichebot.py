@@ -2254,7 +2254,7 @@ def register_metiche(bot: commands.Bot):
         if not projects:
             await ctx.send(
                 f"Found Rolodex card: **{contact.get('name')}**.\n\n"
-                "What project are we working on?"-
+                "What project are we working on?"
             )
             project_name = (await bot.wait_for("message", check=check)).content.strip()
 
