@@ -2263,7 +2263,7 @@ def register_metiche(bot: commands.Bot):
                 return
 
             await ctx.send(
-                f"Cool. **{contact.get('name')}**, we are working on **{project_name}**.\n\n"
+                f"Cool. **{contact.get('name')}**, we are working on **{project_name}**\n\n"
                 "Paste the honey-do list now — **one task per line**."
             )
 
