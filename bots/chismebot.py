@@ -11,8 +11,14 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Multi-step Discord sessions
 cremove_sessions = {}
-chisme_classify_sessions = {}
+hotlist_note_sessions = {}
+
+
+# ------------------------------------------------------------
+# Basic helpers
+# ------------------------------------------------------------
 
 def today_date():
     return date.today().isoformat()
@@ -84,61 +90,66 @@ def parse_followup_response(text):
             pass
 
     return None
-    
+
+
+# ------------------------------------------------------------
+# Hot List 2.0 workflow
+# ------------------------------------------------------------
+
 HOTLIST_STAGES = {
     "sitevisit": {
         "temp": 60,
         "stage": "Site Visit Completed",
         "next_action": "Write estimate notes",
         "journal": "Completed site visit.\n\nNext step:\nWrite estimate notes.",
-        "counts_loadbar": True,
+        "prompt_for_notes": True,
     },
     "notes": {
         "temp": 70,
         "stage": "Estimate Ready",
         "next_action": "Send estimate",
         "journal": "Estimate notes completed.\n\nNext step:\nSend estimate.",
-        "counts_loadbar": True,
+        "prompt_for_notes": False,
     },
     "sent": {
         "temp": 80,
         "stage": "Estimate Sent",
         "next_action": "Follow up",
         "journal": "Estimate sent.\n\nNext step:\nFollow up.",
-        "counts_loadbar": True,
+        "prompt_for_notes": False,
     },
     "followup": {
         "temp": 90,
         "stage": "Follow-up Completed",
         "next_action": "Await approval",
         "journal": "Follow-up completed.\n\nNext step:\nAwait approval.",
-        "counts_loadbar": True,
+        "prompt_for_notes": False,
     },
     "approved": {
         "temp": 100,
         "stage": "Estimate Approved",
         "next_action": "Move to Stovetop",
         "journal": "Estimate approved.\n\nCustomer is ready to become an active project.",
-        "counts_loadbar": True,
+        "prompt_for_notes": False,
     },
 }
+
+
 def temp_bar(temp):
-    filled = max(0, min(10, temp // 10))
+    filled = max(0, min(10, int(temp or 0) // 10))
     return "█" * filled + "□" * (10 - filled)
 
-def next_available_burner():
-    rows = get_active()
-    used = {r.get("burner_position") for r in rows}
-    for burner in [1, 2, 3, 4]:
-        if burner not in used:
-            return burner
-    return 4
 
 def increment_customer_communication_loadbar(created_by=None):
     # TODO: connect this to your existing daily load bar table.
     # Rule: only call this when a hotlist workflow stage advances.
     pass
-    
+
+
+# ------------------------------------------------------------
+# Rolodex / contact helpers
+# ------------------------------------------------------------
+
 def find_contacts(lookup, limit=5):
     lookup = (lookup or "").strip()
     if not lookup:
@@ -178,9 +189,9 @@ def create_contact_stub(label, raw_note=""):
             "source_customer_name": name,
             "phone": phone,
             "status": "lead",
-            "lead_temperature": 50,
-            "next_action": "Contact customer / schedule site visit",
+            "hotlist_temperature": 50,
             "hotlist_stage": "New Lead",
+            "next_action": "Contact customer / schedule site visit",
             "chisme_summary": f"Placeholder Rolodex card created from: {raw_note or label}",
             "updated_at": now_iso(),
         })
@@ -191,12 +202,6 @@ def create_contact_stub(label, raw_note=""):
     if contact:
         ensure_journal(contact["id"])
     return contact
-
-
-def choose_one_contact(matches):
-    if len(matches) == 1:
-        return matches[0]
-    return None
 
 
 def format_match_list(matches):
@@ -210,6 +215,10 @@ def format_match_list(matches):
     lines.append("\nUse a more specific lookup, like phone number or address clue.")
     return "\n".join(lines)
 
+
+# ------------------------------------------------------------
+# Journal helpers
+# ------------------------------------------------------------
 
 def ensure_journal(contact_id):
     existing = (
@@ -232,18 +241,20 @@ def ensure_journal(contact_id):
     return rows[0] if rows else None
 
 
-def get_journal(contact_id):
+def get_journal(contact_id, limit=10):
     journal = ensure_journal(contact_id)
     if not journal:
         return None, []
+
     notes = (
         supabase.table("chisme_notes")
         .select("*")
         .eq("journal_id", journal["id"])
         .order("created_at", desc=True)
-        .limit(10)
+        .limit(limit)
         .execute()
     ).data or []
+
     return journal, notes
 
 
@@ -292,7 +303,7 @@ def add_note(contact, note, created_by=None, note_type="chisme"):
             "contact_id": contact["id"],
             "note_date": today_date(),
             "note_type": note_type,
-            "note_text": note,   # ✅ correct
+            "note_text": note,
             "created_by": created_by,
         })
         .execute()
@@ -320,6 +331,29 @@ def add_note(contact, note, created_by=None, note_type="chisme"):
     return rows[0] if rows else None
 
 
+# ------------------------------------------------------------
+# Stovetop helpers
+# ------------------------------------------------------------
+
+def get_active():
+    return (
+        supabase.table("chisme_active")
+        .select("*, chisme_contacts(*)")
+        .order("burner_position", desc=False)
+        .order("next_followup_date", desc=False)
+        .execute()
+    ).data or []
+
+
+def next_available_burner():
+    rows = get_active()
+    used = {r.get("burner_position") for r in rows}
+    for burner in [1, 2, 3, 4]:
+        if burner not in used:
+            return burner
+    return 4
+
+
 def set_active(contact, reason=None, burner_position=4, owner="Daniel"):
     followup = extract_followup_date(reason or "")
     existing = (
@@ -345,6 +379,10 @@ def set_active(contact, reason=None, burner_position=4, owner="Daniel"):
         supabase.table("chisme_active").insert(payload).execute()
 
 
+# ------------------------------------------------------------
+# Field parsing / manual updates
+# ------------------------------------------------------------
+
 def parse_fields(raw):
     parts = [p.strip() for p in raw.split("|") if p.strip()]
     if not parts:
@@ -360,9 +398,6 @@ def parse_fields(raw):
         "address": "address",
         "source": "source",
         "status": "status",
-        "temp": "lead_temperature",
-        "temperature": "lead_temperature",
-        "lead_temperature": "lead_temperature",
         "preferred": "preferred_contact_method",
         "preferred contact": "preferred_contact_method",
         "next": "next_action",
@@ -386,78 +421,29 @@ def parse_fields(raw):
         if not col or not value:
             continue
 
-        if col == "lead_temperature":
-            try:
-                value = max(0, min(100, int(value)))
-            except ValueError:
-                continue
-
         updates[col] = value
 
     updates["updated_at"] = now_iso()
     return lookup, updates
 
 
-def get_active():
-    return (
-        supabase.table("chisme_active")
-        .select("*, chisme_contacts(*)")
-        .order("burner_position", desc=False)
-        .order("next_followup_date", desc=False)
-        .execute()
-    ).data or []
-
-def update_temperature(contact, event_type):
-    temp = contact.get("lead_temperature", 0)
-
-    if event_type == "customer_inbound_message":
-        temp += 15
-
-    elif event_type == "quote_accepted":
-        temp = 100
-
-    elif event_type == "quote_sent_no_response":
-        temp -= 10
-
-    elif event_type == "reschedule":
-        temp -= 10
-
-    elif event_type == "followup_missed":
-        temp -= 15
-
-    elif event_type == "job_completed":
-        temp = max(temp, 20)
-
-    elif event_type == "reengaged":
-        temp += 20
-
-    # clamp values
-    temp = max(0, min(100, temp))
-
-    supabase.table("chisme_contacts") \
-        .update({"lead_temperature": temp}) \
-        .eq("id", contact["id"]) \
-        .execute()
-
-    return temp
-
 def derive_temperature_from_removal(reason_key, current_temp):
     if reason_key == "not_ready":
-        return max(current_temp - 10, 30)
-
+        return 50
     if reason_key == "not_responding":
-        return max(current_temp - 25, 10)
-
+        return 50
     if reason_key == "chose_someone_else":
-        return max(current_temp - 40, 0)
-
+        return 0
     if reason_key == "changed_mind":
-        return max(current_temp - 30, 10)
-
+        return 0
     if reason_key == "job_completed":
-        return max(current_temp - 5, 20)
-
+        return 25
     return current_temp
+
+
+# ------------------------------------------------------------
+# Hot List advancement
+# ------------------------------------------------------------
 
 async def advance_hotlist_customer(ctx, lookup, step):
     if not lookup:
@@ -468,12 +454,6 @@ async def advance_hotlist_customer(ctx, lookup, step):
 
     if not matches:
         contact = create_contact_stub(lookup, "")
-        supabase.table("chisme_contacts").update({
-            "lead_temperature": 50,
-            "status": "lead",
-            "next_action": "Contact customer / schedule site visit",
-            "updated_at": now_iso(),
-        }).eq("id", contact["id"]).execute()
     elif len(matches) > 1:
         await send_long(ctx, format_match_list(matches))
         return
@@ -495,7 +475,7 @@ async def advance_hotlist_customer(ctx, lookup, step):
         burner = next_available_burner()
 
         supabase.table("chisme_contacts").update({
-            "lead_temperature": 100,
+            "hotlist_temperature": 100,
             "status": "active_project",
             "next_action": "Active project on stovetop",
             "hotlist_stage": stage["stage"],
@@ -518,13 +498,28 @@ async def advance_hotlist_customer(ctx, lookup, step):
         return
 
     supabase.table("chisme_contacts").update({
-        "lead_temperature": stage["temp"],
+        "hotlist_temperature": stage["temp"],
         "status": "lead",
         "next_action": stage["next_action"],
         "hotlist_stage": stage["stage"],
         "last_outcome": stage["stage"],
         "updated_at": now_iso(),
     }).eq("id", contact["id"]).execute()
+
+    if step == "sitevisit":
+        hotlist_note_sessions[ctx.author.id] = {
+            "contact_id": contact["id"],
+            "contact_name": contact.get("name"),
+            "step": "sitevisit_notes",
+        }
+
+        await ctx.send(
+            f"✅ Site visit completed for **{contact.get('name')}**.\n"
+            f"🌡 60°\n"
+            f"Next: Write estimate notes.\n\n"
+            f"Tell me the site visit notes now. Include scope, measurements, materials, access issues, customer preferences, and anything needed for the estimate."
+        )
+        return
 
     await ctx.send(
         f"✅ **{contact.get('name')}** advanced.\n"
@@ -533,41 +528,46 @@ async def advance_hotlist_customer(ctx, lookup, step):
         f"Customer Communication +1"
     )
 
+
+# ------------------------------------------------------------
+# Discord command registration
+# ------------------------------------------------------------
+
 def register_chisme(bot):
 
     @bot.command(name="chismebot")
     async def chismebot_help(ctx):
         await ctx.send(
-        "💬 **CHISMEBOT**\n\n"
-    
-        "📓 **Chisme Log**\n"
-        "`!chisme Name`\n"
-        "Show that customer’s journal.\n\n"
-        "`!chisme Name | note`\n"
-        "Add a note to that customer’s journal.\n\n"
-    
-        "📇 **Rolodex**\n"
-        "`!cshow Name`\n"
-        "Show customer contact info, summary, and recent chisme.\n\n"
-        "`!cset Name | phone: 210... | address: ... | email: ...`\n"
-        "Update customer contact info.\n\n"
-    
-        "🌡 **Hot List**\n"
-        "`!hotlist`\n"
-        "Show customers moving toward an estimate or project.\n\n"
-        "`!hotlist Name`\n"
-        "Show one customer’s stage, next action, and recent activity.\n\n"
-        "`!hotlist Name sitevisit|notes|sent|followup|approved`\n"
-        "Move the customer forward.\n\n"
-    
-        "🔥 **Stovetop**\n"
-        "`!stovetop`\n"
-        "Show active projects by burner.\n\n"
-        "`!cactive Name | burner: 1 | reason: project needs attention`\n"
-        "Manually put a customer on the Stovetop.\n\n"
-        "`!cremove Name`\n"
-        "Take a project off the Stovetop with follow-up notes."
-    )
+            "💬 **CHISMEBOT**\n\n"
+
+            "📓 **Chisme Log**\n"
+            "`!chisme Name`\n"
+            "Show that customer’s journal.\n\n"
+            "`!chisme Name | note`\n"
+            "Add a note to that customer’s journal.\n\n"
+
+            "📇 **Rolodex**\n"
+            "`!cshow Name`\n"
+            "Show customer contact info, summary, and recent chisme.\n\n"
+            "`!cset Name | phone: 210... | address: ... | email: ...`\n"
+            "Update customer contact info.\n\n"
+
+            "🌡 **Hot List**\n"
+            "`!hotlist`\n"
+            "Show customers moving toward an estimate or project.\n\n"
+            "`!hotlist Name`\n"
+            "Show one customer’s stage, next action, and recent activity.\n\n"
+            "`!hotlist Name sitevisit|notes|sent|followup|approved`\n"
+            "Move the customer forward.\n\n"
+
+            "🔥 **Stovetop**\n"
+            "`!stovetop`\n"
+            "Show active projects by burner.\n\n"
+            "`!cactive Name | burner: 1 | reason: project needs attention`\n"
+            "Manually put a customer on the Stovetop.\n\n"
+            "`!cremove Name`\n"
+            "Take a project off the Stovetop with follow-up notes."
+        )
 
     @bot.command(name="chisme")
     async def chisme(ctx, *, raw=""):
@@ -597,11 +597,15 @@ def register_chisme(bot):
             lines = [
                 f"📓 **Chisme journal: {contact.get('name')}**",
                 f"Phone: {contact.get('phone') or 'not saved'}",
-                f"Temperature: {contact.get('lead_temperature') or 0}",
+                f"Hot List: {contact.get('hotlist_temperature') or 50}° — {contact.get('hotlist_stage') or 'New Lead'}",
                 "",
             ]
 
-            real_notes = [n for n in notes if n.get("note_type") != "journal_anchor" and (n.get("note_text") or "").strip()]
+            real_notes = [
+                n for n in notes
+                if n.get("note_type") != "journal_anchor"
+                and (n.get("note_text") or "").strip()
+            ]
 
             if not real_notes:
                 lines.append("No chisme notes yet.")
@@ -613,21 +617,11 @@ def register_chisme(bot):
             await send_long(ctx, "\n".join(lines))
             return
 
-        add_note(contact, note, created_by=str(ctx.author))
-
-        chisme_classify_sessions[ctx.author.id] = {
-            "contact_id": contact["id"],
-            "contact_name": contact.get("name"),
-            "note": note,
-            "step": "classify",
-        }
+        add_note(contact, note, created_by=str(ctx.author), note_type="chisme")
 
         await ctx.send(
-            f"✅ Chisme saved for **{contact.get('name')}**.\n\n"
-            "What is this?\n"
-            "1. Just journal it\n"
-            "2. Active customer / stovetop\n"
-            "3. Hot lead"
+            f"✅ Chisme saved for **{contact.get('name')}**.\n"
+            f"Use `!hotlist {contact.get('name')}` to see their customer workflow."
         )
 
     @bot.command(name="cset")
@@ -635,7 +629,7 @@ def register_chisme(bot):
         lookup, updates = parse_fields(raw)
 
         if not lookup:
-            await ctx.send("Use: `!cset Name | phone: ... | address: ... | temp: 75`")
+            await ctx.send("Use: `!cset Name | phone: ... | address: ... | email: ...`")
             return
 
         matches = find_contacts(lookup)
@@ -659,14 +653,14 @@ def register_chisme(bot):
     @bot.command(name="cactive", aliases=["stove"])
     async def cactive(ctx, *, raw=""):
         if not raw.strip():
-            await ctx.send("Use: `!stove Name | burner: 1 | reason: project needs attention`")
+            await ctx.send("Use: `!cactive Name | burner: 1 | reason: project needs attention`")
             return
 
         parts = [p.strip() for p in raw.split("|") if p.strip()]
         lookup = parts[0]
         burner = 4
         reason = "Project on stovetop"
-        
+
         for p in parts[1:]:
             lower = p.lower()
             if lower.startswith("burner"):
@@ -738,7 +732,8 @@ def register_chisme(bot):
             f"Email: {c.get('email') or 'not saved'}",
             f"Address: {c.get('address') or 'not saved'}",
             f"Source: {c.get('source') or 'not saved'}",
-            f"Temperature: {c.get('lead_temperature') or 0}",
+            f"Hot List: {c.get('hotlist_temperature') or 50}° — {c.get('hotlist_stage') or 'New Lead'}",
+            f"Next Action: {c.get('next_action') or 'Contact customer / schedule site visit'}",
             f"Status: {c.get('status') or 'unknown'}",
             f"Summary: {c.get('chisme_summary') or 'none'}",
             "",
@@ -753,7 +748,11 @@ def register_chisme(bot):
             ])
 
         lines.append("Recent chisme:")
-        real_notes = [n for n in notes if n.get("note_type") != "journal_anchor" and (n.get("note_text") or "").strip()]
+        real_notes = [
+            n for n in notes
+            if n.get("note_type") != "journal_anchor"
+            and (n.get("note_text") or "").strip()
+        ]
         if not real_notes:
             lines.append("No chisme notes yet.")
         else:
@@ -766,22 +765,20 @@ def register_chisme(bot):
     async def hotlist(ctx, *, raw=""):
         raw = (raw or "").strip()
 
-        # !hotlist
         if not raw:
             active_rows = (
                 supabase.table("chisme_active")
                 .select("contact_id")
                 .execute()
             ).data or []
-
             active_ids = {r["contact_id"] for r in active_rows}
 
             rows = (
                 supabase.table("chisme_contacts")
                 .select("*")
-                .gte("lead_temperature", 50)
-                .lt("lead_temperature", 100)
-                .order("lead_temperature", desc=True)
+                .gte("hotlist_temperature", 50)
+                .lt("hotlist_temperature", 100)
+                .order("hotlist_temperature", desc=True)
                 .execute()
             ).data or []
 
@@ -794,7 +791,7 @@ def register_chisme(bot):
             lines = ["🌡 **HOT LIST**", ""]
 
             for c in rows[:15]:
-                temp = c.get("lead_temperature") or 50
+                temp = c.get("hotlist_temperature") or 50
                 name = c.get("name") or "Unknown"
                 next_action = c.get("next_action") or "Contact customer / schedule site visit"
 
@@ -809,13 +806,11 @@ def register_chisme(bot):
         parts = raw.split()
         possible_step = parts[-1].lower()
 
-        # !hotlist Customer Name workflowstep
         if possible_step in HOTLIST_STAGES:
             lookup = " ".join(parts[:-1]).strip()
             await advance_hotlist_customer(ctx, lookup, possible_step)
             return
 
-        # !hotlist Customer Name
         lookup = raw
         matches = find_contacts(lookup)
 
@@ -830,7 +825,7 @@ def register_chisme(bot):
         c = matches[0]
         journal, notes = get_journal(c["id"])
 
-        temp = c.get("lead_temperature") or 50
+        temp = c.get("hotlist_temperature") or 50
         next_action = c.get("next_action") or "Contact customer / schedule site visit"
         stage = c.get("hotlist_stage") or "New Lead"
 
@@ -852,7 +847,7 @@ def register_chisme(bot):
 
         real_notes = [
             n for n in notes
-            if n.get("note_type") != "journal_anchor"
+            if n.get("note_type") in {"hotlist_progress", "site_visit_notes", "estimate_notes", "chisme"}
             and (n.get("note_text") or "").strip()
         ]
 
@@ -884,7 +879,7 @@ def register_chisme(bot):
 
         cremove_sessions[ctx.author.id] = {
             "contact": contact,
-            "step": "reason"
+            "step": "reason",
         }
 
         await ctx.send(
@@ -896,169 +891,52 @@ def register_chisme(bot):
             "5. Job completed\n"
             "6. Other"
         )
-        
+
     @bot.listen("on_message")
-    async def handle_cremove_session(message):
+    async def handle_chisme_sessions(message):
         if message.author.bot:
             return
-        
+
         if message.content.startswith("!"):
             return
 
-        classify = chisme_classify_sessions.get(message.author.id)
-        if classify:
+        # Hotlist site visit note capture
+        hotlist_session = hotlist_note_sessions.get(message.author.id)
+        if hotlist_session:
             content = message.content.strip()
+
             contact_rows = (
                 supabase.table("chisme_contacts")
                 .select("*")
-                .eq("id", classify["contact_id"])
+                .eq("id", hotlist_session["contact_id"])
                 .limit(1)
                 .execute()
             ).data or []
 
             if not contact_rows:
-                del chisme_classify_sessions[message.author.id]
-                await message.channel.send("I lost the Rolodex card for that chisme entry. Nothing was moved to hotlist or stovetop.")
+                del hotlist_note_sessions[message.author.id]
+                await message.channel.send("I lost that customer card.")
                 return
 
             contact = contact_rows[0]
 
-            if content.lower() in {"cancel", "stop"}:
-                del chisme_classify_sessions[message.author.id]
-                await message.channel.send(f"✅ Left **{contact.get('name')}** as journal only.")
-                return
+            add_note(
+                contact,
+                content,
+                created_by=str(message.author),
+                note_type="site_visit_notes",
+            )
 
-            if classify["step"] == "classify":
-                if content == "1":
-                    del chisme_classify_sessions[message.author.id]
-                    await message.channel.send(f"✅ Journal only for **{contact.get('name')}**. Not added to hotlist or stovetop.")
-                    return
+            del hotlist_note_sessions[message.author.id]
 
-                if content == "2":
-                    classify["step"] = "stove_burner"
-                    await message.channel.send("Which stovetop burner? Reply `1`, `2`, `3`, or `4`.")
-                    return
+            await message.channel.send(
+                f"📝 Site visit notes saved for **{contact.get('name')}**.\n"
+                f"When the estimate notes are complete, use:\n"
+                f"`!hotlist {contact.get('name')} notes`"
+            )
+            return
 
-                if content == "3":
-                    classify["step"] = "hot_temp"
-                    await message.channel.send("Hot lead temperature? Reply with a number from `75` to `100`.")
-                    return
-
-                await message.channel.send("Reply with `1` journal only, `2` stovetop, or `3` hot lead.")
-                return
-
-            if classify["step"] == "stove_burner":
-                if content not in {"1", "2", "3", "4"}:
-                    await message.channel.send("Reply with burner `1`, `2`, `3`, or `4`.")
-                    return
-                classify["burner"] = int(content)
-                classify["step"] = "stove_reason"
-                await message.channel.send("Reason this is active / on the stovetop?")
-                return
-
-            if classify["step"] == "stove_reason":
-                classify["reason"] = content
-                classify["step"] = "stove_next"
-                await message.channel.send("Next action?")
-                return
-
-            if classify["step"] == "stove_next":
-                classify["next_action"] = content
-                classify["step"] = "stove_followup"
-                await message.channel.send("Follow-up date? Use `YYYY-MM-DD`, `7/3/2026`, `tomorrow`, `next week`, `two weeks`, or `none`.")
-                return
-
-            if classify["step"] == "stove_followup":
-                followup_date = parse_followup_response(content)
-                reason = classify.get("reason") or "Active customer communication"
-                burner = classify.get("burner") or 4
-                next_action = classify.get("next_action") or "None"
-
-                set_active(contact, reason=reason, burner_position=burner)
-
-                active_updates = {"next_followup_date": followup_date, "updated_at": now_iso()}
-                supabase.table("chisme_active").update(active_updates).eq("contact_id", contact["id"]).execute()
-
-                contact_updates = {"next_action": next_action, "updated_at": now_iso()}
-                if followup_date:
-                    contact_updates["next_followup_date"] = followup_date
-                    contact_updates["next_contact_date"] = followup_date
-
-                supabase.table("chisme_contacts").update(contact_updates).eq("id", contact["id"]).execute()
-
-                add_note(
-                    contact,
-                    f"Classified as active customer / stovetop. Burner: {burner}. Reason: {reason}. Next action: {next_action}. Follow-up: {followup_date or 'none'}",
-                    created_by=str(message.author),
-                    note_type="classification",
-                )
-
-                del chisme_classify_sessions[message.author.id]
-                await message.channel.send(
-                    f"✅ Added **{contact.get('name')}** to stovetop.\n"
-                    f"Burner: {burner}\n"
-                    f"Next action: {next_action}\n"
-                    f"Follow-up: {followup_date or 'none'}"
-                )
-                return
-
-            if classify["step"] == "hot_temp":
-                try:
-                    temp = int(content)
-                except ValueError:
-                    await message.channel.send("Reply with a number from `75` to `100`.")
-                    return
-
-                if temp < 75 or temp > 100:
-                    await message.channel.send("Hot leads should be `75` to `100`.")
-                    return
-
-                classify["temperature"] = temp
-                classify["step"] = "hot_next"
-                await message.channel.send("Next action for this hot lead?")
-                return
-
-            if classify["step"] == "hot_next":
-                classify["next_action"] = content
-                classify["step"] = "hot_followup"
-                await message.channel.send("Follow-up date? Use `YYYY-MM-DD`, `7/3/2026`, `tomorrow`, `next week`, `two weeks`, or `none`.")
-                return
-
-            if classify["step"] == "hot_followup":
-                followup_date = parse_followup_response(content)
-                temp = classify.get("temperature") or 75
-                next_action = classify.get("next_action") or "None"
-
-                supabase.table("chisme_active").delete().eq("contact_id", contact["id"]).execute()
-
-                updates = {
-                    "status": "lead",
-                    "lead_temperature": temp,
-                    "next_action": next_action,
-                    "updated_at": now_iso(),
-                }
-                if followup_date:
-                    updates["next_followup_date"] = followup_date
-                    updates["next_contact_date"] = followup_date
-
-                supabase.table("chisme_contacts").update(updates).eq("id", contact["id"]).execute()
-
-                add_note(
-                    contact,
-                    f"Classified as hot lead. Temperature: {temp}. Next action: {next_action}. Follow-up: {followup_date or 'none'}",
-                    created_by=str(message.author),
-                    note_type="classification",
-                )
-
-                del chisme_classify_sessions[message.author.id]
-                await message.channel.send(
-                    f"✅ Added **{contact.get('name')}** to hotlist.\n"
-                    f"Temperature: {temp}°\n"
-                    f"Next action: {next_action}\n"
-                    f"Follow-up: {followup_date or 'none'}"
-                )
-                return
-
+        # Stovetop removal workflow
         session = cremove_sessions.get(message.author.id)
         if not session:
             return
@@ -1067,12 +945,12 @@ def register_chisme(bot):
         contact = session["contact"]
 
         reason_map = {
-            "1": ("not_ready", "Not ready / needs to reschedule", 50),
-            "2": ("not_responding", "Not responding", 40),
-            "3": ("chose_someone_else", "Chose someone else", 10),
-            "4": ("changed_mind", "Changed mind", 20),
-            "5": ("job_completed", "Job completed", 25),
-            "6": ("other", "Other", contact.get("lead_temperature") or 0),
+            "1": ("not_ready", "Not ready / needs to reschedule"),
+            "2": ("not_responding", "Not responding"),
+            "3": ("chose_someone_else", "Chose someone else"),
+            "4": ("changed_mind", "Changed mind"),
+            "5": ("job_completed", "Job completed"),
+            "6": ("other", "Other"),
         }
 
         if session["step"] == "reason":
@@ -1080,15 +958,17 @@ def register_chisme(bot):
                 await message.channel.send("Reply with 1, 2, 3, 4, 5, or 6.")
                 return
 
+            reason_key, reason_label = reason_map[content]
+
             if content == "6":
+                session["reason_key"] = "other"
                 session["step"] = "custom_reason"
                 await message.channel.send("What is the reason?")
                 return
-            
-            reason_key, reason_label, _ = reason_map[content]
+
             session["reason_key"] = reason_key
             session["reason_label"] = reason_label
-            session["base_temp"] = contact.get("lead_temperature") or 0
+            session["base_temp"] = contact.get("hotlist_temperature") or 0
             session["step"] = "followup"
 
             await message.channel.send(
@@ -1100,13 +980,12 @@ def register_chisme(bot):
                 "5. No follow-up"
             )
             return
-            
+
         if session["step"] == "custom_reason":
-            session["reason_key"] = "other"
             session["reason_label"] = content
-            session["base_temp"] = contact.get("lead_temperature") or 0
+            session["base_temp"] = contact.get("hotlist_temperature") or 0
             session["step"] = "followup"
-        
+
             await message.channel.send(
                 f"When should we follow up with **{contact.get('name')}**?\n\n"
                 "1. 1 week\n"
@@ -1116,7 +995,7 @@ def register_chisme(bot):
                 "5. No follow-up"
             )
             return
-            
+
         if session["step"] == "followup":
             followup_date = None
 
@@ -1142,30 +1021,39 @@ def register_chisme(bot):
             return
 
         if session["step"] == "custom_date":
-            try:
-                parsed = datetime.strptime(content, "%m/%d/%Y").date()
-                session["followup_date"] = parsed.isoformat()
-                session["step"] = "note"
-                await message.channel.send("Add a note for the chisme log:")
-            except ValueError:
-                await message.channel.send("Use date format like `7/3/2026`.")
+            parsed_date = parse_followup_response(content)
+            if not parsed_date:
+                await message.channel.send("Use a date like `7/3/2026` or `2026-07-03`.")
+                return
+
+            session["followup_date"] = parsed_date
+            session["step"] = "note"
+            await message.channel.send("Add a note for the chisme log:")
             return
 
         if session["step"] == "note":
             followup_date = session.get("followup_date")
             reason_label = session["reason_label"]
-            base_temp = session["base_temp"]
             reason_key = session["reason_key"]
+            base_temp = session.get("base_temp", contact.get("hotlist_temperature") or 0)
             new_temp = derive_temperature_from_removal(reason_key, base_temp)
             user_note = content
 
             supabase.table("chisme_active").delete().eq("contact_id", contact["id"]).execute()
 
             updates = {
-                "lead_temperature": new_temp,
+                "hotlist_temperature": new_temp,
                 "last_outcome": f"Took off stovetop: {reason_label}",
                 "updated_at": now_iso(),
             }
+
+            if reason_key in {"chose_someone_else", "changed_mind", "job_completed"}:
+                updates["status"] = "closed"
+                updates["next_action"] = "None"
+            else:
+                updates["status"] = "lead"
+                updates["hotlist_stage"] = "New Lead"
+                updates["next_action"] = "Follow up" if followup_date else "Contact customer / schedule site visit"
 
             if followup_date:
                 updates["next_followup_date"] = followup_date
@@ -1176,21 +1064,19 @@ def register_chisme(bot):
             add_note(
                 contact,
                 (
-                    f"Took off stovetop.\n"
+                    f"Project moved off the Stovetop.\n\n"
                     f"Reason: {reason_label}\n"
                     f"Follow-up: {followup_date or 'none'}\n"
-                    f"Lead temperature set to: {new_temp}\n"
                     f"Note: {user_note}"
                 ),
                 created_by=str(message.author),
-                note_type="active_removed"
+                note_type="active_removed",
             )
 
             del cremove_sessions[message.author.id]
 
             await message.channel.send(
-                f"✅ Took **{contact.get('name')}** off the stovetop.\n"
+                f"✅ Took **{contact.get('name')}** off the Stovetop.\n"
                 f"Reason: {reason_label}\n"
-                f"Follow-up: {followup_date or 'none'}\n"
-                f"Temperature: {new_temp}"
+                f"Follow-up: {followup_date or 'none'}"
             )
