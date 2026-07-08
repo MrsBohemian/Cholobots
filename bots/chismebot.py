@@ -516,9 +516,9 @@ async def advance_hotlist_customer(ctx, lookup, step):
             f"✅ Site visit completed for **{contact.get('name')}**.\n"
             f"🌡 60°\n"
             f"Next: Write estimate notes.\n\n"
-            f""What did you learn during the site visit?\n\n"
-                "I’ll save anything useful for the estimate.\n\n"
-                "Type `cancel` to pause this for later.""
+            "What did you learn during the site visit?\n\n"
+            "I’ll save anything useful for the estimate.\n\n"
+            "Type `cancel` to pause this for later."
         )
         return
 
@@ -537,9 +537,6 @@ def clear_user_sessions(user_id):
 
     if cremove_sessions.pop(user_id, None):
         cleared.append("Stovetop removal")
-
-    if chisme_classify_sessions.pop(user_id, None):
-        cleared.append("Chisme classification")
 
     return cleared
 
