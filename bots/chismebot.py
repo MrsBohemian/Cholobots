@@ -516,7 +516,9 @@ async def advance_hotlist_customer(ctx, lookup, step):
             f"✅ Site visit completed for **{contact.get('name')}**.\n"
             f"🌡 60°\n"
             f"Next: Write estimate notes.\n\n"
-            f"Tell me the site visit notes now. Include scope, measurements, materials, access issues, customer preferences, and anything needed for the estimate."
+            f""What did you learn during the site visit?\n\n"
+                "I’ll save anything useful for the estimate.\n\n"
+                "Type `cancel` to pause this for later.""
         )
         return
 
@@ -526,7 +528,20 @@ async def advance_hotlist_customer(ctx, lookup, step):
         f"Next: {stage['next_action']}\n"
         f"Customer Communication +1"
     )
+    
+def clear_user_sessions(user_id):
+    cleared = []
 
+    if hotlist_note_sessions.pop(user_id, None):
+        cleared.append("Hot List notes")
+
+    if cremove_sessions.pop(user_id, None):
+        cleared.append("Stovetop removal")
+
+    if chisme_classify_sessions.pop(user_id, None):
+        cleared.append("Chisme classification")
+
+    return cleared
 
 # ------------------------------------------------------------
 # Discord command registration
@@ -892,8 +907,26 @@ def register_chisme(bot):
         )
 
     @bot.listen("on_message")
-    async def handle_chisme_sessions(message):
+    async def handle_cremove_session(message):
         if message.author.bot:
+            return
+    
+        content = message.content.strip()
+    
+        if content.lower() in {"cancel", "!cancel", "stop", "!stop", "nevermind", "never mind"}:
+            cleared = clear_user_sessions(message.author.id)
+    
+            if cleared:
+                await message.channel.send(
+                    "👍 Workflow cancelled.\n\n"
+                    "Nothing was deleted. You can pick it back up later."
+                )
+            else:
+                await message.channel.send("👍 Nothing active to cancel.")
+    
+            return
+    
+        if message.content.startswith("!"):
             return
 
         if message.content.startswith("!"):
