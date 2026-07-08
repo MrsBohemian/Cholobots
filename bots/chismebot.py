@@ -84,8 +84,61 @@ def parse_followup_response(text):
             pass
 
     return None
+    
+HOTLIST_STAGES = {
+    "sitevisit": {
+        "temp": 60,
+        "stage": "Site Visit Completed",
+        "next_action": "Write estimate notes",
+        "journal": "Completed site visit.\n\nNext step:\nWrite estimate notes.",
+        "counts_loadbar": True,
+    },
+    "notes": {
+        "temp": 70,
+        "stage": "Estimate Ready",
+        "next_action": "Send estimate",
+        "journal": "Estimate notes completed.\n\nNext step:\nSend estimate.",
+        "counts_loadbar": True,
+    },
+    "sent": {
+        "temp": 80,
+        "stage": "Estimate Sent",
+        "next_action": "Follow up",
+        "journal": "Estimate sent.\n\nNext step:\nFollow up.",
+        "counts_loadbar": True,
+    },
+    "followup": {
+        "temp": 90,
+        "stage": "Follow-up Completed",
+        "next_action": "Await approval",
+        "journal": "Follow-up completed.\n\nNext step:\nAwait approval.",
+        "counts_loadbar": True,
+    },
+    "approved": {
+        "temp": 100,
+        "stage": "Estimate Approved",
+        "next_action": "Move to Stovetop",
+        "journal": "Estimate approved.\n\nCustomer is ready to become an active project.",
+        "counts_loadbar": True,
+    },
+}
+def temp_bar(temp):
+    filled = max(0, min(10, temp // 10))
+    return "█" * filled + "□" * (10 - filled)
 
+def next_available_burner():
+    rows = get_active()
+    used = {r.get("burner_position") for r in rows}
+    for burner in [1, 2, 3, 4]:
+        if burner not in used:
+            return burner
+    return 4
 
+def increment_customer_communication_loadbar(created_by=None):
+    # TODO: connect this to your existing daily load bar table.
+    # Rule: only call this when a hotlist workflow stage advances.
+    pass
+    
 def find_contacts(lookup, limit=5):
     lookup = (lookup or "").strip()
     if not lookup:
@@ -125,7 +178,9 @@ def create_contact_stub(label, raw_note=""):
             "source_customer_name": name,
             "phone": phone,
             "status": "lead",
-            "lead_temperature": 25,
+            "lead_temperature": 50,
+            "next_action": "Contact customer / schedule site visit",
+            "hotlist_stage": "New Lead",
             "chisme_summary": f"Placeholder Rolodex card created from: {raw_note or label}",
             "updated_at": now_iso(),
         })
@@ -404,6 +459,80 @@ def derive_temperature_from_removal(reason_key, current_temp):
 
     return current_temp
 
+async def advance_hotlist_customer(ctx, lookup, step):
+    if not lookup:
+        await ctx.send("Use: `!hotlist Customer Name sitevisit|notes|sent|followup|approved`")
+        return
+
+    matches = find_contacts(lookup)
+
+    if not matches:
+        contact = create_contact_stub(lookup, "")
+        supabase.table("chisme_contacts").update({
+            "lead_temperature": 50,
+            "status": "lead",
+            "next_action": "Contact customer / schedule site visit",
+            "updated_at": now_iso(),
+        }).eq("id", contact["id"]).execute()
+    elif len(matches) > 1:
+        await send_long(ctx, format_match_list(matches))
+        return
+    else:
+        contact = matches[0]
+
+    stage = HOTLIST_STAGES[step]
+
+    add_note(
+        contact,
+        stage["journal"],
+        created_by=str(ctx.author),
+        note_type="hotlist_progress",
+    )
+
+    increment_customer_communication_loadbar(created_by=str(ctx.author))
+
+    if step == "approved":
+        burner = next_available_burner()
+
+        supabase.table("chisme_contacts").update({
+            "lead_temperature": 100,
+            "status": "active_project",
+            "next_action": "Active project on stovetop",
+            "hotlist_stage": stage["stage"],
+            "last_outcome": stage["stage"],
+            "updated_at": now_iso(),
+        }).eq("id", contact["id"]).execute()
+
+        set_active(
+            contact,
+            reason="Estimate approved. Active project created from Hot List.",
+            burner_position=burner,
+            owner="Daniel",
+        )
+
+        await ctx.send(
+            f"🔥 **{contact.get('name')}** moved to the Stovetop.\n"
+            f"Burner: {burner}\n"
+            f"Customer Communication +1"
+        )
+        return
+
+    supabase.table("chisme_contacts").update({
+        "lead_temperature": stage["temp"],
+        "status": "lead",
+        "next_action": stage["next_action"],
+        "hotlist_stage": stage["stage"],
+        "last_outcome": stage["stage"],
+        "updated_at": now_iso(),
+    }).eq("id", contact["id"]).execute()
+
+    await ctx.send(
+        f"✅ **{contact.get('name')}** advanced.\n"
+        f"🌡 {stage['temp']}°\n"
+        f"Next: {stage['next_action']}\n"
+        f"Customer Communication +1"
+    )
+
 def register_chisme(bot):
 
     @bot.command(name="chismebot")
@@ -424,6 +553,20 @@ def register_chisme(bot):
             "Take a project off the stovetop with guided follow-up prompts.\n\n"
             "`!cshow Name`\n"
             "Show Rolodex card, lead_temperature, active status, and recent chisme."
+            "`!hotlist`\n"
+            "Show all hot leads ordered by temperature.\n\n"
+            "`!hotlist Name`\n"
+            "Show one customer’s hotlist workflow.\n\n"
+            "`!hotlist Name sitevisit`\n"
+            "Move customer to 60° — site visit completed; next: write estimate notes.\n\n"
+            "`!hotlist Name notes`\n"
+            "Move customer to 70° — estimate notes completed; next: send estimate.\n\n"
+            "`!hotlist Name sent`\n"
+            "Move customer to 80° — estimate sent; next: follow up.\n\n"
+            "`!hotlist Name followup`\n"
+            "Move customer to 90° — follow-up completed; next: await approval.\n\n"
+            "`!hotlist Name approved`\n"
+            "Move customer to 100° and automatically put them on the Stovetop.\n\n"
         )
 
     @bot.command(name="chisme")
@@ -620,46 +763,104 @@ def register_chisme(bot):
         await send_long(ctx, "\n".join(lines))
 
     @bot.command(name="hotlist")
-    async def hotlist(ctx):
-        active_rows = (
-            supabase.table("chisme_active")
-            .select("contact_id")
-            .execute()
-        ).data or []
+    async def hotlist(ctx, *, raw=""):
+        raw = (raw or "").strip()
 
-        active_ids = {r["contact_id"] for r in active_rows}
+        # !hotlist
+        if not raw:
+            active_rows = (
+                supabase.table("chisme_active")
+                .select("contact_id")
+                .execute()
+            ).data or []
 
-        rows = (
-            supabase.table("chisme_contacts")
-            .select("*")
-            .gte("lead_temperature", 75)
-            .order("lead_temperature", desc=True)
-            .execute()
-        ).data or []
+            active_ids = {r["contact_id"] for r in active_rows}
 
-        rows = [c for c in rows if c["id"] not in active_ids]
+            rows = (
+                supabase.table("chisme_contacts")
+                .select("*")
+                .gte("lead_temperature", 50)
+                .lt("lead_temperature", 100)
+                .order("lead_temperature", desc=True)
+                .execute()
+            ).data or []
 
-        if not rows:
-            await ctx.send("No hot leads right now.")
+            rows = [c for c in rows if c["id"] not in active_ids]
+
+            if not rows:
+                await ctx.send("No hot leads right now.")
+                return
+
+            lines = ["🌡 **HOT LIST**", ""]
+
+            for c in rows[:15]:
+                temp = c.get("lead_temperature") or 50
+                name = c.get("name") or "Unknown"
+                next_action = c.get("next_action") or "Contact customer / schedule site visit"
+
+                lines.append(
+                    f"**{temp}° {name}**\n"
+                    f"Next:\n{next_action}\n"
+                )
+
+            await send_long(ctx, "\n".join(lines))
             return
 
-        lines = ["🌡 **HOTLIST — lead communication cards**", ""]
+        parts = raw.split()
+        possible_step = parts[-1].lower()
 
-        for c in rows[:15]:
-            temp = c.get("lead_temperature") or 0
-            name = c.get("name") or "Unknown"
-            phone = c.get("phone") or "No phone saved"
-            next_action = c.get("next_action") or "None"
-            followup = c.get("next_followup_date") or c.get("next_contact_date") or "None"
-            outcome = c.get("last_outcome") or c.get("chisme_summary") or "No chisme logged"
+        # !hotlist Customer Name workflowstep
+        if possible_step in HOTLIST_STAGES:
+            lookup = " ".join(parts[:-1]).strip()
+            await advance_hotlist_customer(ctx, lookup, possible_step)
+            return
 
-            lines.append(
-                f"🌡 **{name} — {temp}°**\n"
-                f"Phone: {phone}\n"
-                f"Next action: {next_action}\n"
-                f"Last outcome / chisme: {short(outcome, 300)}\n"
-                f"Follow-up date: {followup}\n"
-            )
+        # !hotlist Customer Name
+        lookup = raw
+        matches = find_contacts(lookup)
+
+        if not matches:
+            await ctx.send(f"No Rolodex card found for **{lookup}**.")
+            return
+
+        if len(matches) > 1:
+            await send_long(ctx, format_match_list(matches))
+            return
+
+        c = matches[0]
+        journal, notes = get_journal(c["id"])
+
+        temp = c.get("lead_temperature") or 50
+        next_action = c.get("next_action") or "Contact customer / schedule site visit"
+        stage = c.get("hotlist_stage") or "New Lead"
+
+        lines = [
+            f"**{c.get('name')}**",
+            "",
+            f"🌡 **{temp}°**",
+            "",
+            temp_bar(temp),
+            "",
+            "**Current Stage**",
+            stage,
+            "",
+            "**Next Action**",
+            next_action,
+            "",
+            "**Recent Activity**",
+        ]
+
+        real_notes = [
+            n for n in notes
+            if n.get("note_type") != "journal_anchor"
+            and (n.get("note_text") or "").strip()
+        ]
+
+        if not real_notes:
+            lines.append("No recent activity yet.")
+        else:
+            for n in real_notes[:5]:
+                lines.append(f"• {short(n.get('note_text'), 180)}")
 
         await send_long(ctx, "\n".join(lines))
 
