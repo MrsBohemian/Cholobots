@@ -538,36 +538,36 @@ def register_chisme(bot):
     @bot.command(name="chismebot")
     async def chismebot_help(ctx):
         await ctx.send(
-            "💬 **CHISMEBOT**\n\n"
-            "`!chisme Name`\n"
-            "Show that customer’s chisme journal.\n\n"
-            "`!chisme Name | note`\n"
-            "Add a chisme note to that customer’s journal.\n\n"
-            "`!cset Name | phone: 210... | address: ... | temp: 75`\n"
-            "Complete or update the Rolodex card.\n\n"
-            "`!cactive Name | burner: 1 | reason: project needs attention`\n"
-            "Put active project on the stovetop. Burner 1 is front burner; 4 is back burner.\n\n"
-            "`!stovetop`\n"
-            "Show stovetop / active projects by burner position.\n\n"
-            "`!cremove Name`\n"
-            "Take a project off the stovetop with guided follow-up prompts.\n\n"
-            "`!cshow Name`\n"
-            "Show Rolodex card, lead_temperature, active status, and recent chisme."
-            "`!hotlist`\n"
-            "Show all hot leads ordered by temperature.\n\n"
-            "`!hotlist Name`\n"
-            "Show one customer’s hotlist workflow.\n\n"
-            "`!hotlist Name sitevisit`\n"
-            "Move customer to 60° — site visit completed; next: write estimate notes.\n\n"
-            "`!hotlist Name notes`\n"
-            "Move customer to 70° — estimate notes completed; next: send estimate.\n\n"
-            "`!hotlist Name sent`\n"
-            "Move customer to 80° — estimate sent; next: follow up.\n\n"
-            "`!hotlist Name followup`\n"
-            "Move customer to 90° — follow-up completed; next: await approval.\n\n"
-            "`!hotlist Name approved`\n"
-            "Move customer to 100° and automatically put them on the Stovetop.\n\n"
-        )
+        "💬 **CHISMEBOT**\n\n"
+    
+        "📓 **Chisme Log**\n"
+        "`!chisme Name`\n"
+        "Show that customer’s journal.\n\n"
+        "`!chisme Name | note`\n"
+        "Add a note to that customer’s journal.\n\n"
+    
+        "📇 **Rolodex**\n"
+        "`!cshow Name`\n"
+        "Show customer contact info, summary, and recent chisme.\n\n"
+        "`!cset Name | phone: 210... | address: ... | email: ...`\n"
+        "Update customer contact info.\n\n"
+    
+        "🌡 **Hot List**\n"
+        "`!hotlist`\n"
+        "Show customers moving toward an estimate or project.\n\n"
+        "`!hotlist Name`\n"
+        "Show one customer’s stage, next action, and recent activity.\n\n"
+        "`!hotlist Name sitevisit|notes|sent|followup|approved`\n"
+        "Move the customer forward.\n\n"
+    
+        "🔥 **Stovetop**\n"
+        "`!stovetop`\n"
+        "Show active projects by burner.\n\n"
+        "`!cactive Name | burner: 1 | reason: project needs attention`\n"
+        "Manually put a customer on the Stovetop.\n\n"
+        "`!cremove Name`\n"
+        "Take a project off the Stovetop with follow-up notes."
+    )
 
     @bot.command(name="chisme")
     async def chisme(ctx, *, raw=""):
