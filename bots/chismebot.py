@@ -186,7 +186,6 @@ def create_contact_stub(label, raw_note=""):
         .insert({
             "name": name,
             "source": "chismebot",
-            "source_customer_name": name,
             "phone": phone,
             "status": "lead",
             "hotlist_temperature": 50,
