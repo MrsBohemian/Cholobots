@@ -66,13 +66,28 @@ async def on_ready():
         
 @bot.event
 async def on_message(message: discord.Message):
-    
+
     # Ignore the bot's own messages
     if message.author == bot.user:
         return
 
-    # Block attachments globally for now
+    # Allow receipt attachments to reach Guardabot.
+    # Block other attachments for now.
     if message.attachments:
+        content = (message.content or "").strip().lower()
+
+        if content.startswith("!greceipt"):
+            try:
+                await bot.process_commands(message)
+            except Exception as e:
+                print(f"[GRECEIPT ERROR] {e}")
+                traceback.print_exc()
+
+                await message.channel.send(
+                    "Simón... the receipt workflow broke, but the Cholobots stayed alive."
+                )
+            return
+
         print(
             f"[ATTACHMENT BLOCKED] "
             f"{message.author} sent attachment(s) "
@@ -80,9 +95,9 @@ async def on_message(message: discord.Message):
         )
 
         await message.channel.send(
-            "Órale homie, I saw the attachment but file/image handling is disabled for now so I don't crash again."
+            "Órale homie, I saw the attachment. "
+            "Right now attachments are only enabled for `!greceipt Project Name`."
         )
-
         return
 
     # Keep the system alive if a bot crashes
