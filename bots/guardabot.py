@@ -571,7 +571,11 @@ def signed_item_total(row):
     total = float(row.get("line_total") or 0)
     return -total if row.get("line_type") == "return" else total
 
+async def send_long(ctx, text, limit=1900):
+    text = str(text or "").strip() or "(empty)"
 
+    for i in range(0, len(text), limit):
+        await ctx.send(text[i:i + limit])
 # ----------------------------
 # Discord Commands
 # ----------------------------
