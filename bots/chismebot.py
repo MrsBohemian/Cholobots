@@ -834,6 +834,18 @@ def register_chisme(bot):
             return
 
         c = matches[0]
+
+        if int(c.get("hotlist_temperature") or 0) <= 50:
+            supabase.table("chisme_contacts").update({
+                "hotlist_temperature": 51,
+                "status": "lead",
+                "hotlist_stage": c.get("hotlist_stage") or "New Lead",
+                "next_action": c.get("next_action") or "Contact customer / schedule site visit",
+                "updated_at": now_iso(),
+            }).eq("id", c["id"]).execute()
+        
+            c["hotlist_temperature"] = 51
+            
         journal, notes = get_journal(c["id"])
 
         temp = c.get("hotlist_temperature") or 50
