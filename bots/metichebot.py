@@ -20,7 +20,7 @@ instead of rigid project-management abstractions.
 
 PRIMARY RESPONSIBILITIES
 ------------------------
-- Weekly operational forecasting (!mweekly)
+- Financial execution objective management (!mengine)
 - Goal and schedule management (!mgoals, !mschedule)
 - Daily task structuring (!mtoday)
 - Morning activation and routines (!mwakeup, !mroutine)
@@ -166,17 +166,13 @@ class TimeSession:
 
 
 @dataclass
-class WeeklyExecution:
-    target_amount: float = 0.0
-    scheduled_revenue: float = 0.0
-    outstanding_estimate_value: float = 0.0
-    pending_invoice_value: float = 0.0
-    earning_jobs: List[str] = field(default_factory=list)
-    estimates_to_write: List[str] = field(default_factory=list)
-    invoices_to_send: List[str] = field(default_factory=list)
-    revenue_gap: float = 0.0
-    pipeline_coverage_ratio: float = 0.0
-    primary_mode: str = "not_set"
+class FinancialExecution:
+    objective_amount: float = 0.0
+    due_date: Optional[str] = None
+    objective_reason: str = ""
+    planned_amount: float = 0.0
+    remaining_gap: float = 0.0
+    status: str = "open"
     priority_tasks: List[str] = field(default_factory=list)
 
 
@@ -824,190 +820,127 @@ def save_important_items(
     response = supabase.table("metiche_important_items").insert(inserts).execute()
     return {"ok": True, "data": response.data}
     
-# ---------- Weekly execution logic ----------
+# ---------- Financial execution logic ----------
 
-def build_weekly_execution(
-    target_amount: float,
-    scheduled_revenue: float,
-    outstanding_estimate_value: float,
-    pending_invoice_value: float,
-    earning_jobs: List[str],
-    estimates_to_write: List[str],
-    invoices_to_send: List[str],
-) -> WeeklyExecution:
-    gap = max(0.0, target_amount - scheduled_revenue)
-    ratio = round(outstanding_estimate_value / gap, 2) if gap else 999.0
+def build_financial_execution(
+    objective_amount: float,
+    due_date: Optional[str],
+    objective_reason: str,
+    planned_amount: float = 0.0,
+) -> FinancialExecution:
+    """Build the current financial execution objective.
 
-    has_invoices = pending_invoice_value > 0 or bool(invoices_to_send)
-    has_estimates = outstanding_estimate_value > 0 or bool(estimates_to_write)
-    has_jobs = bool(earning_jobs)
+    ``objective_amount`` is the residual amount still needed after the
+    Financial Engine spreadsheet has already accounted for known cash,
+    scheduled work, and obligations.
+    """
+    objective_amount = max(0.0, float(objective_amount or 0.0))
+    planned_amount = max(0.0, float(planned_amount or 0.0))
+    remaining_gap = max(0.0, objective_amount - planned_amount)
 
-    priority_tasks: List[str] = []
-
-    if gap <= 0:
-        primary_mode = "protect_scheduled_work"
-        priority_tasks.append("Protect scheduled earning jobs")
-        priority_tasks.append("Collect cleanly and avoid creating unnecessary new work")
-
-    elif has_invoices and pending_invoice_value >= gap:
-        primary_mode = "collections_push"
-        priority_tasks.append("Send/collect pending invoices")
-
-    elif has_estimates and outstanding_estimate_value >= gap:
-        primary_mode = "estimate_conversion_push"
-        priority_tasks.append("Write and follow up estimates")
-
-    elif has_invoices or has_estimates or has_jobs:
-        primary_mode = "mixed_operations_push"
-        if has_invoices:
-            priority_tasks.append("Send/collect pending invoices")
-        if has_estimates:
-            priority_tasks.append("Write and follow up estimates")
-        if has_jobs:
-            priority_tasks.append("Protect scheduled earning jobs")
-        priority_tasks.append("Check remaining gap after known levers are worked")
-
+    if remaining_gap <= 0:
+        status = "covered"
+        priority_tasks = [
+            "Confirm the money arrives",
+            "Complete the financial checkpoint",
+        ]
     else:
-        primary_mode = "crm_mining_push"
-        priority_tasks.append("Known invoices, estimates, and earning jobs are exhausted")
-        priority_tasks.append("Escalate to Chismebot CRM mining")
-        priority_tasks.append("Look for dormant leads, past customers, unfinished conversations, and quick-close jobs")
+        status = "open"
+        priority_tasks = [
+            f"Close the remaining {format_money(remaining_gap)} gap",
+            "Use Customer Communication to pursue work or collections",
+            "Use !mbraindump to add the necessary actions to today",
+        ]
 
-    return WeeklyExecution(
-        target_amount=target_amount,
-        scheduled_revenue=scheduled_revenue,
-        outstanding_estimate_value=outstanding_estimate_value,
-        pending_invoice_value=pending_invoice_value,
-        earning_jobs=earning_jobs,
-        estimates_to_write=estimates_to_write,
-        invoices_to_send=invoices_to_send,
-        revenue_gap=gap,
-        pipeline_coverage_ratio=ratio,
-        primary_mode=primary_mode,
+    return FinancialExecution(
+        objective_amount=objective_amount,
+        due_date=(due_date or "").strip() or None,
+        objective_reason=(objective_reason or "").strip(),
+        planned_amount=planned_amount,
+        remaining_gap=remaining_gap,
+        status=status,
         priority_tasks=priority_tasks,
     )
 
 
-def weekly_execution_to_json(execution: WeeklyExecution) -> Dict[str, Any]:
+def financial_execution_to_json(execution: FinancialExecution) -> Dict[str, Any]:
     return {
-        "target_amount": execution.target_amount,
-        "scheduled_revenue": execution.scheduled_revenue,
-        "outstanding_estimate_value": execution.outstanding_estimate_value,
-        "pending_invoice_value": execution.pending_invoice_value,
-        "earning_jobs": execution.earning_jobs,
-        "estimates_to_write": execution.estimates_to_write,
-        "invoices_to_send": execution.invoices_to_send,
-        "revenue_gap": execution.revenue_gap,
-        "pipeline_coverage_ratio": execution.pipeline_coverage_ratio,
-        "primary_mode": execution.primary_mode,
+        "objective_amount": execution.objective_amount,
+        "due_date": execution.due_date,
+        "objective_reason": execution.objective_reason,
+        "planned_amount": execution.planned_amount,
+        "remaining_gap": execution.remaining_gap,
+        "status": execution.status,
         "priority_tasks": execution.priority_tasks,
     }
 
 
-def weekly_execution_from_plan(plan: Dict[str, Any]) -> WeeklyExecution:
+def financial_execution_from_plan(plan: Dict[str, Any]) -> FinancialExecution:
+    """Load the current objective, including legacy weekly snapshots."""
     task_summary = json_safe_load(plan.get("task_summary_json"), {})
-    raw = task_summary.get("weekly_execution", {}) if isinstance(task_summary, dict) else {}
+    if not isinstance(task_summary, dict):
+        task_summary = {}
 
-    return WeeklyExecution(
-        target_amount=float(raw.get("target_amount") or plan.get("weekly_goal") or 0.0),
-        scheduled_revenue=float(raw.get("scheduled_revenue") or 0.0),
-        outstanding_estimate_value=float(raw.get("outstanding_estimate_value") or 0.0),
-        pending_invoice_value=float(raw.get("pending_invoice_value") or 0.0),
-        earning_jobs=raw.get("earning_jobs") or json_safe_load(plan.get("jobs_json"), []),
-        estimates_to_write=raw.get("estimates_to_write") or json_safe_load(plan.get("pending_estimates_json"), []),
-        invoices_to_send=raw.get("invoices_to_send") or json_safe_load(plan.get("invoices_to_send_json"), []),
-        revenue_gap=float(raw.get("revenue_gap") or 0.0),
-        pipeline_coverage_ratio=float(raw.get("pipeline_coverage_ratio") or 0.0),
-        primary_mode=str(raw.get("primary_mode") or "not_set"),
-        priority_tasks=raw.get("priority_tasks") or [],
+    raw = task_summary.get("financial_execution")
+    if isinstance(raw, dict) and raw:
+        objective_amount = float(raw.get("objective_amount") or 0.0)
+        planned_amount = float(raw.get("planned_amount") or 0.0)
+        remaining_gap = float(
+            raw.get("remaining_gap")
+            if raw.get("remaining_gap") is not None
+            else max(0.0, objective_amount - planned_amount)
+        )
+        return FinancialExecution(
+            objective_amount=objective_amount,
+            due_date=raw.get("due_date"),
+            objective_reason=str(raw.get("objective_reason") or ""),
+            planned_amount=planned_amount,
+            remaining_gap=remaining_gap,
+            status=str(raw.get("status") or ("covered" if remaining_gap <= 0 else "open")),
+            priority_tasks=raw.get("priority_tasks") or [],
+        )
+
+    # Backward compatibility for snapshots created by the old !mweekly flow.
+    legacy = task_summary.get("weekly_execution")
+    if not isinstance(legacy, dict):
+        legacy = {}
+
+    legacy_gap = float(
+        legacy.get("revenue_gap")
+        or legacy.get("target_amount")
+        or plan.get("weekly_goal")
+        or 0.0
     )
-
-
-def build_auto_schedule(start_iso: str, execution: WeeklyExecution) -> Dict[str, List[Dict[str, Any]]]:
-    """Create rolling operational execution blocks based on current revenue-gap levers."""
-    start_day = date.fromisoformat(start_iso)
-    schedule: Dict[str, List[Dict[str, Any]]] = {}
-
-    def add(day_offset: int, text: str, priority: str = "normal"):
-        iso = (start_day + timedelta(days=day_offset)).isoformat()
-        schedule.setdefault(iso, []).append({
-            "text": text,
-            "done": False,
-            "source": "mweekly",
-            "type": "operations",
-            "priority": priority,
-        })
-
-    add(0, f"Current operating target: {format_money(execution.target_amount)}", "high")
-    add(0, f"Remaining revenue gap: {format_money(execution.revenue_gap)}", "high")
-
-    if execution.primary_mode == "protect_scheduled_work":
-        for job in execution.earning_jobs:
-            add(0, f"Protect scheduled job: {job}", "high")
-        add(1, "Confirm collections and close out cleanly", "normal")
-
-    elif execution.primary_mode == "collections_push":
-        if execution.invoices_to_send:
-            for invoice in execution.invoices_to_send:
-                add(0, f"Send/collect invoice: {invoice}", "high")
-        else:
-            add(0, f"Send/collect invoices: {format_money(execution.pending_invoice_value)} pending", "high")
-        add(2, "Second pass on invoice collection", "normal")
-
-    elif execution.primary_mode == "estimate_conversion_push":
-        if execution.estimates_to_write:
-            for estimate in execution.estimates_to_write:
-                add(0, f"Write/follow up estimate: {estimate}", "high")
-        else:
-            add(0, f"Estimate conversion block: {format_money(execution.outstanding_estimate_value)} pipeline", "high")
-        add(1, "Second pass on estimate conversion", "normal")
-
-    elif execution.primary_mode == "mixed_operations_push":
-        for invoice in execution.invoices_to_send:
-            add(0, f"Send/collect invoice: {invoice}", "high")
-
-        for estimate in execution.estimates_to_write:
-            add(1, f"Write/follow up estimate: {estimate}", "high")
-
-        for job in execution.earning_jobs:
-            add(0, f"Protect scheduled job: {job}", "high")
-
-        add(2, "Check remaining gap after known levers are worked", "normal")
-
-    elif execution.primary_mode == "crm_mining_push":
-        add(0, "Known work levers exhausted — activate Chismebot", "high")
-        add(0, "Run !followuplist and look for quick-close follow-ups", "high")
-        add(1, "Run !chismelist and mine dormant leads / past customers", "high")
-        add(1, "Create new follow-ups from Chismebot CRM mining", "normal")
-
-    add(4, "Closeout: update invoices, estimates, receipts/materials, and next operating target", "normal")
-
-    return schedule
+    return build_financial_execution(
+        objective_amount=legacy_gap,
+        due_date=None,
+        objective_reason="Legacy weekly target" if legacy_gap else "",
+        planned_amount=0.0,
+    )
 
 
 def format_money(value: float) -> str:
     return f"${value:,.0f}"
 
 
-def format_execution_summary(execution: WeeklyExecution) -> str:
-    lines = [
-        "📌 Weekly execution readout",
-        f"Target: {format_money(execution.target_amount)}",
-        f"Scheduled revenue: {format_money(execution.scheduled_revenue)}",
-        f"Revenue gap: {format_money(execution.revenue_gap)}",
-        f"Outstanding estimates: {format_money(execution.outstanding_estimate_value)}",
-        f"Pending invoices: {format_money(execution.pending_invoice_value)}",
-        f"Mode: {execution.primary_mode}",
-        "Priorities:",
-    ]
-    lines.extend([f"- {task}" for task in execution.priority_tasks])
-    return "\n".join(lines)
+def format_financial_execution_summary(execution: FinancialExecution) -> str:
+    due_label = execution.due_date or "Not set"
+    purpose = execution.objective_reason or "Not specified"
+    status_label = "Covered" if execution.status == "covered" else "Open"
 
-def build_wakeup_message(execution: WeeklyExecution, routine: Optional[Dict[str, Any]] = None) -> str:
-    routine_text = None
+    return (
+        "💰 **Financial objective**\n\n"
+        f"Additional money needed: **{format_money(execution.objective_amount)}**\n"
+        f"Planned toward objective: **{format_money(execution.planned_amount)}**\n"
+        f"Remaining gap: **{format_money(execution.remaining_gap)}**\n"
+        f"Due: **{due_label}**\n"
+        f"Purpose: **{purpose}**\n"
+        f"Status: **{status_label}**"
+    )
 
-    if routine:
-        routine_text = routine.get("routine_text")
+
+def build_wakeup_message(execution: FinancialExecution, routine: Optional[Dict[str, Any]] = None) -> str:
+    routine_text = routine.get("routine_text") if routine else None
 
     if not routine_text:
         routine_text = (
@@ -1018,17 +951,20 @@ def build_wakeup_message(execution: WeeklyExecution, routine: Optional[Dict[str,
             "5. Confirm first job / first work block"
         )
 
+    priorities = "\n".join(f"- {task}" for task in execution.priority_tasks) or "- No financial priority set"
+    due_label = execution.due_date or "Not set"
+    purpose = execution.objective_reason or "Not specified"
+
     return (
         "🌅 Daniel morning boot sequence\n"
         f"Audio runway: {DEFAULT_CHILLHOP_URL}\n\n"
         f"{routine_text}\n\n"
-        f"Weekly target: {format_money(execution.target_amount)}\n"
-        f"Scheduled revenue: {format_money(execution.scheduled_revenue)}\n"
-        f"Revenue gap: {format_money(execution.revenue_gap)}\n"
-        f"Mode: {execution.primary_mode}\n\n"
-        "Priorities:\n"
-        + "\n".join([f"- {task}" for task in execution.priority_tasks])
-        + "\n\nStart with the first physical step. No algorithm hole."
+        f"Financial objective: {format_money(execution.objective_amount)}\n"
+        f"Remaining gap: {format_money(execution.remaining_gap)}\n"
+        f"Due: {due_label}\n"
+        f"Purpose: {purpose}\n\n"
+        f"Priorities:\n{priorities}\n\n"
+        "Start with the first physical step. No algorithm hole."
     )
 
 
@@ -1320,10 +1256,10 @@ def build_raw_time_payload(session: TimeSession) -> Dict[str, Any]:
     }
 
 
-def build_task_summary(weekly_execution: Optional[WeeklyExecution] = None, raw_time: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def build_task_summary(financial_execution: Optional[FinancialExecution] = None, raw_time: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     payload: Dict[str, Any] = {}
-    if weekly_execution is not None:
-        payload["weekly_execution"] = weekly_execution_to_json(weekly_execution)
+    if financial_execution is not None:
+        payload["financial_execution"] = financial_execution_to_json(financial_execution)
     if raw_time is not None:
         payload["raw_time"] = raw_time
     return payload
@@ -1332,7 +1268,7 @@ def build_task_summary(weekly_execution: Optional[WeeklyExecution] = None, raw_t
 def save_weekly_snapshot(
     ctx: commands.Context,
     week: str,
-    execution: WeeklyExecution,
+    execution: FinancialExecution,
     calendar_json: Dict[str, Any],
     wants_bodydouble: bool = False,
     quarterly_goals: Optional[List[str]] = None,
@@ -1344,10 +1280,11 @@ def save_weekly_snapshot(
         "discord_user": str(ctx.author),
         "channel_id": str(ctx.channel.id),
         "week_of": week,
-        "weekly_goal": execution.target_amount,
-        "jobs_json": json.dumps(execution.earning_jobs, ensure_ascii=False),
-        "pending_estimates_json": json.dumps(execution.estimates_to_write, ensure_ascii=False),
-        "invoices_to_send_json": json.dumps(execution.invoices_to_send, ensure_ascii=False),
+        # Keep legacy columns populated so the existing table schema does not need to change yet.
+        "weekly_goal": execution.objective_amount,
+        "jobs_json": "[]",
+        "pending_estimates_json": "[]",
+        "invoices_to_send_json": "[]",
         "calendar_json": json.dumps(calendar_json, ensure_ascii=False),
         "task_summary_json": json.dumps(build_task_summary(execution, raw_time), ensure_ascii=False),
         "wants_bodydouble": wants_bodydouble,
@@ -1356,9 +1293,9 @@ def save_weekly_snapshot(
     })
 
 
-def current_weekly_context(week: str) -> Tuple[Dict[str, Any], WeeklyExecution, Dict[str, Any], List[str], List[str]]:
+def current_weekly_context(week: str) -> Tuple[Dict[str, Any], FinancialExecution, Dict[str, Any], List[str], List[str]]:
     plan = fetch_latest_metiche_weekly(week) or {}
-    execution = weekly_execution_from_plan(plan)
+    execution = financial_execution_from_plan(plan)
     calendar_json = ensure_calendar(plan.get("calendar_json"))
     quarterly_goals = json_safe_load(plan.get("quarterly_goals_json") or plan.get("quarterly_goals"), [])
     yearly_goals = json_safe_load(plan.get("yearly_goals_json") or plan.get("yearly_goals"), [])
@@ -1676,8 +1613,8 @@ def register_metiche(bot: commands.Bot):
             "• time awareness\n\n"
     
             "**Planning**\n"
-            "`!mweekly` — update weekly operating target and execution strategy\n"
-            "`!mplan` — show current weekly execution plan\n"
+            "`!mengine` — save the current financial gap and execution objective\n"
+            "`!mplan` — show the current financial objective and Handley Man schedule\n"
             "`!mschedule` — add/change/replace weekly schedule\n"
             "`!mgoals` — save quarterly and yearly goals\n\n"
     
@@ -1721,74 +1658,98 @@ def register_metiche(bot: commands.Bot):
             "Responses are logged into task accounting."
         )
 
-    @bot.command(name="mweekly")
-    async def mweekly(ctx: commands.Context):
+    @bot.command(name="mengine", aliases=["mweekly"])
+    async def mengine(ctx: commands.Context):
+        """Save the current residual financial objective.
+
+        The amount entered is the gap that remains after the Financial Engine
+        spreadsheet has already accounted for known cash and expected work.
+        This command saves the mission; !mbraindump and !mtoday build the work.
+        """
         active_time_sessions.pop(ctx.channel.id, None)
 
-        def check(m: discord.Message):
-            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
+        def check(message: discord.Message) -> bool:
+            return (
+                message.author.id == ctx.author.id
+                and message.channel.id == ctx.channel.id
+            )
+
+        async def get_response(prompt: str, timeout: int = 300) -> Optional[str]:
+            await ctx.send(prompt)
+            try:
+                message = await bot.wait_for("message", check=check, timeout=timeout)
+            except asyncio.TimeoutError:
+                await ctx.send(
+                    "Financial Engine timed out without saving. "
+                    "Run `!mengine` when you're ready to start again."
+                )
+                return None
+            return message.content.strip()
 
         week = week_of_monday(local_now())
         _, _, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
 
-        await ctx.send("Weekly target amount for the week:")
-        target_amount = money_to_float((await bot.wait_for("message", check=check)).content)
+        amount_raw = await get_response(
+            "💰 How much additional money does Handley Man need?"
+        )
+        if amount_raw is None:
+            return
 
-        await ctx.send("Estimated revenue already scheduled from earning jobs:")
-        scheduled_revenue = money_to_float((await bot.wait_for("message", check=check)).content)
+        objective_amount = money_to_float(amount_raw)
+        if objective_amount <= 0:
+            await ctx.send(
+                "Please enter an amount greater than $0. "
+                "Run `!mengine` again when you have the current gap."
+            )
+            return
 
-        await ctx.send("Earning jobs on the schedule? List names comma-separated, or `none`:")
-        earning_jobs = parse_named_list((await bot.wait_for("message", check=check)).content)
+        due_raw = await get_response(
+            "📅 When is this money needed?\n"
+            "Examples: `today`, `tomorrow`, `August 4`, or `8/4/2026`."
+        )
+        if due_raw is None:
+            return
 
-        await ctx.send("Total value of current outstanding estimates:")
-        outstanding_estimate_value = money_to_float((await bot.wait_for("message", check=check)).content)
+        reason_raw = await get_response(
+            "🎯 What is this money for?\n"
+            "Examples: `owner draw`, `payroll`, `materials`, "
+            "`operating expenses`, or `other`."
+        )
+        if reason_raw is None:
+            return
 
-        await ctx.send("Which estimates need to be written or followed up? List comma-separated, or `none`:")
-        estimates_to_write = parse_named_list((await bot.wait_for("message", check=check)).content)
-
-        await ctx.send("Total value of invoices that need to be sent/collected:")
-        pending_invoice_value = money_to_float((await bot.wait_for("message", check=check)).content)
-
-        await ctx.send("Which invoices need to be sent/collected? List comma-separated, or `none`:")
-        invoices_to_send = parse_named_list((await bot.wait_for("message", check=check)).content)
-
-        execution = build_weekly_execution(
-            target_amount=target_amount,
-            scheduled_revenue=scheduled_revenue,
-            outstanding_estimate_value=outstanding_estimate_value,
-            pending_invoice_value=pending_invoice_value,
-            earning_jobs=earning_jobs,
-            estimates_to_write=estimates_to_write,
-            invoices_to_send=invoices_to_send,
+        execution = build_financial_execution(
+            objective_amount=objective_amount,
+            due_date=due_raw or None,
+            objective_reason=reason_raw or "Not specified",
+            planned_amount=0.0,
         )
 
-        auto_schedule = build_auto_schedule(today_iso(), execution)
-        handley_schedule = remove_source_tasks(calendar_json.get("Handley Man", {}), "mweekly")
-        calendar_json["Handley Man"] = merge_days(handley_schedule, auto_schedule)
-        
         save_weekly_snapshot(
-            ctx, week, execution, calendar_json,
+            ctx,
+            week,
+            execution,
+            calendar_json,
             wants_bodydouble=False,
             quarterly_goals=quarterly_goals,
             yearly_goals=yearly_goals,
         )
 
-        metiche = get_metiche()
-        push_result = metiche.push_calendar_json("Handley Man", calendar_json["Handley Man"]) if metiche else {"ok": False, "reason": "Metiche not initialized"}
-        status = "Pushed auto schedule to dashboard." if push_result.get("ok") else f"Saved, but dashboard push failed: {push_result.get('reason')}"
-
-        await ctx.send(format_execution_summary(execution) + f"\n\n{status}")
+        await ctx.send(
+            format_financial_execution_summary(execution)
+            + "\n\nNext: use `!mbraindump` to build the work required to close this gap."
+        )
 
     @bot.command(name="mplan")
     async def mplan(ctx: commands.Context):
         week = week_of_monday(local_now())
         plan = fetch_latest_metiche_weekly(week) or {}
         if not plan:
-            await ctx.send("No weekly plan saved yet. Run !mweekly first.")
+            await ctx.send("No weekly plan saved yet. Run !mengine first.")
             return
-        execution = weekly_execution_from_plan(plan)
+        execution = financial_execution_from_plan(plan)
         calendar_json = ensure_calendar(plan.get("calendar_json"))
-        lines = [format_execution_summary(execution), "", format_person_schedule("Handley Man", calendar_json.get("Handley Man", {}))]
+        lines = [format_financial_execution_summary(execution), "", format_person_schedule("Handley Man", calendar_json.get("Handley Man", {}))]
         await ctx.send("\n".join(lines))
 
     @bot.command(name="mdice")
@@ -2059,8 +2020,9 @@ def register_metiche(bot: commands.Bot):
     
         await ctx.send(
             f"📅 Today is {today_label()}\n"
-            f"💰 Weekly target: {format_money(execution.target_amount)}\n"
-            f"🧭 Mode: {execution.primary_mode}\n\n"
+            f"💰 Financial gap: {format_money(execution.remaining_gap)}\n"
+            f"🎯 Purpose: {execution.objective_reason or 'Not specified'}\n"
+            f"📅 Due: {execution.due_date or 'Not set'}\n\n"
             + format_daily_tasks(existing_today, person, today_label())
             + "\n\nWhat are you working on right now?\n"
               "Reply with a task number or a short focus label.\n"
@@ -2429,4 +2391,3 @@ def register_metiche(bot: commands.Bot):
                 return
             await log_raw_time_block(ctx, message.content, source="active_day")
             return
-
