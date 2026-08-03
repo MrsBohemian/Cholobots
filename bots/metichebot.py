@@ -820,6 +820,96 @@ def save_important_items(
     response = supabase.table("metiche_important_items").insert(inserts).execute()
     return {"ok": True, "data": response.data}
     
+
+def fetch_important_items(
+    person: str,
+    discord_user: str,
+    channel_id: str,
+    include_cancelled: bool = False,
+) -> List[Dict[str, Any]]:
+    if not require_supabase():
+        return []
+
+    query = (
+        supabase.table("metiche_important_items")
+        .select("id, person, discord_user, channel_id, item, status, created_at")
+        .eq("person", person)
+        .eq("discord_user", discord_user)
+        .eq("channel_id", channel_id)
+        .order("created_at")
+    )
+
+    if not include_cancelled:
+        query = query.neq("status", "cancelled")
+
+    response = query.execute()
+    return response.data or []
+
+
+def update_important_item_status(item_ids: List[Any], status: str) -> int:
+    if not require_supabase() or not item_ids:
+        return 0
+
+    updated = 0
+    for item_id in item_ids:
+        response = (
+            supabase.table("metiche_important_items")
+            .update({"status": status})
+            .eq("id", item_id)
+            .execute()
+        )
+        updated += len(response.data or [])
+
+    return updated
+
+
+def format_important_items(items: List[Dict[str, Any]]) -> str:
+    if not items:
+        return (
+            "⛽ **Important Action Plan**\n\n"
+            "No important items are currently saved.\n"
+            "Use `!mbraindump` and place actions under `I:` to create a plan."
+        )
+
+    icons = {
+        "open": "⬜",
+        "today": "🔥",
+        "held": "⏸️",
+        "completed": "✅",
+    }
+
+    lines = ["⛽ **Important Action Plan**", ""]
+
+    for index, item in enumerate(items, start=1):
+        status = str(item.get("status") or "open").lower()
+        icon = icons.get(status, "⬜")
+        label = status.replace("_", " ").title()
+        lines.append(f"{icon} **{index}.** {item.get('item', '')}  _[{label}]_")
+
+    completed = sum(
+        1 for item in items
+        if str(item.get("status") or "").lower() == "completed"
+    )
+
+    lines.extend([
+        "",
+        f"Gas can progress: **{completed} / {len(items)} complete**",
+        "",
+        "Commands:",
+        "`!mimportant today 1,3` — add items to `!mtoday`",
+        "`!mimportant done 2` — mark complete and add fuel",
+        "`!mimportant hold 4` — intentionally defer",
+        "`!mimportant open 4` — return a held item to the plan",
+        "`!mimportant remove 3` — cancel an item",
+    ])
+
+    return "\n".join(lines)
+
+
+def parse_important_indexes(raw: str, item_count: int) -> List[int]:
+    return parse_task_indexes(raw, item_count)
+
+
 # ---------- Financial execution logic ----------
 
 def build_financial_execution(
@@ -1896,6 +1986,118 @@ def register_metiche(bot: commands.Bot):
         status = "Pushed to dashboard JSON." if push_result.get("ok") else f"Saved, but dashboard push failed: {push_result.get('reason')}"
         await ctx.send(format_person_schedule(person, updated) + f"\n\n{status}")
 
+
+    @bot.command(name="mimportant")
+    async def mimportant(
+        ctx: commands.Context,
+        action: str = "show",
+        *,
+        targets: str = "",
+    ):
+        person = get_person_from_discord(ctx.author.id)
+        discord_user = str(ctx.author)
+        channel_id = str(ctx.channel.id)
+
+        items = fetch_important_items(
+            person=person,
+            discord_user=discord_user,
+            channel_id=channel_id,
+        )
+
+        normalized_action = (action or "show").strip().lower()
+
+        if normalized_action in {"show", "list", "status"}:
+            await ctx.send(format_important_items(items))
+            return
+
+        if normalized_action not in {"today", "done", "hold", "open", "remove"}:
+            await ctx.send(
+                "I don't know that Important action. Try:\n"
+                "`!mimportant`\n"
+                "`!mimportant today 1,3`\n"
+                "`!mimportant done 2`\n"
+                "`!mimportant hold 4`\n"
+                "`!mimportant open 4`\n"
+                "`!mimportant remove 3`"
+            )
+            return
+
+        indexes = parse_important_indexes(targets, len(items))
+        if not indexes:
+            await ctx.send(
+                "Tell me which item numbers to update. "
+                "Example: `!mimportant done 1,3`."
+            )
+            return
+
+        selected = [items[index] for index in indexes]
+
+        if normalized_action == "today":
+            date_key = today_iso()
+            existing_today = normalize_daily_items(
+                load_daily_tasks(person, date_key)
+            )
+            existing_names = {
+                normalize_task(task.get("text", ""))
+                for task in existing_today
+            }
+
+            added = 0
+            for item in selected:
+                text = str(item.get("item") or "").strip()
+                normalized = normalize_task(text)
+
+                if text and normalized not in existing_names:
+                    existing_today.append({
+                        "text": text,
+                        "done": False,
+                        "source": "mimportant",
+                    })
+                    existing_names.add(normalized)
+                    added += 1
+
+            replace_daily_tasks(person, date_key, existing_today)
+            changed = update_important_item_status(
+                [item.get("id") for item in selected],
+                "today",
+            )
+
+            await ctx.send(
+                f"🔥 Added **{added}** item(s) to today's work list.\n"
+                f"Updated **{changed}** Important item(s) to `today`.\n\n"
+                + format_important_items(fetch_important_items(
+                    person, discord_user, channel_id
+                ))
+            )
+            return
+
+        status_map = {
+            "done": "completed",
+            "hold": "held",
+            "open": "open",
+            "remove": "cancelled",
+        }
+        new_status = status_map[normalized_action]
+        changed = update_important_item_status(
+            [item.get("id") for item in selected],
+            new_status,
+        )
+
+        labels = {
+            "done": "✅ Completed",
+            "hold": "⏸️ Held",
+            "open": "⬜ Reopened",
+            "remove": "🗑️ Removed",
+        }
+
+        await ctx.send(
+            f"{labels[normalized_action]} **{changed}** Important item(s).\n\n"
+            + format_important_items(fetch_important_items(
+                person, discord_user, channel_id
+            ))
+        )
+
+
     @bot.command(name="mbraindump")
     async def mbraindump(ctx: commands.Context):
         metiche = get_metiche()
@@ -1973,7 +2175,15 @@ def register_metiche(bot: commands.Bot):
                 yearly_goals=yearly_goals,
                 )
         
-        status = "Added today’s brain dump items to mtoday."
+        if buckets["today"]:
+            status = "Added today’s brain dump items to mtoday."
+        elif buckets["important"]:
+            status = (
+                "Saved the Important items as your persistent action plan. "
+                "Use `!mimportant` to review or update them."
+            )
+        else:
+            status = "Brain dump saved with no items added to mtoday."
 
         summary = (
             "🧠 Brain dump sorted.\n\n"
