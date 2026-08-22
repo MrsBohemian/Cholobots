@@ -79,6 +79,8 @@ import asyncio
 import json
 import os
 import re
+import traceback
+
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, date
 from typing import Any, Dict, List, Optional, Tuple
@@ -1235,56 +1237,129 @@ class MeticheManager:
         self.data_service_url = os.getenv("DATA_SERVICE_URL", "").rstrip("/")
 
     async def start_loop(self):
-        print("[METICHE LOOP] heartbeat")
+        print("[METICHE LOOP] started", flush=True)
+    
         while True:
-            await asyncio.sleep(30)
-            now = local_now()
-
-            due_wakeups = fetch_due_wakeups(now)
-
-            for wakeup in due_wakeups:
-                channel = self.bot.get_channel(int(wakeup["channel_id"]))
-
-                if not channel:
-                    continue
-
-                week = week_of_monday(local_now())
-                _, execution, _, _, _ = current_weekly_context(week)
-                routine = fetch_active_routine(wakeup.get("person", "Daniel"))
-
-                await channel.send(build_wakeup_message(execution, routine))
-                mark_wakeup_sent(wakeup["id"])
-
-            due_pings = fetch_due_pings(now)
-            print(f"[PING SCHEDULES DUE] {due_pings}")
-
-            for ping in due_pings:
-                if int(ping["channel_id"]) in channels_waiting_for_command:
-                    continue
-                    
-                channel = self.bot.get_channel(int(ping["channel_id"]))
-
-                if not channel:
-                    continue
-                
-                session = active_time_sessions.get(int(ping["channel_id"]))
-                interval = int(ping.get("interval_minutes") or 120)
-
-                if session and session.last_activity_timestamp:
-                    last_activity = parse_iso(session.last_activity_timestamp)
-                    idle_minutes = (local_now() - last_activity).total_seconds() / 60
-
-                    if idle_minutes < interval:
-                        advance_ping_schedule(ping["id"], interval)
-                        continue
-
-                prompt = ping.get("prompt") or "¿Qué onda? What changed since the last time marker?"
-                await channel.send(prompt)
-
-                advance_ping_schedule(
-                    ping["id"],
-                    interval,
+            try:
+                await asyncio.sleep(30)
+                now = local_now()
+    
+                print(f"[METICHE LOOP] tick {now.isoformat()}", flush=True)
+    
+                due_wakeups = fetch_due_wakeups(now)
+                print(f"[WAKEUPS DUE] {due_wakeups}", flush=True)
+    
+                for wakeup in due_wakeups:
+                    try:
+                        print(
+                            f"[WAKEUP PROCESSING] id={wakeup.get('id')} "
+                            f"channel={wakeup.get('channel_id')} "
+                            f"time={wakeup.get('wake_time')}",
+                            flush=True,
+                        )
+    
+                        channel = self.bot.get_channel(int(wakeup["channel_id"]))
+    
+                        if not channel:
+                            print(
+                                f"[WAKEUP ERROR] Channel not found: {wakeup['channel_id']}",
+                                flush=True,
+                            )
+                            continue
+    
+                        week = week_of_monday(local_now())
+                        _, execution, _, _, _ = current_weekly_context(week)
+    
+                        routine = fetch_active_routine(
+                            wakeup.get("person", "Daniel")
+                        )
+    
+                        await channel.send(
+                            build_wakeup_message(execution, routine)
+                        )
+    
+                        mark_wakeup_sent(wakeup["id"])
+    
+                        print(
+                            f"[WAKEUP SENT] id={wakeup['id']}",
+                            flush=True,
+                        )
+    
+                    except Exception as e:
+                        print(
+                            f"[WAKEUP ERROR] {type(e).__name__}: {e}",
+                            flush=True,
+                        )
+                        traceback.print_exc()
+    
+                due_pings = fetch_due_pings(now)
+                print(f"[PING SCHEDULES DUE] {due_pings}", flush=True)
+    
+                for ping in due_pings:
+                    try:
+                        if int(ping["channel_id"]) in channels_waiting_for_command:
+                            continue
+    
+                        channel = self.bot.get_channel(
+                            int(ping["channel_id"])
+                        )
+    
+                        if not channel:
+                            print(
+                                f"[PING ERROR] Channel not found: {ping['channel_id']}",
+                                flush=True,
+                            )
+                            continue
+    
+                        session = active_time_sessions.get(
+                            int(ping["channel_id"])
+                        )
+    
+                        interval = int(
+                            ping.get("interval_minutes") or 120
+                        )
+    
+                        if session and session.last_activity_timestamp:
+                            last_activity = parse_iso(
+                                session.last_activity_timestamp
+                            )
+    
+                            idle_minutes = (
+                                local_now() - last_activity
+                            ).total_seconds() / 60
+    
+                            if idle_minutes < interval:
+                                advance_ping_schedule(
+                                    ping["id"],
+                                    interval,
+                                )
+                                continue
+    
+                        prompt = (
+                            ping.get("prompt")
+                            or "¿Qué onda? What changed since the last time marker?"
+                        )
+    
+                        await channel.send(prompt)
+    
+                        advance_ping_schedule(
+                            ping["id"],
+                            interval,
+                        )
+    
+                    except Exception as e:
+                        print(
+                            f"[PING ERROR] {type(e).__name__}: {e}",
+                            flush=True,
+                        )
+                        traceback.print_exc()
+    
+            except Exception as e:
+                print(
+                    f"[METICHE LOOP ERROR] {type(e).__name__}: {e}",
+                    flush=True,
                 )
+                traceback.print_exc()
 
     def post_json(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not self.data_service_url:
