@@ -157,14 +157,29 @@ class TimeSession:
     date_label: str
     last_timestamp: str
     last_activity_timestamp: Optional[str] = None
+
+    # What Metiche currently believes you're doing.
     active_task: Optional[str] = None
+
+    # The planned focus before reality diverged.
+    intended_task: Optional[str] = None
+
     setup_complete: bool = False
     current_state: str = "active"  # active / paused / drift / transition
     paused_task: Optional[str] = None
+
+    # Que Onda state.
+    awaiting_checkin_response: bool = False
+    last_checkin_focus: Optional[str] = None
+
     blocks: List[Dict[str, Any]] = field(default_factory=list)
     daily_tasks: List[Dict[str, Any]] = field(default_factory=list)
     parked_items: List[str] = field(default_factory=list)
     interruptions: List[Dict[str, Any]] = field(default_factory=list)
+
+    # Reality that happened outside the planned list.
+    other_tasks_accomplished: List[str] = field(default_factory=list)
+    drift_events: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -1410,6 +1425,10 @@ class MeticheManager:
                             ping.get("prompt")
                             or "¿Qué onda? What changed since the last time marker?"
                         )
+
+                        if session:
+                            session.awaiting_checkin_response = True
+                            session.last_checkin_focus = session.active_task
     
                         await channel.send(prompt)
     
@@ -1480,17 +1499,98 @@ def build_raw_time_payload(session: TimeSession) -> Dict[str, Any]:
         "date": session.date_iso,
         "person": session.person,
         "active_task": session.active_task,
+        "intended_task": session.intended_task,
         "current_state": session.current_state,
         "paused_task": session.paused_task,
         "last_timestamp": session.last_timestamp,
         "parked_items": session.parked_items,
         "interruptions": session.interruptions,
+        "other_tasks_accomplished": session.other_tasks_accomplished,
+        "drift_events": session.drift_events,
         "total_minutes": total_minutes(session.blocks),
         "total_label": minutes_to_label(total_minutes(session.blocks)),
         "blocks_logged": len(session.blocks),
         "blocks": session.blocks,
     }
+def resolve_focus(tasks: List[Dict[str, Any]], target: str) -> str:
+    normalized = normalize_daily_items(tasks)
+    raw = (target or "").strip()
 
+    indexes = parse_task_indexes(raw, len(normalized))
+
+    if indexes:
+        return ", ".join(
+            normalized[idx]["text"]
+            for idx in indexes
+        )
+
+    return raw
+
+
+def is_planned_task(tasks: List[Dict[str, Any]], text: str) -> bool:
+    target = normalize_task(text)
+
+    return any(
+        normalize_task(task.get("text", "")) == target
+        for task in normalize_daily_items(tasks)
+    )
+
+
+def add_other_task_accomplished(session: TimeSession, text: str):
+    text = (text or "").strip()
+
+    if not text:
+        return
+
+    normalized_existing = {
+        normalize_task(item)
+        for item in session.other_tasks_accomplished
+    }
+
+    if (
+        not is_planned_task(session.daily_tasks, text)
+        and normalize_task(text) not in normalized_existing
+    ):
+        session.other_tasks_accomplished.append(text)
+
+
+def looks_like_on_task_checkin(text: str) -> bool:
+    lower = normalize_task(text)
+
+    prefixes = (
+        "yes",
+        "yeah",
+        "yep",
+        "yup",
+        "still",
+        "still on",
+        "still working",
+        "same",
+        "on it",
+        "working on it",
+    )
+
+    return any(lower.startswith(prefix) for prefix in prefixes)
+
+
+def clean_drift_explanation(text: str) -> str:
+    cleaned = (text or "").strip()
+
+    cleaned = re.sub(
+        r"^(sorry[\s,.-]*)?(no|nope|nah)[\s,.-]*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    cleaned = re.sub(
+        r"^sorry[\s,.-]*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    return cleaned.strip() or text.strip()
 
 def build_task_summary(financial_execution: Optional[FinancialExecution] = None, raw_time: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     payload: Dict[str, Any] = {}
@@ -1660,19 +1760,64 @@ def register_metiche(bot: commands.Bot):
         return block
 
     async def show_active_day(ctx: commands.Context, session: TimeSession):
-        pending_tasks = [
-            task for task in normalize_daily_items(session.daily_tasks)
-            if not task.get("done")
+        tasks = normalize_daily_items(session.daily_tasks)
+    
+        lines = [
+            f"📋 {session.person} — {session.date_label}",
+            "",
         ]
-        pending_text = "\n".join([f"- {task['text']}" for task in pending_tasks]) or "(nothing pending)"
-        parked_text = "\n".join([f"- {item}" for item in session.parked_items]) or "(nothing parked)"
-        await ctx.send(
-            f"📍 State: {session.current_state}\n"
-            f"🎯 Active: {session.active_task or session.paused_task or '(none)'}\n"
-            f"⏱️ Accounted today: {build_raw_time_payload(session)['total_label']}\n\n"
-            f"Pending:\n{pending_text}\n\n"
-            f"Parked for later:\n{parked_text}"
-        )
+    
+        for idx, task in enumerate(tasks, start=1):
+            text = task.get("text", "")
+            done = bool(task.get("done"))
+    
+            if done:
+                icon = "✅"
+            elif (
+                session.active_task
+                and normalize_task(text) == normalize_task(session.active_task)
+            ):
+                icon = "🟢"
+            else:
+                icon = "⬜"
+    
+            lines.append(f"{icon} {idx}. {text}")
+    
+        if session.other_tasks_accomplished:
+            lines.extend([
+                "",
+                "**Other tasks accomplished:**",
+            ])
+    
+            for item in session.other_tasks_accomplished:
+                lines.append(f"✅ {item}")
+    
+        if session.drift_events:
+            lines.extend([
+                "",
+                "**Drift:**",
+            ])
+    
+            for event in session.drift_events:
+                label = event.get("actual_activity") or event.get("reason") or "unspecified"
+                minutes = int(event.get("duration_minutes") or 0)
+                time_text = f" — {minutes_to_label(minutes)}" if minutes else ""
+                lines.append(f"🌀 {label}{time_text}")
+    
+        lines.extend([
+            "",
+            f"🎯 Current: {session.active_task or '(none)'}",
+            f"⏱️ Accounted today: {build_raw_time_payload(session)['total_label']}",
+        ])
+    
+        if session.parked_items:
+            lines.extend([
+                "",
+                "**Parked:**",
+                *[f"- {item}" for item in session.parked_items],
+            ])
+    
+        await ctx.send("\n".join(lines))
 
     async def save_active_day_state(ctx: commands.Context, session: TimeSession):
         week = week_of_monday(local_now())
@@ -1730,13 +1875,79 @@ def register_metiche(bot: commands.Bot):
             return True
 
         if lower.startswith("drift"):
-            label = re.sub(r"^drift\s*", "", raw, flags=re.IGNORECASE).strip() or "unspecified drift"
+            explanation = re.sub(
+                r"^drift\s*",
+                "",
+                raw,
+                flags=re.IGNORECASE,
+            ).strip() or "unspecified drift"
+        
+            previous_focus = session.active_task
+        
+            now = local_now()
+            duration = max(
+                0,
+                int(
+                    (
+                        now - parse_iso(session.last_timestamp)
+                    ).total_seconds() // 60
+                ),
+            )
+        
+            block = {
+                "date": session.date_iso,
+                "start": session.last_timestamp,
+                "end": now.isoformat(),
+                "duration_minutes": duration,
+                "duration_label": minutes_to_label(duration),
+                "planned_focus": previous_focus,
+                "actual_activity": explanation,
+                "classification": "drift",
+                "reason": explanation,
+                "source": "drift",
+            }
+        
+            session.blocks.append(block)
+            session.last_timestamp = now.isoformat()
+        
+            session.drift_events.append({
+                "ts": now.isoformat(),
+                "planned_focus": previous_focus,
+                "actual_activity": explanation,
+                "reason": explanation,
+                "duration_minutes": duration,
+            })
+        
+            insert_metiche_checkin({
+                "ts": now_iso(),
+                "discord_user": str(ctx.author),
+                "channel_id": str(ctx.channel.id),
+                "week_of": week_of_monday(local_now()),
+                "category": "drift",
+                "task": explanation,
+                "energy": None,
+            })
+        
+            # Remember what we meant to be doing,
+            # but reality is now the current activity.
+            session.intended_task = previous_focus
+            session.active_task = explanation
             session.current_state = "drift"
-            block = await log_raw_time_block(ctx, f"drift: {label}", source="drift")
-            session.current_state = "active"
+        
+            sync_ping_focus(
+                ctx.channel.id,
+                session.person,
+                explanation,
+            )
+        
             await save_active_day_state(ctx, session)
-            duration = block.get("duration_label") if block else "0m"
-            await ctx.send(f"🌀 Drift captured: {label}\nDuration since last marker: {duration}\nRecovered focus: {session.active_task or '(none)'}")
+        
+            await ctx.send(
+                f"🌀 Drift: {explanation}\n"
+                f"⏱️ {minutes_to_label(duration)} since last marker\n"
+                f"🎯 Intended: {previous_focus or '(none)'}"
+            )
+        
             return True
 
         if lower.startswith("pause"):
@@ -1785,27 +1996,49 @@ def register_metiche(bot: commands.Bot):
             return True
 
         if lower.startswith("switch "):
-            target = raw[7:].strip()
+            target = resolve_focus(
+                session.daily_tasks,
+                raw[7:].strip(),
+            )
             if not target:
                 await ctx.send("Switch to what?")
                 return True
+        
             previous_focus = session.active_task
-            
-            await log_raw_time_block(ctx, f"switch from {previous_focus or 'unassigned'} to {target}", source="switch")
-            
+        
+            await log_raw_time_block(
+                ctx,
+                f"switch from {previous_focus or 'unassigned'} to {target}",
+                source="switch",
+            )
+        
+            if (
+                previous_focus
+                and not is_planned_task(session.daily_tasks, previous_focus)
+            ):
+                add_other_task_accomplished(
+                    session,
+                    previous_focus,
+                )
+        
             session.active_task = target
-            
+        
             sync_ping_focus(
                 ctx.channel.id,
                 session.person,
                 target,
             )
-            
+        
             session.current_state = "active"
             session.paused_task = None
             await save_active_day_state(ctx, session)
-            await ctx.send(f"🔀 Switched focus:\nFrom: {previous_focus or '(none)'}\nTo: {target}")
+            await ctx.send(
+                f"🔀 Switched focus:\n"
+                f"From: {previous_focus or '(none)'}\n"
+                f"To: {target}"
+            )
             return True
+            
 
         if lower.startswith("ping ") or lower.startswith("pings "):
             raw_interval = re.sub(r"^pings?\s+", "", raw, flags=re.IGNORECASE).strip().lower()
@@ -1826,6 +2059,98 @@ def register_metiche(bot: commands.Bot):
                 prompt=f"¿Qué onda? Still on {session.active_task or session.paused_task or 'your current focus'}, or did something change?",
             )
             await ctx.send(f"🔔 Que Onda pings set for every {interval} minutes.")
+            return True
+            
+        if session.awaiting_checkin_response:
+            session.awaiting_checkin_response = False
+        
+            if looks_like_on_task_checkin(raw):
+                block = await log_raw_time_block(
+                    ctx,
+                    f"on task: {session.active_task or raw}",
+                    source="que_onda_on_task",
+                )
+        
+                session.current_state = "active"
+                session.intended_task = session.active_task
+        
+                await save_active_day_state(ctx, session)
+        
+                duration = block.get("duration_label") if block else "0m"
+        
+                await ctx.send(
+                    f"👍 Still on {session.active_task or 'current focus'} — {duration}"
+                )
+        
+                return True
+        
+            # Anything that says reality differs from the ping
+            # becomes drift without requiring the word "drift".
+            explanation = clean_drift_explanation(raw)
+            previous_focus = session.active_task
+        
+            now = local_now()
+            duration = max(
+                0,
+                int(
+                    (
+                        now - parse_iso(session.last_timestamp)
+                    ).total_seconds() // 60
+                ),
+            )
+        
+            block = {
+                "date": session.date_iso,
+                "start": session.last_timestamp,
+                "end": now.isoformat(),
+                "duration_minutes": duration,
+                "duration_label": minutes_to_label(duration),
+                "planned_focus": previous_focus,
+                "actual_activity": explanation,
+                "classification": "drift",
+                "reason": explanation,
+                "source": "que_onda_drift",
+            }
+        
+            session.blocks.append(block)
+            session.last_timestamp = now.isoformat()
+        
+            session.drift_events.append({
+                "ts": now.isoformat(),
+                "planned_focus": previous_focus,
+                "actual_activity": explanation,
+                "reason": explanation,
+                "duration_minutes": duration,
+            })
+        
+            insert_metiche_checkin({
+                "ts": now_iso(),
+                "discord_user": str(ctx.author),
+                "channel_id": str(ctx.channel.id),
+                "week_of": week_of_monday(local_now()),
+                "category": "drift",
+                "task": explanation,
+                "energy": None,
+            })
+        
+            session.intended_task = previous_focus
+            session.active_task = explanation
+            session.current_state = "drift"
+        
+            sync_ping_focus(
+                ctx.channel.id,
+                session.person,
+                explanation,
+            )
+        
+            await save_active_day_state(ctx, session)
+        
+            await ctx.send(
+                f"🌀 Drift: {explanation}\n"
+                f"⏱️ {minutes_to_label(duration)}\n"
+                f"🎯 Intended: {previous_focus or '(none)'}"
+            )
+        
             return True
 
         if lower.startswith("done") or lower.startswith("check "):
