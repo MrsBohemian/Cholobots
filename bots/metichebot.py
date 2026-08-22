@@ -772,6 +772,73 @@ def stop_ping_schedules(channel_id: int):
         .eq("status", "active")
         .execute()
     )
+    
+def fetch_ping_schedule(channel_id: int, person: str):
+    if not require_supabase():
+        return None
+
+    response = (
+        supabase.table("metiche_ping_schedules")
+        .select("*")
+        .eq("channel_id", str(channel_id))
+        .eq("person", person)
+        .limit(1)
+        .execute()
+    )
+
+    rows = response.data or []
+    return rows[0] if rows else None
+
+
+def sync_ping_focus(
+    channel_id: int,
+    person: str,
+    focus: Optional[str],
+    pause: bool = False,
+):
+    """
+    Keep an existing Que Onda schedule aligned with the current mtoday focus.
+
+    Does NOT create a ping schedule if the user did not already have one.
+    """
+    ping = fetch_ping_schedule(channel_id, person)
+
+    if not ping:
+        return
+
+    # Do not resurrect a schedule the user deliberately stopped.
+    if ping.get("status") == "stopped":
+        return
+
+    interval = int(ping.get("interval_minutes") or 120)
+
+    if pause or not focus:
+        (
+            supabase.table("metiche_ping_schedules")
+            .update({
+                "status": "paused",
+                "is_on": False,
+                "updated_at": local_now().isoformat(),
+            })
+            .eq("id", ping["id"])
+            .execute()
+        )
+        return
+
+    (
+        supabase.table("metiche_ping_schedules")
+        .update({
+            "status": "active",
+            "is_on": True,
+            "prompt": f"¿Qué onda? Still on {focus}, or did something change?",
+            "next_ping_at": (
+                local_now() + timedelta(minutes=interval)
+            ).isoformat(),
+            "updated_at": local_now().isoformat(),
+        })
+        .eq("id", ping["id"])
+        .execute()
+    )
 #----------Behavior Identification/Reprogramming---------
 
 def save_mdice_entry(
@@ -1679,6 +1746,14 @@ def register_metiche(bot: commands.Bot):
             session.current_state = "paused"
             session.paused_task = previous_focus
             session.active_task = None
+            
+            sync_ping_focus(
+                ctx.channel.id,
+                session.person,
+                None,
+                pause=True,
+            )
+            
             session.interruptions.append({
                 "type": "pause",
                 "reason": reason,
@@ -1696,6 +1771,13 @@ def register_metiche(bot: commands.Bot):
                 return True
             await log_raw_time_block(ctx, f"resume: {target}", source="resume")
             session.active_task = target
+
+            sync_ping_focus(
+                ctx.channel.id,
+                session.person,
+                target,
+            )
+            
             session.paused_task = None
             session.current_state = "active"
             await save_active_day_state(ctx, session)
@@ -1708,8 +1790,17 @@ def register_metiche(bot: commands.Bot):
                 await ctx.send("Switch to what?")
                 return True
             previous_focus = session.active_task
+            
             await log_raw_time_block(ctx, f"switch from {previous_focus or 'unassigned'} to {target}", source="switch")
+            
             session.active_task = target
+            
+            sync_ping_focus(
+                ctx.channel.id,
+                session.person,
+                target,
+            )
+            
             session.current_state = "active"
             session.paused_task = None
             await save_active_day_state(ctx, session)
@@ -1749,60 +1840,135 @@ def register_metiche(bot: commands.Bot):
                 await ctx.send("Done with what?")
                 return True
         
+            finished_focus = session.active_task
+        
             block = await log_raw_time_block(
                 ctx,
                 f"done: {target}",
                 source="done",
             )
         
-            tasks = normalize_daily_items(
-                session.daily_tasks
-            )
-        
-            indexes = resolve_task_indexes(
-                tasks,
-                target,
-            )
+            tasks = normalize_daily_items(session.daily_tasks)
+            indexes = resolve_task_indexes(tasks, target)
         
             checked_labels = []
         
             for idx in indexes:
                 tasks[idx]["done"] = True
-                checked_labels.append(
-                    tasks[idx].get("text", "")
-                )
+                checked_labels.append(tasks[idx].get("text", ""))
         
             session.daily_tasks = tasks
         
-            if (
-                normalize_task(target)
-                == normalize_task(session.active_task or "")
-            ):
-                session.active_task = None
+            # The thing we were doing is finished.
+            session.active_task = None
         
-            await save_active_day_state(
-                ctx,
-                session,
+            pending = [
+                task
+                for task in tasks
+                if not task.get("done")
+            ]
+        
+            duration = block.get("duration_label") if block else "0m"
+        
+            if len(pending) == 1:
+                # Only one sensible next thing. Just move into it.
+                next_focus = pending[0]["text"]
+                session.active_task = next_focus
+        
+                sync_ping_focus(
+                    ctx.channel.id,
+                    session.person,
+                    next_focus,
+                )
+        
+                await save_active_day_state(ctx, session)
+        
+                await ctx.send(
+                    f"✅ {target} — {duration}\n"
+                    f"🟢 Next: {next_focus}"
+                )
+        
+                return True
+        
+            if not pending:
+                # Day/list is complete. Nothing left for Que Onda to monitor.
+                sync_ping_focus(
+                    ctx.channel.id,
+                    session.person,
+                    None,
+                    pause=True,
+                )
+        
+                await save_active_day_state(ctx, session)
+        
+                await ctx.send(
+                    f"✅ {target} — {duration}\n"
+                    "🏁 Nothing else pending."
+                )
+        
+                return True
+        
+            # Multiple possible next tasks.
+            # Don't pretend we know which one Heaven chose.
+            sync_ping_focus(
+                ctx.channel.id,
+                session.person,
+                None,
+                pause=True,
             )
         
-            duration = (
-                block.get("duration_label")
-                if block
-                else "0m"
+            await save_active_day_state(ctx, session)
+        
+            pending_text = "\n".join(
+                f"{i}. {task['text']}"
+                for i, task in enumerate(pending, start=1)
             )
         
-            if checked_labels:
-                await ctx.send(
-                    f"✅ Done — {', '.join(checked_labels)}\n"
-                    f"⏱️ {duration}"
-                )
-            else:
-                await ctx.send(
-                    f"⏱️ {duration} logged.\n"
-                    f"I couldn't match `{target}` to today's list."
-                )
+            await ctx.send(
+                f"✅ {target} — {duration}\n\n"
+                f"What's next?\n{pending_text}"
+            )
         
             return True
+
+        # No current focus means Metiche asked "What's next?"
+        # Treat the user's ordinary reply as the new focus.
+        if not session.active_task and session.current_state == "active":
+            tasks = normalize_daily_items(session.daily_tasks)
+            
+            pending = [
+                task
+                for task in tasks
+                if not task.get("done")
+            ]
+            
+            indexes = parse_task_indexes(raw, len(pending))
+            
+            if indexes:
+                selected = [
+                    pending[idx]["text"]
+                    for idx in indexes
+                ]
+                new_focus = ", ".join(selected)
+            else:
+                new_focus = raw
+            
+            if new_focus:
+                session.active_task = new_focus
+            
+                sync_ping_focus(
+                    ctx.channel.id,
+                    session.person,
+                    new_focus,
+                )
+            
+                await save_active_day_state(ctx, session)
+            
+                await ctx.send(
+                    f"🟢 Active: {new_focus}"
+                )
+            
+                return True
             
         return False
 
