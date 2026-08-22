@@ -749,7 +749,7 @@ def advance_ping_schedule(ping_id: str, interval_minutes: int):
     (
         supabase.table("metiche_ping_schedules")
         .update({
-            "last_sent_at": local_now().isoformat(),
+            "updated_at": local_now().isoformat(),
             "next_ping_at": next_ping_at.isoformat(),
         })
         .eq("id", ping_id)
