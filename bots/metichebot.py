@@ -719,6 +719,7 @@ def save_ping_schedule(
             "prompt": prompt,
             "source": source,
             "status": "active",
+             "is_on": True,
         }, on_conflict="channel_id,person")
         .execute()
     )
@@ -733,6 +734,7 @@ def fetch_due_pings(now: datetime):
         supabase.table("metiche_ping_schedules")
         .select("*")
         .eq("status", "active")
+        .eq("is_on", True)
         .lte("next_ping_at", now.isoformat())
         .execute()
     )
@@ -760,10 +762,12 @@ def advance_ping_schedule(ping_id: str, interval_minutes: int):
 def stop_ping_schedules(channel_id: int):
     if not require_supabase():
         return
-
     (
         supabase.table("metiche_ping_schedules")
-        .update({"status": "stopped"})
+        .update({
+            "status": "stopped",
+            "is_on": False,
+        })
         .eq("channel_id", str(channel_id))
         .eq("status", "active")
         .execute()
