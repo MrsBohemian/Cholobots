@@ -1578,11 +1578,6 @@ def register_metiche(bot: commands.Bot):
             "energy": None,
         })
 
-        match_idx = find_best_task_match(session.daily_tasks, activity_text)
-        if match_idx is not None:
-            session.daily_tasks[match_idx]["done"] = True
-            await push_daily_tasks_to_calendar(ctx, session)
-
         push_result = metiche.push_task_summary_json(build_raw_time_payload(session))
 
         msg = (
@@ -1591,10 +1586,9 @@ def register_metiche(bot: commands.Bot):
             f"Total accounted today: {build_raw_time_payload(session)['total_label']}"
         )
                 
-        if match_idx is not None:
-            msg += f"\n✅ Checked off: {session.daily_tasks[match_idx]['text']}"
         if not push_result.get("ok"):
             msg += f"\nSaved, but dashboard push failed: {push_result.get('reason')}"
+            
         await ctx.send(msg)
         return block
 
@@ -1744,26 +1738,72 @@ def register_metiche(bot: commands.Bot):
             return True
 
         if lower.startswith("done") or lower.startswith("check "):
-            target = re.sub(r"^(done|check)\s*", "", raw, flags=re.IGNORECASE).strip() or session.active_task
+            target = re.sub(
+                r"^(done|check)\s*",
+                "",
+                raw,
+                flags=re.IGNORECASE,
+            ).strip() or session.active_task
+        
             if not target:
-                await ctx.send("Done with what? Try `done 2` or `done clean kitchen`.")
+                await ctx.send("Done with what?")
                 return True
-            block = await log_raw_time_block(ctx, f"done: {target}", source="done")
-            tasks = normalize_daily_items(session.daily_tasks)
-            indexes = resolve_task_indexes(tasks, target)
+        
+            block = await log_raw_time_block(
+                ctx,
+                f"done: {target}",
+                source="done",
+            )
+        
+            tasks = normalize_daily_items(
+                session.daily_tasks
+            )
+        
+            indexes = resolve_task_indexes(
+                tasks,
+                target,
+            )
+        
             checked_labels = []
+        
             for idx in indexes:
                 tasks[idx]["done"] = True
-                checked_labels.append(tasks[idx].get("text", ""))
+                checked_labels.append(
+                    tasks[idx].get("text", "")
+                )
+        
             session.daily_tasks = tasks
-            if normalize_task(target) == normalize_task(session.active_task or "") or (len(indexes) == 1 and normalize_task(tasks[indexes[0]].get("text", "")) == normalize_task(session.active_task or "")):
+        
+            if (
+                normalize_task(target)
+                == normalize_task(session.active_task or "")
+            ):
                 session.active_task = None
-            await save_active_day_state(ctx, session)
-            duration = block.get("duration_label") if block else "0m"
-            checked = "\n✅ Checked off:\n" + "\n".join([f"- {label}" for label in checked_labels]) if checked_labels else "\n⚠️ Logged time, but no matching task was checked off."
-            await ctx.send(f"✅ Done: {target}\nTime since last marker: {duration}{checked}\n\nType `show` to see the updated list, or `switch 3` to start another task.")
+        
+            await save_active_day_state(
+                ctx,
+                session,
+            )
+        
+            duration = (
+                block.get("duration_label")
+                if block
+                else "0m"
+            )
+        
+            if checked_labels:
+                await ctx.send(
+                    f"✅ Done — {', '.join(checked_labels)}\n"
+                    f"⏱️ {duration}"
+                )
+            else:
+                await ctx.send(
+                    f"⏱️ {duration} logged.\n"
+                    f"I couldn't match `{target}` to today's list."
+                )
+        
             return True
-
+            
         return False
 
     @bot.command(name="metichebot")
@@ -2289,113 +2329,132 @@ def register_metiche(bot: commands.Bot):
     @bot.command(name="mtoday")
     async def mtoday(ctx: commands.Context):
         active_time_sessions.pop(ctx.channel.id, None)
+    
         metiche = get_metiche()
         if metiche is None:
             await ctx.send("Metiche isn’t initialized yet.")
             return
     
         def check(m: discord.Message):
-            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
+            return (
+                m.author.id == ctx.author.id
+                and m.channel.id == ctx.channel.id
+                and not m.content.strip().startswith("!")
+            )
     
         week = week_of_monday(local_now())
-        _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
+        _, execution, calendar_json, quarterly_goals, yearly_goals = (
+            current_weekly_context(week)
+        )
     
         person = get_person_from_discord(ctx.author.id)
         date_key = today_iso()
     
         existing_today = load_daily_tasks(person, date_key)
+    
         if not existing_today:
-            existing_today = normalize_daily_items(calendar_json.get(person, {}).get(date_key, []))
+            existing_today = normalize_daily_items(
+                calendar_json.get(person, {}).get(date_key, [])
+            )
     
         await ctx.send(
-            f"📅 Today is {today_label()}\n"
-            f"💰 Financial gap: {format_money(execution.remaining_gap)}\n"
-            f"🎯 Purpose: {execution.objective_reason or 'Not specified'}\n"
-            f"📅 Due: {execution.due_date or 'Not set'}\n\n"
-            + format_daily_tasks(existing_today, person, today_label())
-            + "\n\nWhat are you working on right now?\n"
-              "Reply with a task number or a short focus label.\n"
-              "Examples:\n"
-              "`1`\n"
-              "`metichebot`\n"
-              "`customer communication`\n\n"
-              "Or reply:\n"
-              "`edit` — add/remove/check off/keep items before starting\n"
-              "`cancel` — stop"
+            format_daily_tasks(existing_today, person, today_label())
+            + "\n\nWhat are you working on?\n"
+              "Reply with task number(s), a focus label, `edit`, or `cancel`."
         )
     
-        choice = (await bot.wait_for("message", check=check)).content.strip()
+        choice = (
+            await bot.wait_for("message", check=check)
+        ).content.strip()
     
         if choice.lower() == "cancel":
-            await ctx.send("Okay. I stopped before starting task accounting.")
+            await ctx.send("Okay.")
             return
-
-        if choice.lower() == "show":
-            await ctx.send(format_daily_tasks(existing_today, person, today_label()))
-            choice = (await bot.wait_for("message", check=check)).content.strip()
-
-        if choice.lower().startswith("add "):
-            item = choice[4:].strip()
-            if item:
-                existing_today = normalize_daily_items(existing_today) + [{"text": item, "done": False, "source": "mtoday_add"}]
-                replace_daily_tasks(person, date_key, existing_today)
-                await ctx.send(
-                    f"➕ Added: {item}\n\n"
-                    + format_daily_tasks(existing_today, person, today_label())
-                    + "\n\nNow what are you working on right now?"
-                )
-                choice = (await bot.wait_for("message", check=check)).content.strip()
     
         while choice.lower() == "edit":
             await ctx.send(
-                "List edit mode. Use one of these:\n"
-                "`add task` — append a task\n"
-                "`done 4` or `done 4,5` — check off task numbers\n"
-                "`remove 4` — remove task numbers\n"
-                "`keep 4,5,6` — keep only those task numbers\n"
-                "`rewrite task, task` — replace the whole list\n\n"
-                "Bare numbers like `4,5,6` mean KEEP those task numbers. They will not become fake tasks."
+                "`add task, task` — add one or more\n"
+                "`done 2,4` — check off tasks\n"
+                "`remove 3` — remove tasks\n"
+                "`keep 1,2,5` — keep only those tasks\n"
+                "`rewrite task, task` — replace the list"
             )
     
-            edited = (await bot.wait_for("message", check=check)).content.strip()
-            existing_today, edit_message = apply_list_edit(existing_today, edited)
-            replace_daily_tasks(person, date_key, existing_today)
+            edited = (
+                await bot.wait_for("message", check=check)
+            ).content.strip()
+    
+            existing_today, edit_message = apply_list_edit(
+                existing_today,
+                edited,
+            )
+    
+            replace_daily_tasks(
+                person,
+                date_key,
+                existing_today,
+            )
     
             await ctx.send(
                 f"{edit_message}\n\n"
-                + format_daily_tasks(existing_today, person, today_label())
-                + "\n\nNow what are you working on right now? Reply with a task number, focus label, `edit`, or `cancel`."
+                + format_daily_tasks(
+                    existing_today,
+                    person,
+                    today_label(),
+                )
+                + "\n\nWhat are you working on?"
             )
-            choice = (await bot.wait_for("message", check=check)).content.strip()
-
+    
+            choice = (
+                await bot.wait_for("message", check=check)
+            ).content.strip()
+    
             if choice.lower() == "cancel":
-                await ctx.send("Okay. I stopped before starting task accounting.")
+                await ctx.send("Okay.")
                 return
     
-        active_focus = choice
+        tasks = normalize_daily_items(existing_today)
     
-        if choice.isdigit():
-            idx = int(choice) - 1
-            tasks = normalize_daily_items(existing_today)
-            if 0 <= idx < len(tasks):
-                active_focus = tasks[idx]["text"]
-            else:
-                await ctx.send("I couldn’t match that task number, so I’ll use it as a focus label.")
+        selected_indexes = parse_task_indexes(
+            choice,
+            len(tasks),
+        )
+    
+        if selected_indexes:
+            selected_tasks = [
+                tasks[idx]["text"]
+                for idx in selected_indexes
+            ]
+    
+            active_focus = ", ".join(selected_tasks)
+    
+        else:
+            active_focus = choice.strip()
+    
+        if not active_focus:
+            await ctx.send("I need a task or focus before starting.")
+            return
+    
+        now = local_now().isoformat()
     
         session = TimeSession(
             channel_id=ctx.channel.id,
             person=person,
             date_iso=date_key,
             date_label=today_label(),
-            last_timestamp=local_now().isoformat(),
-            last_activity_timestamp=local_now().isoformat(),
+            last_timestamp=now,
+            last_activity_timestamp=now,
             active_task=active_focus,
-            daily_tasks=normalize_daily_items(existing_today),
+            daily_tasks=tasks,
         )
     
         active_time_sessions[ctx.channel.id] = session
-        
-        replace_daily_tasks(person, date_key, session.daily_tasks)
+    
+        replace_daily_tasks(
+            person,
+            date_key,
+            session.daily_tasks,
+        )
     
         save_weekly_snapshot(
             ctx,
@@ -2408,40 +2467,61 @@ def register_metiche(bot: commands.Bot):
             raw_time=build_raw_time_payload(session),
         )
     
-        metiche.push_task_summary_json(build_raw_time_payload(session))
-
+        metiche.push_task_summary_json(
+            build_raw_time_payload(session)
+        )
+    
+        selected_normalized = {
+            normalize_task(tasks[idx]["text"])
+            for idx in selected_indexes
+        }
+    
         pending_tasks = [
-            task for task in normalize_daily_items(existing_today)
-            if normalize_task(task.get("text", "")) != normalize_task(active_focus)
+            task
+            for task in tasks
+            if not task.get("done")
+            and normalize_task(task.get("text", ""))
+            not in selected_normalized
         ]
-        
-        pending_text = "\n".join(
-            [f"- {task['text']}" for task in pending_tasks]
-        ) or "(nothing else pending)"
-        
+    
+        pending_text = (
+            "\n".join(
+                f"- {task['text']}"
+                for task in pending_tasks
+            )
+            or "(nothing else pending)"
+        )
+    
         session.setup_complete = True
-        await save_active_day_state(ctx, session)
-
+    
+        await save_active_day_state(
+            ctx,
+            session,
+        )
+    
         pref = fetch_default_ping_interval(person)
-        
+    
         if (
             pref
             and int(pref.get("interval_minutes") or 0) > 0
+            and bool(pref.get("is_enabled", True))
         ):
+            interval = int(pref["interval_minutes"])
+    
             save_ping_schedule(
                 channel_id=ctx.channel.id,
                 user_id=ctx.author.id,
                 person=person,
-                interval_minutes=int(pref["interval_minutes"]),
-                prompt=f"¿Qué onda? Still on {active_focus}, or did something change?",
+                interval_minutes=interval,
+                prompt=(
+                    f"¿Qué onda? Still on {active_focus}, "
+                    "or did something change?"
+                ),
             )
-
+    
         await ctx.send(
-            f"🟢 Active focus:\n{active_focus}\n\n"
-            f"⏳ Pending:\n{pending_text}\n\n"
-            "Task accounting is active now. No extra setup step.\n\n"
-            "To check something off, type `done` or `done task name`.\n"
-            "Other useful commands: `show`, `add task`, `later task`, `switch task`, `drift label`, `pause reason`, `resume task`, `ping 30`."
+            f"🟢 Active:\n{active_focus}\n\n"
+            f"⏳ Pending:\n{pending_text}"
         )
 
     @bot.command(name="mstopday")
