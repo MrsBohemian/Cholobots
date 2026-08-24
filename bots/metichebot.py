@@ -160,6 +160,12 @@ class TimeSession:
 
     # What Metiche currently believes you're doing.
     active_task: Optional[str] = None
+    # When the current focus actually began.
+    # Que Onda check-ins do NOT reset this.
+    focus_started_at: Optional[str] = None
+    
+    # Accumulated time by focus, so pause/resume/switches don't lose time.
+    focus_minutes: Dict[str, int] = field(default_factory=dict)
 
     # The planned focus before reality diverged.
     intended_task: Optional[str] = None
@@ -1535,6 +1541,79 @@ def is_planned_task(tasks: List[Dict[str, Any]], text: str) -> bool:
         for task in normalize_daily_items(tasks)
     )
 
+def close_focus_timer(
+    session: TimeSession,
+    ended_at: Optional[datetime] = None,
+) -> int:
+    """
+    Close the currently running focus segment and add its minutes
+    to that focus's accumulated total.
+    """
+    if not session.active_task or not session.focus_started_at:
+        return 0
+
+    end = ended_at or local_now()
+    start = parse_iso(session.focus_started_at)
+
+    minutes = max(
+        0,
+        int((end - start).total_seconds() // 60),
+    )
+
+    key = normalize_task(session.active_task)
+
+    session.focus_minutes[key] = (
+        int(session.focus_minutes.get(key, 0))
+        + minutes
+    )
+
+    session.focus_started_at = None
+
+    return minutes
+
+
+def start_focus_timer(
+    session: TimeSession,
+    focus: Optional[str],
+    started_at: Optional[datetime] = None,
+):
+    session.active_task = focus
+
+    if focus:
+        session.focus_started_at = (
+            started_at or local_now()
+        ).isoformat()
+    else:
+        session.focus_started_at = None
+
+
+def total_focus_minutes(
+    session: TimeSession,
+    focus: str,
+) -> int:
+    """
+    Return accumulated time plus the currently-running segment,
+    if this focus is still active.
+    """
+    key = normalize_task(focus)
+    minutes = int(session.focus_minutes.get(key, 0))
+
+    if (
+        session.active_task
+        and normalize_task(session.active_task) == key
+        and session.focus_started_at
+    ):
+        minutes += max(
+            0,
+            int(
+                (
+                    local_now()
+                    - parse_iso(session.focus_started_at)
+                ).total_seconds() // 60
+            ),
+        )
+
+    return minutes
 
 def add_other_task_accomplished(session: TimeSession, text: str):
     text = (text or "").strip()
@@ -1953,10 +2032,19 @@ def register_metiche(bot: commands.Bot):
         if lower.startswith("pause"):
             reason = re.sub(r"^pause\s*", "", raw, flags=re.IGNORECASE).strip() or "paused"
             previous_focus = session.active_task
-            await log_raw_time_block(ctx, f"pause: {reason}", source="pause")
+
+            await log_raw_time_block(
+                ctx,
+                f"pause: {reason}",
+                source="pause",
+            )
+            
+            close_focus_timer(session)
+            
             session.current_state = "paused"
             session.paused_task = previous_focus
             session.active_task = None
+            session.focus_started_at = None
             
             sync_ping_focus(
                 ctx.channel.id,
@@ -1981,7 +2069,7 @@ def register_metiche(bot: commands.Bot):
                 await ctx.send("Resume what? Try `resume kitchen`.")
                 return True
             await log_raw_time_block(ctx, f"resume: {target}", source="resume")
-            session.active_task = target
+            start_focus_timer(session, target)
 
             sync_ping_focus(
                 ctx.channel.id,
@@ -2005,13 +2093,15 @@ def register_metiche(bot: commands.Bot):
                 return True
         
             previous_focus = session.active_task
-        
+
             await log_raw_time_block(
                 ctx,
                 f"switch from {previous_focus or 'unassigned'} to {target}",
                 source="switch",
             )
-        
+            
+            close_focus_timer(session)
+            
             if (
                 previous_focus
                 and not is_planned_task(session.daily_tasks, previous_focus)
@@ -2020,8 +2110,8 @@ def register_metiche(bot: commands.Bot):
                     session,
                     previous_focus,
                 )
-        
-            session.active_task = target
+            
+            start_focus_timer(session, target)
         
             sync_ping_focus(
                 ctx.channel.id,
@@ -2166,6 +2256,8 @@ def register_metiche(bot: commands.Bot):
                 return True
         
             finished_focus = session.active_task
+
+            close_focus_timer(session)
         
             block = await log_raw_time_block(
                 ctx,
@@ -2183,6 +2275,21 @@ def register_metiche(bot: commands.Bot):
                 checked_labels.append(tasks[idx].get("text", ""))
         
             session.daily_tasks = tasks
+
+            completed_focus = (
+                checked_labels[0]
+                if len(checked_labels) == 1
+                else finished_focus or target
+            )
+            
+            task_total_minutes = total_focus_minutes(
+                session,
+                completed_focus,
+            )
+            
+            task_total_label = minutes_to_label(
+                task_total_minutes
+            )
         
             # The thing we were doing is finished.
             session.active_task = None
@@ -2193,12 +2300,12 @@ def register_metiche(bot: commands.Bot):
                 if not task.get("done")
             ]
         
-            duration = block.get("duration_label") if block else "0m"
+            duration = task_total_label
         
             if len(pending) == 1:
                 # Only one sensible next thing. Just move into it.
                 next_focus = pending[0]["text"]
-                session.active_task = next_focus
+                start_focus_timer(session, next_focus)
         
                 sync_ping_focus(
                     ctx.channel.id,
@@ -2279,7 +2386,7 @@ def register_metiche(bot: commands.Bot):
                 new_focus = raw
             
             if new_focus:
-                session.active_task = new_focus
+                start_focus_timer(session, new_focus)
             
                 sync_ping_focus(
                     ctx.channel.id,
@@ -2936,6 +3043,7 @@ def register_metiche(bot: commands.Bot):
             last_timestamp=now,
             last_activity_timestamp=now,
             active_task=active_focus,
+            focus_started_at=now,
             daily_tasks=tasks,
         )
     
