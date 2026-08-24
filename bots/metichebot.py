@@ -1647,9 +1647,26 @@ def looks_like_on_task_checkin(text: str) -> bool:
         "same",
         "on it",
         "working on it",
+        "i'm still",
+        "im still",
+        "i am still",
+        "i'm working",
+        "im working",
+        "i am working",
+        "almost done",
     )
 
     return any(lower.startswith(prefix) for prefix in prefixes)
+
+
+def is_bare_negative_checkin(text: str) -> bool:
+    lower = normalize_task(text).strip(" .,!")
+
+    return lower in {
+        "no",
+        "nope",
+        "nah",
+    }
 
 
 def clean_drift_explanation(text: str) -> str:
@@ -2145,11 +2162,133 @@ def register_metiche(bot: commands.Bot):
             )
             await ctx.send(f"🔔 Que Onda pings set for every {interval} minutes.")
             return True
+
+        if lower.startswith("done") or lower.startswith("check "):
+            target = re.sub(
+                r"^(done|check)\s*",
+                "",
+                raw,
+                flags=re.IGNORECASE,
+            ).strip() or session.active_task
+        
+            if not target:
+                await ctx.send("Done with what?")
+                return True
+        
+            finished_focus = session.active_task
+            session.awaiting_checkin_response = False
+
+            close_focus_timer(session)
+        
+            block = await log_raw_time_block(
+                ctx,
+                f"done: {target}",
+                source="done",
+            )
+        
+            tasks = normalize_daily_items(session.daily_tasks)
+            indexes = resolve_task_indexes(tasks, target)
+        
+            checked_labels = []
+        
+            for idx in indexes:
+                tasks[idx]["done"] = True
+                checked_labels.append(tasks[idx].get("text", ""))
+        
+            session.daily_tasks = tasks
+
+            completed_focus = (
+                checked_labels[0]
+                if len(checked_labels) == 1
+                else finished_focus or target
+            )
+            
+            task_total_minutes = total_focus_minutes(
+                session,
+                completed_focus,
+            )
+            
+            task_total_label = minutes_to_label(
+                task_total_minutes
+            )
+        
+            # The thing we were doing is finished.
+            session.active_task = None
+        
+            pending = [
+                (idx, task)
+                for idx, task in enumerate(tasks, start=1)
+                if not task.get("done")
+            ]
+        
+            duration = task_total_label
+        
+            if len(pending) == 1:
+                # Only one sensible next thing. Just move into it.
+                next_focus = pending[0][1]["text"]
+                start_focus_timer(session, next_focus)
+        
+                sync_ping_focus(
+                    ctx.channel.id,
+                    session.person,
+                    next_focus,
+                )
+        
+                await save_active_day_state(ctx, session)
+        
+                await ctx.send(
+                    f"✅ {target} — {duration}\n"
+                    f"🟢 Next: {next_focus}"
+                )
+        
+                return True
+        
+            if not pending:
+                # Day/list is complete. Nothing left for Que Onda to monitor.
+                sync_ping_focus(
+                    ctx.channel.id,
+                    session.person,
+                    None,
+                    pause=True,
+                )
+        
+                await save_active_day_state(ctx, session)
+        
+                await ctx.send(
+                    f"✅ {target} — {duration}\n"
+                    "🏁 Nothing else pending."
+                )
+        
+                return True
+        
+            # Multiple possible next tasks.
+            # Don't pretend we know which one Heaven chose.
+            sync_ping_focus(
+                ctx.channel.id,
+                session.person,
+                None,
+                pause=True,
+            )
+        
+            await save_active_day_state(ctx, session)
+        
+            pending_text = "\n".join(
+                f"{idx}. {task['text']}"
+                for idx, task in pending
+            )
+        
+            await ctx.send(
+                f"✅ {target} — {duration}\n\n"
+                f"What's next?\n{pending_text}"
+            )
+        
+            return True
             
         if session.awaiting_checkin_response:
-            session.awaiting_checkin_response = False
-        
+
             if looks_like_on_task_checkin(raw):
+                session.awaiting_checkin_response = False
+        
                 block = await log_raw_time_block(
                     ctx,
                     f"on task: {session.active_task or raw}",
@@ -2169,9 +2308,20 @@ def register_metiche(bot: commands.Bot):
         
                 return True
         
-            # Anything that says reality differs from the ping
-            # becomes drift without requiring the word "drift".
+            if is_bare_negative_checkin(raw):
+                # "No" tells us the ping was wrong,
+                # but it does NOT tell us what actually happened.
+                # Keep the check-in open for the user's explanation.
+                await ctx.send(
+                    "Got it. What are you doing instead?"
+                )
+                return True
+        
+            session.awaiting_checkin_response = False
+        
+            # Anything else explains what reality changed to.
             explanation = clean_drift_explanation(raw)
+
             previous_focus = session.active_task
         
             now = local_now()
@@ -2238,144 +2388,29 @@ def register_metiche(bot: commands.Bot):
         
             return True
 
-        if lower.startswith("done") or lower.startswith("check "):
-            target = re.sub(
-                r"^(done|check)\s*",
-                "",
-                raw,
-                flags=re.IGNORECASE,
-            ).strip() or session.active_task
-        
-            if not target:
-                await ctx.send("Done with what?")
-                return True
-        
-            finished_focus = session.active_task
-
-            close_focus_timer(session)
-        
-            block = await log_raw_time_block(
-                ctx,
-                f"done: {target}",
-                source="done",
-            )
-        
-            tasks = normalize_daily_items(session.daily_tasks)
-            indexes = resolve_task_indexes(tasks, target)
-        
-            checked_labels = []
-        
-            for idx in indexes:
-                tasks[idx]["done"] = True
-                checked_labels.append(tasks[idx].get("text", ""))
-        
-            session.daily_tasks = tasks
-
-            completed_focus = (
-                checked_labels[0]
-                if len(checked_labels) == 1
-                else finished_focus or target
-            )
-            
-            task_total_minutes = total_focus_minutes(
-                session,
-                completed_focus,
-            )
-            
-            task_total_label = minutes_to_label(
-                task_total_minutes
-            )
-        
-            # The thing we were doing is finished.
-            session.active_task = None
-        
-            pending = [
-                task
-                for task in tasks
-                if not task.get("done")
-            ]
-        
-            duration = task_total_label
-        
-            if len(pending) == 1:
-                # Only one sensible next thing. Just move into it.
-                next_focus = pending[0]["text"]
-                start_focus_timer(session, next_focus)
-        
-                sync_ping_focus(
-                    ctx.channel.id,
-                    session.person,
-                    next_focus,
-                )
-        
-                await save_active_day_state(ctx, session)
-        
-                await ctx.send(
-                    f"✅ {target} — {duration}\n"
-                    f"🟢 Next: {next_focus}"
-                )
-        
-                return True
-        
-            if not pending:
-                # Day/list is complete. Nothing left for Que Onda to monitor.
-                sync_ping_focus(
-                    ctx.channel.id,
-                    session.person,
-                    None,
-                    pause=True,
-                )
-        
-                await save_active_day_state(ctx, session)
-        
-                await ctx.send(
-                    f"✅ {target} — {duration}\n"
-                    "🏁 Nothing else pending."
-                )
-        
-                return True
-        
-            # Multiple possible next tasks.
-            # Don't pretend we know which one Heaven chose.
-            sync_ping_focus(
-                ctx.channel.id,
-                session.person,
-                None,
-                pause=True,
-            )
-        
-            await save_active_day_state(ctx, session)
-        
-            pending_text = "\n".join(
-                f"{i}. {task['text']}"
-                for i, task in enumerate(pending, start=1)
-            )
-        
-            await ctx.send(
-                f"✅ {target} — {duration}\n\n"
-                f"What's next?\n{pending_text}"
-            )
-        
-            return True
-
         # No current focus means Metiche asked "What's next?"
         # Treat the user's ordinary reply as the new focus.
         if not session.active_task and session.current_state == "active":
             tasks = normalize_daily_items(session.daily_tasks)
             
-            pending = [
-                task
-                for task in tasks
-                if not task.get("done")
-            ]
-            
-            indexes = parse_task_indexes(raw, len(pending))
+            indexes = parse_task_indexes(
+                raw,
+                len(tasks),
+            )
             
             if indexes:
                 selected = [
-                    pending[idx]["text"]
+                    tasks[idx]["text"]
                     for idx in indexes
+                    if not tasks[idx].get("done")
                 ]
+            
+                if not selected:
+                    await ctx.send(
+                        "That task is already checked off. Pick an outstanding task."
+                    )
+                    return True
+            
                 new_focus = ", ".join(selected)
             else:
                 new_focus = raw
