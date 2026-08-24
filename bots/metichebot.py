@@ -1899,22 +1899,17 @@ def register_metiche(bot: commands.Bot):
         await ctx.send("\n".join(lines))
 
     async def save_active_day_state(ctx: commands.Context, session: TimeSession):
-        week = week_of_monday(local_now())
-        _, execution, calendar_json, quarterly_goals, yearly_goals = current_weekly_context(week)
-        replace_daily_tasks(session.person, session.date_iso, session.daily_tasks)
-        save_weekly_snapshot(
-            ctx,
-            week,
-            execution,
-            calendar_json,
-            wants_bodydouble=True,
-            quarterly_goals=quarterly_goals,
-            yearly_goals=yearly_goals,
-            raw_time=build_raw_time_payload(session),
+    replace_daily_tasks(
+        session.person,
+        session.date_iso,
+        session.daily_tasks,
+    )
+
+    metiche = get_metiche()
+    if metiche:
+        metiche.push_task_summary_json(
+            build_raw_time_payload(session)
         )
-        metiche = get_metiche()
-        if metiche:
-            metiche.push_task_summary_json(build_raw_time_payload(session))
 
     async def handle_active_day_command(ctx: commands.Context, message_text: str) -> bool:
         """Tiny command router for active mtoday sessions.
