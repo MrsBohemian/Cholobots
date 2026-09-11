@@ -128,7 +128,7 @@ HOTLIST_STAGES = {
     "approved": {
         "temp": 100,
         "stage": "Estimate Approved",
-        "next_action": "Move to Stovetop",
+        "next_action": "Move to Oven",
         "journal": "Estimate approved.\n\nCustomer is ready to become an active project.",
         "prompt_for_notes": False,
     },
@@ -189,7 +189,7 @@ def create_contact_stub(label, raw_note=""):
             "phone": phone,
             "status": "lead",
             "hotlist_temperature": 50,
-            "hotlist_stage": "New Lead",
+            "pipeline_stage": "New Lead",
             "next_action": "Contact customer / schedule site visit",
             "chisme_summary": f"Placeholder Rolodex card created from: {raw_note or label}",
             "updated_at": now_iso(),
@@ -331,7 +331,7 @@ def add_note(contact, note, created_by=None, note_type="chisme"):
 
 
 # ------------------------------------------------------------
-# Stovetop helpers
+# Oven helpers
 # ------------------------------------------------------------
 
 def get_active():
@@ -452,7 +452,11 @@ async def advance_hotlist_customer(ctx, lookup, step):
     matches = find_contacts(lookup)
 
     if not matches:
-        contact = create_contact_stub(lookup, "")
+        await ctx.send(
+            f"No Rolodex card found for **{lookup}**.\n"
+            "I did not create a new customer card. Check the customer name and try again."
+        )
+        return
     elif len(matches) > 1:
         await send_long(ctx, format_match_list(matches))
         return
@@ -468,16 +472,14 @@ async def advance_hotlist_customer(ctx, lookup, step):
         note_type="hotlist_progress",
     )
 
-    increment_customer_communication_loadbar(created_by=str(ctx.author))
-
     if step == "approved":
         burner = next_available_burner()
 
         supabase.table("chisme_contacts").update({
             "hotlist_temperature": 100,
             "status": "active_project",
-            "next_action": "Active project on stovetop",
-            "hotlist_stage": stage["stage"],
+            "next_action": "Active project in oven",
+            "pipeline_stage": stage["stage"],
             "last_outcome": stage["stage"],
             "updated_at": now_iso(),
         }).eq("id", contact["id"]).execute()
@@ -490,9 +492,9 @@ async def advance_hotlist_customer(ctx, lookup, step):
         )
 
         await ctx.send(
-            f"🔥 **{contact.get('name')}** moved to the Stovetop.\n"
+            f"🔥 **{contact.get('name')}** moved to the Oven.\n"
             f"Burner: {burner}\n"
-            f"Customer Communication +1"
+            f"Stage: {stage['stage']}"
         )
         return
 
@@ -500,7 +502,7 @@ async def advance_hotlist_customer(ctx, lookup, step):
         "hotlist_temperature": stage["temp"],
         "status": "lead",
         "next_action": stage["next_action"],
-        "hotlist_stage": stage["stage"],
+        "pipeline_stage": stage["stage"],
         "last_outcome": stage["stage"],
         "updated_at": now_iso(),
     }).eq("id", contact["id"]).execute()
@@ -526,7 +528,7 @@ async def advance_hotlist_customer(ctx, lookup, step):
         f"✅ **{contact.get('name')}** advanced.\n"
         f"🌡 {stage['temp']}°\n"
         f"Next: {stage['next_action']}\n"
-        f"Customer Communication +1"
+        f"Stage: {stage['stage']}"
     )
     
 def clear_user_sessions(user_id):
@@ -563,21 +565,21 @@ def register_chisme(bot):
             "`!cset Name | phone: 210... | address: ... | email: ...`\n"
             "Update customer contact info.\n\n"
 
-            "🌡 **Hot List**\n"
-            "`!hotlist`\n"
+            "🍲 **Stovetop / Warm Opportunities**\n"
+            "`!stovetop` (or `!hotlist`)\n"
             "Show customers moving toward an estimate or project.\n\n"
-            "`!hotlist Name`\n"
+            "`!stovetop Name`\n"
             "Show one customer’s stage, next action, and recent activity.\n\n"
-            "`!hotlist Name sitevisit|notes|sent|followup|approved`\n"
+            "`!stovetop Name sitevisit|notes|sent|followup|approved`\n"
             "Move the customer forward.\n\n"
 
-            "🔥 **Stovetop**\n"
-            "`!stovetop`\n"
-            "Show active projects by burner.\n\n"
+            "🔥 **Oven / Active Projects**\n"
+            "`!oven`\n"
+            "Show active projects.\n\n"
             "`!cactive Name | burner: 1 | reason: project needs attention`\n"
-            "Manually put a customer on the Stovetop.\n\n"
+            "Manually put a customer in the Oven.\n\n"
             "`!cremove Name`\n"
-            "Take a project off the Stovetop with follow-up notes."
+            "Take a project out of the Oven with follow-up notes."
         )
 
     @bot.command(name="chisme")
@@ -608,7 +610,7 @@ def register_chisme(bot):
             lines = [
                 f"📓 **Chisme journal: {contact.get('name')}**",
                 f"Phone: {contact.get('phone') or 'not saved'}",
-                f"Hot List: {contact.get('hotlist_temperature') or 50}° — {contact.get('hotlist_stage') or 'New Lead'}",
+                f"Stovetop: {contact.get('hotlist_temperature') or 50}° — {contact.get('pipeline_stage') or 'New Lead'}",
                 "",
             ]
 
@@ -670,7 +672,7 @@ def register_chisme(bot):
         parts = [p.strip() for p in raw.split("|") if p.strip()]
         lookup = parts[0]
         burner = 4
-        reason = "Project on stovetop"
+        reason = "Project in oven"
 
         for p in parts[1:]:
             lower = p.lower()
@@ -693,16 +695,16 @@ def register_chisme(bot):
         set_active(contact, reason=reason, burner_position=burner)
         ensure_journal(contact["id"])
 
-        await ctx.send(f"✅ Stovetop: **{contact.get('name')}** on burner {burner} — {reason}")
+        await ctx.send(f"✅ Oven: **{contact.get('name')}** on burner {burner} — {reason}")
 
-    @bot.command(name="clist", aliases=["stovetop"])
+    @bot.command(name="clist", aliases=["oven"])
     async def clist(ctx):
         rows = get_active()
         if not rows:
-            await ctx.send("No projects on the stovetop right now.")
+            await ctx.send("No projects in the oven right now.")
             return
 
-        lines = ["🔥 **Stovetop / Active Projects**\n"]
+        lines = ["🔥 **Oven / Active Projects**\n"]
 
         for row in rows:
             c = row.get("chisme_contacts") or {}
@@ -743,7 +745,7 @@ def register_chisme(bot):
             f"Email: {c.get('email') or 'not saved'}",
             f"Address: {c.get('address') or 'not saved'}",
             f"Source: {c.get('source') or 'not saved'}",
-            f"Hot List: {c.get('hotlist_temperature') or 50}° — {c.get('hotlist_stage') or 'New Lead'}",
+            f"Stovetop: {c.get('hotlist_temperature') or 50}° — {c.get('pipeline_stage') or 'New Lead'}",
             f"Next Action: {c.get('next_action') or 'Contact customer / schedule site visit'}",
             f"Status: {c.get('status') or 'unknown'}",
             f"Summary: {c.get('chisme_summary') or 'none'}",
@@ -753,7 +755,7 @@ def register_chisme(bot):
         if active:
             a = active[0]
             lines.extend([
-                f"🔥 Stovetop burner: {a.get('burner_position')}",
+                f"🔥 Oven slot: {a.get('burner_position')}",
                 f"Reason: {a.get('active_reason')}",
                 "",
             ])
@@ -772,7 +774,7 @@ def register_chisme(bot):
 
         await send_long(ctx, "\n".join(lines))
 
-    @bot.command(name="hotlist")
+    @bot.command(name="hotlist", aliases=["stovetop"])
     async def hotlist(ctx, *, raw=""):
         raw = (raw or "").strip()
 
@@ -796,10 +798,10 @@ def register_chisme(bot):
             rows = [c for c in rows if c["id"] not in active_ids]
 
             if not rows:
-                await ctx.send("No hot leads right now.")
+                await ctx.send("No warm customers on the stovetop right now.")
                 return
 
-            lines = ["🌡 **HOT LIST**", ""]
+            lines = ["🍲 **STOVETOP / WARM OPPORTUNITIES**", ""]
 
             for c in rows[:15]:
                 temp = c.get("hotlist_temperature") or 50
@@ -839,7 +841,7 @@ def register_chisme(bot):
             supabase.table("chisme_contacts").update({
                 "hotlist_temperature": 51,
                 "status": "lead",
-                "hotlist_stage": c.get("hotlist_stage") or "New Lead",
+                "pipeline_stage": c.get("pipeline_stage") or "New Lead",
                 "next_action": c.get("next_action") or "Contact customer / schedule site visit",
                 "updated_at": now_iso(),
             }).eq("id", c["id"]).execute()
@@ -850,7 +852,7 @@ def register_chisme(bot):
 
         temp = c.get("hotlist_temperature") or 50
         next_action = c.get("next_action") or "Contact customer / schedule site visit"
-        stage = c.get("hotlist_stage") or "New Lead"
+        stage = c.get("pipeline_stage") or "New Lead"
 
         lines = [
             f"**{c.get('name')}**",
@@ -906,7 +908,7 @@ def register_chisme(bot):
         }
 
         await ctx.send(
-            f"Why are we taking **{contact.get('name')}** off the stovetop?\n\n"
+            f"Why are we taking **{contact.get('name')}** out of the oven?\n\n"
             "1. Not ready / needs to reschedule\n"
             "2. Not responding\n"
             "3. Chose someone else\n"
@@ -973,11 +975,11 @@ def register_chisme(bot):
             await message.channel.send(
                 f"📝 Site visit notes saved for **{contact.get('name')}**.\n"
                 f"When the estimate notes are complete, use:\n"
-                f"`!hotlist {contact.get('name')} notes`"
+                f"`!stovetop {contact.get('name')} notes`"
             )
             return
 
-        # Stovetop removal workflow
+        # Oven removal workflow
         session = cremove_sessions.get(message.author.id)
         if not session:
             return
@@ -1084,7 +1086,7 @@ def register_chisme(bot):
 
             updates = {
                 "hotlist_temperature": new_temp,
-                "last_outcome": f"Took off stovetop: {reason_label}",
+                "last_outcome": f"Took out of oven: {reason_label}",
                 "updated_at": now_iso(),
             }
 
@@ -1093,7 +1095,7 @@ def register_chisme(bot):
                 updates["next_action"] = "None"
             else:
                 updates["status"] = "lead"
-                updates["hotlist_stage"] = "New Lead"
+                updates["pipeline_stage"] = "New Lead"
                 updates["next_action"] = "Follow up" if followup_date else "Contact customer / schedule site visit"
 
             if followup_date:
@@ -1105,7 +1107,7 @@ def register_chisme(bot):
             add_note(
                 contact,
                 (
-                    f"Project moved off the Stovetop.\n\n"
+                    f"Project moved out of the Oven.\n\n"
                     f"Reason: {reason_label}\n"
                     f"Follow-up: {followup_date or 'none'}\n"
                     f"Note: {user_note}"
@@ -1117,7 +1119,7 @@ def register_chisme(bot):
             del cremove_sessions[message.author.id]
 
             await message.channel.send(
-                f"✅ Took **{contact.get('name')}** off the Stovetop.\n"
+                f"✅ Took **{contact.get('name')}** out of the Oven.\n"
                 f"Reason: {reason_label}\n"
                 f"Follow-up: {followup_date or 'none'}"
             )
