@@ -588,6 +588,180 @@ class VueltaBot(commands.Cog):
 
         await ctx.send(route_text)
 
+    # =====================================================
+    # !CLAIM
+    # =====================================================
 
+    @commands.command(name="claim")
+    async def claim(self, ctx, item_id: int = None):
+        """
+        Claim an available item.
+
+        Example:
+        !claim 57
+        """
+
+        if not item_id:
+            await ctx.send(
+                "Use it like this:\n"
+                "`!claim 57`"
+            )
+            return
+
+        buyer_id = str(ctx.author.id)
+        buyer_name = str(ctx.author)
+
+        # Find the item
+        result = (
+            supabase
+            .table("vuelta_items")
+            .select("*")
+            .eq("id", item_id)
+            .execute()
+        )
+
+        if not result.data:
+            await ctx.send(
+                f"❌ I can't find Item #{item_id}."
+            )
+            return
+
+        item = result.data[0]
+
+        # Make sure it's available
+        if item.get("status") != "available":
+            await ctx.send(
+                f"⚠️ Item #{item_id} is already "
+                f"**{item.get('status')}**."
+            )
+            return
+
+        # Don't let someone claim their own item
+        if item.get("seller_discord_id") == buyer_id:
+            await ctx.send(
+                "😂 Homie, that's your own item."
+            )
+            return
+
+        # Create the transaction
+        transaction_record = {
+            "item_id": item_id,
+
+            "seller_discord_id": item.get(
+                "seller_discord_id"
+            ),
+            "seller_discord_name": item.get(
+                "seller_discord_name"
+            ),
+
+            "buyer_discord_id": buyer_id,
+            "buyer_discord_name": buyer_name,
+
+            "agreed_price": item.get("asking_price"),
+
+            "transaction_type": (
+                "giveaway"
+                if item.get("asking_price") is None
+                else "sale"
+            ),
+
+            "transport_required": False,
+            "status": "claimed"
+        }
+
+        transaction_result = (
+            supabase
+            .table("vuelta_transactions")
+            .insert(transaction_record)
+            .execute()
+        )
+
+        if not transaction_result.data:
+            await ctx.send(
+                "⚠️ Something went wrong while claiming the item."
+            )
+            return
+
+        # Mark item claimed
+        (
+            supabase
+            .table("vuelta_items")
+            .update({
+                "status": "claimed"
+            })
+            .eq("id", item_id)
+            .execute()
+        )
+
+        # Mark Circular SA marketplace route claimed
+        (
+            supabase
+            .table("vuelta_routes")
+            .update({
+                "status": "claimed"
+            })
+            .eq("item_id", item_id)
+            .eq("route_type", "local_marketplace")
+            .eq("status", "listed")
+            .execute()
+        )
+
+        # Build confirmation card
+        item_name = (
+            item.get("item_name")
+            or item.get("description")
+        )
+
+        embed = discord.Embed(
+            title=f"🤝 Item #{item_id} claimed!",
+            description=item_name
+        )
+
+        embed.add_field(
+            name="Buyer",
+            value=f"<@{buyer_id}>",
+            inline=True
+        )
+
+        seller_id = item.get("seller_discord_id")
+
+        if seller_id:
+            embed.add_field(
+                name="Seller",
+                value=f"<@{seller_id}>",
+                inline=True
+            )
+
+        if item.get("asking_price") is not None:
+            embed.add_field(
+                name="Price",
+                value=f"${float(item['asking_price']):.2f}",
+                inline=True
+            )
+        else:
+            embed.add_field(
+                name="Price",
+                value="Free / giveaway",
+                inline=True
+            )
+
+        if item.get("photo_url"):
+            embed.set_image(
+                url=item.get("photo_url")
+            )
+
+        embed.set_footer(
+            text="This item is no longer available to other buyers."
+        )
+
+        await ctx.send(
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(
+                users=True,
+                everyone=False,
+                roles=False
+            )
+        )
+        
 async def setup(bot):
     await bot.add_cog(VueltaBot(bot))
