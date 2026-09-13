@@ -28,14 +28,6 @@ STOP_WORDS = {
 
 
 def normalize_words(text):
-    """
-    Convert text into a basic set of useful matching words.
-
-    Example:
-    "Looking for pots and pans"
-    becomes:
-    {"pots", "pans"}
-    """
     if not text:
         return set()
 
@@ -49,9 +41,6 @@ def normalize_words(text):
 
 
 def get_item_words(item):
-    """
-    Build searchable words from an item record.
-    """
     combined = " ".join([
         item.get("item_name") or "",
         item.get("description") or "",
@@ -64,9 +53,6 @@ def get_item_words(item):
 
 
 def get_interest_words(interest):
-    """
-    Build searchable words from a !busco record.
-    """
     combined = " ".join([
         interest.get("description") or "",
         interest.get("category") or "",
@@ -78,14 +64,6 @@ def get_interest_words(interest):
 
 
 def is_match(item, interest):
-    """
-    Prototype matching engine.
-
-    For now, if the item and the interest share at least
-    one meaningful word, consider them a possible match.
-
-    Later this becomes semantic/AI matching.
-    """
     item_words = get_item_words(item)
     interest_words = get_interest_words(interest)
 
@@ -96,16 +74,6 @@ def is_match(item, interest):
 
 
 def extract_price(description):
-    """
-    Pull a simple dollar amount from descriptions like:
-
-    !tengo dining table $30
-
-    Returns:
-    30.00
-
-    If no price is included, returns None.
-    """
     if not description:
         return None
 
@@ -124,9 +92,6 @@ def extract_price(description):
 
 
 def clean_item_name(description):
-    """
-    Remove a simple $ price from the display name.
-    """
     if not description:
         return description
 
@@ -137,6 +102,22 @@ def clean_item_name(description):
     )
 
     return " ".join(cleaned.split()).strip()
+
+
+def get_first_image_url(ctx):
+    """
+    Grab the first attached Discord image, if one exists.
+    """
+    if not ctx.message.attachments:
+        return None
+
+    for attachment in ctx.message.attachments:
+        content_type = attachment.content_type or ""
+
+        if content_type.startswith("image/"):
+            return attachment.url
+
+    return None
 
 
 # =========================================================
@@ -156,21 +137,18 @@ class VueltaBot(commands.Cog):
     @commands.command(name="tengo")
     async def tengo(self, ctx, *, description: str = None):
         """
-        Put something into the Circular SA marketplace.
-
         Examples:
 
-        !tengo bundle of pots and pans
-        !tengo dining table $30
-        !tengo leftover ceramic tile
+        !tengo stainless steel pots and pans $25
+        + attach photo
         """
 
         if not description:
             await ctx.send(
                 "♻️ **¿Qué tienes?**\n\n"
                 "Try:\n"
-                "`!tengo bundle of pots and pans`\n"
-                "`!tengo dining table $30`"
+                "`!tengo stainless steel pots and pans $25`\n\n"
+                "Attach a photo if you have one."
             )
             return
 
@@ -179,10 +157,7 @@ class VueltaBot(commands.Cog):
 
         asking_price = extract_price(description)
         item_name = clean_item_name(description)
-
-        # -------------------------------------------------
-        # Create the item
-        # -------------------------------------------------
+        photo_url = get_first_image_url(ctx)
 
         item_record = {
             "seller_discord_id": seller_id,
@@ -193,6 +168,7 @@ class VueltaBot(commands.Cog):
             "description": description,
 
             "asking_price": asking_price,
+            "photo_url": photo_url,
 
             "desired_outcome": "local_transfer",
             "status": "available",
@@ -209,17 +185,14 @@ class VueltaBot(commands.Cog):
 
         if not item_result.data:
             await ctx.send(
-                "⚠️ I couldn't create the Vuelta."
+                "⚠️ I couldn't create the item."
             )
             return
 
         item = item_result.data[0]
         item_id = item["id"]
 
-        # -------------------------------------------------
-        # Create the LOCAL-FIRST Circular SA route
-        # -------------------------------------------------
-
+        # Create Circular SA local marketplace route
         route_record = {
             "item_id": item_id,
             "route_type": "local_marketplace",
@@ -235,10 +208,7 @@ class VueltaBot(commands.Cog):
             route_record
         ).execute()
 
-        # -------------------------------------------------
-        # Search persistent !busco interests
-        # -------------------------------------------------
-
+        # Search persistent interests
         interest_result = (
             supabase
             .table("vuelta_interests")
@@ -258,32 +228,50 @@ class VueltaBot(commands.Cog):
             if is_match(item, interest):
                 matched_interests.append(interest)
 
-        # -------------------------------------------------
-        # Build response
-        # -------------------------------------------------
-
-        response = (
-            f"♻️ **VUELTA #{item_id}**\n\n"
-            f"📦 **{item_name}**\n"
+        # Build listing embed
+        embed = discord.Embed(
+            title=f"📦 Item #{item_id}",
+            description=item_name
         )
 
         if asking_price is not None:
-            response += f"💰 Asking: **${asking_price:.2f}**\n"
+            embed.add_field(
+                name="Price",
+                value=f"${asking_price:.2f}",
+                inline=True
+            )
         else:
-            response += "💰 Price: **not specified**\n"
-
-        response += (
-            "📍 Route: **Circular SA local marketplace**\n"
-            "🟢 Status: **available**\n"
-        )
-
-        if matched_interests:
-
-            response += (
-                "\n🎯 **Possible community matches:** "
-                f"{len(matched_interests)}\n"
+            embed.add_field(
+                name="Price",
+                value="Not specified",
+                inline=True
             )
 
+        embed.add_field(
+            name="Status",
+            value="Available",
+            inline=True
+        )
+
+        embed.add_field(
+            name="Marketplace",
+            value="Circular SA Discord",
+            inline=False
+        )
+
+        embed.set_footer(
+            text=f"Seller: {seller_name}"
+        )
+
+        if photo_url:
+            embed.set_image(url=photo_url)
+
+        await ctx.send(embed=embed)
+
+        # Alert matched buyers
+        if matched_interests:
+
+            mentions = []
             shown_users = set()
 
             for interest in matched_interests[:5]:
@@ -294,33 +282,21 @@ class VueltaBot(commands.Cog):
                     continue
 
                 shown_users.add(user_id)
-
-                response += (
-                    f"<@{user_id}> — "
-                    f"you said you were looking for "
-                    f"**{interest.get('description')}**\n"
+                mentions.append(
+                    f"<@{user_id}> — you were looking for "
+                    f"**{interest.get('description')}**"
                 )
 
-        else:
-
-            response += (
-                "\n🔎 No existing `!busco` matches yet.\n"
-                "The item is still available to the community."
-            )
-
-        response += (
-            f"\n\nUse `!vuelta {item_id}` "
-            "to check this item's journey."
-        )
-
-        await ctx.send(
-            response,
-            allowed_mentions=discord.AllowedMentions(
-                users=True,
-                everyone=False,
-                roles=False
-            )
-        )
+            if mentions:
+                await ctx.send(
+                    "🎯 **Possible matches:**\n"
+                    + "\n".join(mentions),
+                    allowed_mentions=discord.AllowedMentions(
+                        users=True,
+                        everyone=False,
+                        roles=False
+                    )
+                )
 
 
     # =====================================================
@@ -330,23 +306,17 @@ class VueltaBot(commands.Cog):
     @commands.command(name="busco")
     async def busco(self, ctx, *, description: str = None):
         """
-        Save something the user is looking for and
-        immediately search available Circular SA items.
-
         Examples:
 
-        !busco cookware
+        !busco pots and pans
         !busco dining table
-        !busco reclaimed lumber
         """
 
         if not description:
             await ctx.send(
                 "🔎 **¿Qué buscas?**\n\n"
                 "Try:\n"
-                "`!busco cookware`\n"
-                "`!busco dining table`\n"
-                "`!busco reclaimed lumber`"
+                "`!busco pots and pans`"
             )
             return
 
@@ -357,16 +327,11 @@ class VueltaBot(commands.Cog):
             normalize_words(description)
         )
 
-        # -------------------------------------------------
-        # Save persistent demand
-        # -------------------------------------------------
-
         interest_record = {
             "discord_user_id": user_id,
             "discord_user_name": user_name,
 
             "description": description,
-
             "match_keywords": " ".join(keywords),
 
             "alert_enabled": True,
@@ -382,10 +347,6 @@ class VueltaBot(commands.Cog):
 
         interest = interest_result.data[0]
 
-        # -------------------------------------------------
-        # Search current inventory
-        # -------------------------------------------------
-
         item_result = (
             supabase
             .table("vuelta_items")
@@ -398,76 +359,86 @@ class VueltaBot(commands.Cog):
 
         for item in item_result.data or []:
 
-            # Don't recommend someone's own item back to them
             if item.get("seller_discord_id") == user_id:
                 continue
 
             if is_match(item, interest):
                 matches.append(item)
 
-        # -------------------------------------------------
-        # Build response
-        # -------------------------------------------------
-
-        response = (
-            f"🔎 **BUSCO SAVED**\n\n"
-            f"You're looking for:\n"
-            f"**{description}**\n\n"
-            "🔔 I'll keep this interest active for future "
-            "Circular SA listings.\n"
+        await ctx.send(
+            f"🔎 Saved your search for **{description}**.\n"
+            "I'll keep watching future Circular SA listings too."
         )
 
-        if matches:
+        if not matches:
+            await ctx.send(
+                "📭 Nothing currently available matched."
+            )
+            return
 
-            response += (
-                f"\n🎯 **I found {len(matches)} "
-                "possible local match"
+        await ctx.send(
+            f"🎯 I found **{len(matches)} possible match"
+            f"{'es' if len(matches) != 1 else ''}**:"
+        )
+
+        # Send one visual listing card per match
+        for item in matches[:8]:
+
+            item_id = item["id"]
+
+            name = (
+                item.get("item_name")
+                or item.get("description")
             )
 
-            if len(matches) != 1:
-                response += "es"
-
-            response += ":**\n\n"
-
-            for item in matches[:8]:
-
-                item_id = item["id"]
-                name = (
-                    item.get("item_name")
-                    or item.get("description")
-                )
-
-                response += (
-                    f"♻️ **Vuelta #{item_id}**\n"
-                    f"📦 {name}\n"
-                )
-
-                if item.get("asking_price") is not None:
-                    response += (
-                        f"💰 ${float(item['asking_price']):.2f}\n"
-                    )
-
-                seller = (
-                    item.get("seller_discord_name")
-                    or item.get("owner_name")
-                    or "Community member"
-                )
-
-                response += (
-                    f"👤 {seller}\n"
-                    f"`!vuelta {item_id}`\n\n"
-                )
-
-        else:
-
-            response += (
-                "\n📭 Nothing currently available matched "
-                "that search.\n\n"
-                "When somebody uses `!tengo` for something "
-                "that looks like a match, you'll be alerted."
+            embed = discord.Embed(
+                title=f"📦 Item #{item_id}",
+                description=name
             )
 
-        await ctx.send(response)
+            if item.get("asking_price") is not None:
+                embed.add_field(
+                    name="Price",
+                    value=f"${float(item['asking_price']):.2f}",
+                    inline=True
+                )
+            else:
+                embed.add_field(
+                    name="Price",
+                    value="Not specified",
+                    inline=True
+                )
+
+            if item.get("condition"):
+                embed.add_field(
+                    name="Condition",
+                    value=item.get("condition"),
+                    inline=True
+                )
+
+            if item.get("pickup_area"):
+                embed.add_field(
+                    name="Pickup",
+                    value=item.get("pickup_area"),
+                    inline=False
+                )
+
+            seller = (
+                item.get("seller_discord_name")
+                or item.get("owner_name")
+                or "Community member"
+            )
+
+            embed.set_footer(
+                text=f"Seller: {seller} • Claim with !claim {item_id}"
+            )
+
+            if item.get("photo_url"):
+                embed.set_image(
+                    url=item.get("photo_url")
+                )
+
+            await ctx.send(embed=embed)
 
 
     # =====================================================
@@ -477,10 +448,9 @@ class VueltaBot(commands.Cog):
     @commands.command(name="vuelta")
     async def vuelta(self, ctx, item_id: int = None):
         """
-        Show an item's current state and route history.
+        Inspect an item's full journey.
 
         Example:
-
         !vuelta 57
         """
 
@@ -501,7 +471,7 @@ class VueltaBot(commands.Cog):
 
         if not item_result.data:
             await ctx.send(
-                f"❌ No Vuelta found with ID #{item_id}."
+                f"❌ No item found with ID #{item_id}."
             )
             return
 
@@ -521,84 +491,102 @@ class VueltaBot(commands.Cog):
             or item.get("description")
         )
 
-        response = (
-            f"♻️ **VUELTA #{item_id}**\n\n"
-            f"📦 **{name}**\n"
-            f"🟢 Status: **{item.get('status')}**\n"
+        embed = discord.Embed(
+            title=f"📦 Item #{item_id}",
+            description=name
         )
 
-        if item.get("owner_name"):
-            response += (
-                f"👤 Owner: **{item.get('owner_name')}**\n"
-            )
+        embed.add_field(
+            name="Status",
+            value=item.get("status") or "unknown",
+            inline=True
+        )
 
-        if item.get("category"):
-            response += (
-                f"🏷️ Category: **{item.get('category')}**\n"
+        if item.get("asking_price") is not None:
+            embed.add_field(
+                name="Price",
+                value=f"${float(item['asking_price']):.2f}",
+                inline=True
             )
 
         if item.get("condition"):
-            response += (
-                f"✨ Condition: **{item.get('condition')}**\n"
+            embed.add_field(
+                name="Condition",
+                value=item.get("condition"),
+                inline=True
             )
 
-        if item.get("asking_price") is not None:
-            response += (
-                f"💰 Asking: "
-                f"**${float(item['asking_price']):.2f}**\n"
+        if item.get("category"):
+            embed.add_field(
+                name="Category",
+                value=item.get("category"),
+                inline=True
             )
 
         if item.get("pickup_area"):
-            response += (
-                f"📍 Pickup: **{item.get('pickup_area')}**\n"
+            embed.add_field(
+                name="Pickup",
+                value=item.get("pickup_area"),
+                inline=False
             )
 
-        # -------------------------------------------------
-        # Route history
-        # -------------------------------------------------
+        if item.get("owner_name"):
+            embed.add_field(
+                name="Owner",
+                value=item.get("owner_name"),
+                inline=False
+            )
 
+        if item.get("photo_url"):
+            embed.set_image(
+                url=item.get("photo_url")
+            )
+
+        await ctx.send(embed=embed)
+
+        # Route history
         routes = route_result.data or []
 
-        response += "\n🛣️ **Route history**\n"
-
         if not routes:
+            await ctx.send(
+                "🛣️ No route history recorded yet."
+            )
+            return
 
-            response += "No routes recorded yet.\n"
+        route_text = "🛣️ **Route history**\n\n"
 
-        else:
+        for route in routes:
 
-            for route in routes:
+            platform = (
+                route.get("platform_name")
+                or route.get("route_type")
+                or "Unknown route"
+            )
 
-                platform = (
-                    route.get("platform_name")
-                    or route.get("route_type")
-                    or "Unknown route"
+            route_status = (
+                route.get("status")
+                or "unknown"
+            )
+
+            route_text += (
+                f"• **{platform}** — {route_status}"
+            )
+
+            if route.get("listed_price") is not None:
+                route_text += (
+                    f" — listed "
+                    f"${float(route['listed_price']):.2f}"
                 )
 
-                route_status = (
-                    route.get("status")
-                    or "unknown"
+            if route.get("sold_price") is not None:
+                route_text += (
+                    f" — sold "
+                    f"${float(route['sold_price']):.2f}"
                 )
 
-                response += (
-                    f"• **{platform}** — {route_status}"
-                )
+            route_text += "\n"
 
-                if route.get("listed_price") is not None:
-                    response += (
-                        f" — listed "
-                        f"${float(route['listed_price']):.2f}"
-                    )
-
-                if route.get("sold_price") is not None:
-                    response += (
-                        f" — sold "
-                        f"${float(route['sold_price']):.2f}"
-                    )
-
-                response += "\n"
-
-        await ctx.send(response)
+        await ctx.send(route_text)
 
 
 async def setup(bot):
