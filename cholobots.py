@@ -71,21 +71,30 @@ async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
 
-    # Allow receipt attachments to reach Guardabot.
-    # Block other attachments for now.
+    # Allow attachments for approved Cholobot workflows.
+    # Guardabot uses attachments for receipts.
+    # Vueltabot uses attachments for marketplace item photos.
     if message.attachments:
         content = (message.content or "").strip().lower()
 
-        if content.startswith("!greceipt"):
+        attachment_commands = (
+            "!greceipt",
+            "!tengo",
+        )
+
+        if content.startswith(attachment_commands):
             try:
                 await bot.process_commands(message)
+
             except Exception as e:
-                print(f"[GRECEIPT ERROR] {e}")
+                print(f"[ATTACHMENT COMMAND ERROR] {e}")
                 traceback.print_exc()
 
                 await message.channel.send(
-                    "Simón... the receipt workflow broke, but the Cholobots stayed alive."
+                    "Simón... the attachment workflow broke, "
+                    "but the Cholobots stayed alive."
                 )
+
             return
 
         print(
@@ -96,8 +105,10 @@ async def on_message(message: discord.Message):
 
         await message.channel.send(
             "Órale homie, I saw the attachment. "
-            "Right now attachments are only enabled for `!greceipt Project Name`."
+            "Right now photos/files are enabled for "
+            "`!greceipt` and `!tengo`."
         )
+
         return
 
     # Keep the system alive if a bot crashes
