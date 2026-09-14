@@ -16,6 +16,7 @@ cremove_sessions = {}
 hotlist_note_sessions = {}
 stovetop_sessions = {}
 chisme_sessions = {}
+lead_sessions = {}
 
 
 # ------------------------------------------------------------
@@ -536,6 +537,9 @@ async def advance_hotlist_customer(ctx, lookup, step):
 def clear_user_sessions(user_id):
     cleared = []
 
+    if lead_sessions.pop(user_id, None):
+        cleared.append("Lead capture")
+
     if chisme_sessions.pop(user_id, None):
         cleared.append("Chisme")
 
@@ -589,6 +593,26 @@ def register_chisme(bot):
             "`!cremove Name`\n"
             "Take a project out of the Oven with follow-up notes."
         )
+
+    @bot.command(name="lead")
+    async def lead(ctx, *, raw=""):
+        clear_user_sessions(ctx.author.id)
+        notes = [raw.strip()] if raw.strip() else []
+        lead_sessions[ctx.author.id] = {"notes": notes, "started_at": now_iso()}
+
+        if notes:
+            await ctx.send(
+                "📥 **Lead capture started.**\n"
+                "First note captured. Keep sending anything else you learn.\n\n"
+                "Type `done` to save the lead or `cancel` to throw it away."
+            )
+        else:
+            await ctx.send(
+                "📥 **Lead capture started.**\n"
+                "Send me whatever you know — job notes, name, phone, source, event, "
+                "or even just what you need to remember.\n\n"
+                "Keep sending messages. Type `done` when you're finished or `cancel` to throw it away."
+            )
 
     @bot.command(name="chisme")
     async def chisme(ctx, *, raw=""):
@@ -989,6 +1013,57 @@ def register_chisme(bot):
             return
 
         if message.content.startswith("!"):
+            return
+
+        # Lead capture scratchpad
+        lead_session = lead_sessions.get(message.author.id)
+        if lead_session:
+            content = message.content.strip()
+
+            if content.lower() == "done":
+                notes = [n.strip() for n in lead_session.get("notes", []) if n.strip()]
+                if not notes:
+                    lead_sessions.pop(message.author.id, None)
+                    await message.channel.send(
+                        "📥 Lead capture closed. Nothing was saved because there were no notes."
+                    )
+                    return
+
+                raw_notes = "\n".join(notes)
+                rows = (
+                    supabase.table("chisme_leads")
+                    .insert({
+                        "raw_notes": raw_notes,
+                        "captured_at": lead_session.get("started_at") or now_iso(),
+                        "captured_by": str(message.author),
+                        "status": "unprocessed",
+                        "next_action": "Process lead",
+                        "updated_at": now_iso(),
+                    })
+                    .execute()
+                ).data or []
+
+                lead_sessions.pop(message.author.id, None)
+
+                if rows:
+                    await message.channel.send(
+                        f"📥 **Lead saved.**\n"
+                        f"{len(notes)} note{'s' if len(notes) != 1 else ''} captured.\n"
+                        "Status: **Unprocessed**\n"
+                        "Next: Process lead."
+                    )
+                else:
+                    await message.channel.send(
+                        "I tried to save that lead, but Supabase didn't return a saved row."
+                    )
+                return
+
+            lead_session.setdefault("notes", []).append(content)
+            count = len(lead_session["notes"])
+            await message.channel.send(
+                f"📝 Added to lead capture ({count} note{'s' if count != 1 else ''}). "
+                "Keep going, or type `done`."
+            )
             return
 
         # Interactive Chisme customer workspace
