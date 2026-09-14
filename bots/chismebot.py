@@ -17,6 +17,7 @@ hotlist_note_sessions = {}
 stovetop_sessions = {}
 chisme_sessions = {}
 lead_sessions = {}
+lead_processing_sessions = {}
 
 
 # ------------------------------------------------------------
@@ -537,6 +538,9 @@ async def advance_hotlist_customer(ctx, lookup, step):
 def clear_user_sessions(user_id):
     cleared = []
 
+    if lead_processing_sessions.pop(user_id, None):
+        cleared.append("Lead processing")
+
     if lead_sessions.pop(user_id, None):
         cleared.append("Lead capture")
 
@@ -553,6 +557,74 @@ def clear_user_sessions(user_id):
         cleared.append("Stovetop removal")
 
     return cleared
+
+# ------------------------------------------------------------
+# Lead Inbox helpers
+# ------------------------------------------------------------
+
+def get_unprocessed_leads(limit=50):
+    return (
+        supabase.table("chisme_leads")
+        .select("*")
+        .eq("status", "unprocessed")
+        .order("captured_at", desc=False)
+        .limit(limit)
+        .execute()
+    ).data or []
+
+
+def get_lead_by_id(lead_id):
+    rows = (
+        supabase.table("chisme_leads")
+        .select("*")
+        .eq("id", lead_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    return rows[0] if rows else None
+
+
+def append_lead_note(lead, note, label="Processing note"):
+    existing = (lead.get("raw_notes") or "").strip()
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    addition = f"[{stamp}] {label}: {note.strip()}"
+    combined = f"{existing}\n\n{addition}".strip()
+    supabase.table("chisme_leads").update({
+        "raw_notes": combined,
+        "updated_at": now_iso(),
+    }).eq("id", lead["id"]).execute()
+    return combined
+
+
+def lead_preview(lead, limit=120):
+    raw = (lead.get("raw_notes") or "").strip()
+    if not raw:
+        return "No notes"
+    first = " ".join(raw.split())
+    return first[:limit] + ("..." if len(first) > limit else "")
+
+
+def lead_menu_text(lead):
+    callback = lead.get("callback_date")
+    linked = lead.get("contact_id")
+    return (
+        f"📥 **PROCESS LEAD**\n\n"
+        f"{lead.get('raw_notes') or '(no notes)'}\n\n"
+        f"**Current next action:** {lead.get('next_action') or 'Not set'}\n"
+        f"**Callback:** {callback or 'None'}\n"
+        f"**Customer card:** {'Linked' if linked else 'Not linked'}\n\n"
+        "**What do you want to do?**\n"
+        "1. 📞 Contact customer / log outcome\n"
+        "2. 📇 Create or match customer card\n"
+        "3. 📅 Record scheduling / estimate plan\n"
+        "4. 🔎 Research something\n"
+        "5. 🤝 Ask colleague / subcontractor\n"
+        "6. ⏳ Waiting / set callback\n"
+        "7. 📝 Add note\n"
+        "8. ✅ Mark processed → create opportunity\n"
+        "9. 🧹 Close / remove lead\n"
+        "0. ↩️ Back to Lead Inbox"
+    )
 
 # ------------------------------------------------------------
 # Discord command registration
@@ -593,6 +665,20 @@ def register_chisme(bot):
             "`!cremove Name`\n"
             "Take a project out of the Oven with follow-up notes."
         )
+
+    @bot.command(name="leads")
+    async def leads(ctx):
+        clear_user_sessions(ctx.author.id)
+        rows = get_unprocessed_leads()
+        if not rows:
+            await ctx.send("📥 **Lead Inbox is clear.** No unprocessed leads.")
+            return
+        lead_processing_sessions[ctx.author.id] = {"step": "select_lead", "leads": rows}
+        lines = [f"📥 **LEAD INBOX — {len(rows)} unprocessed**", ""]
+        for i, lead in enumerate(rows, 1):
+            lines.append(f"**{i}.** {lead_preview(lead)}\n   Next: {lead.get('next_action') or 'Process lead'}")
+        lines.extend(["", "Which lead do you want to work on?", "Reply with a number, or `cancel`."])
+        await send_long(ctx, "\n".join(lines))
 
     @bot.command(name="lead")
     async def lead(ctx, *, raw=""):
@@ -1014,6 +1100,232 @@ def register_chisme(bot):
 
         if message.content.startswith("!"):
             return
+
+        # Interactive Lead Inbox / processing workflow
+        processing_session = lead_processing_sessions.get(message.author.id)
+        if processing_session:
+            content = message.content.strip()
+            step = processing_session.get("step")
+
+            if step == "select_lead":
+                if not content.isdigit():
+                    await message.channel.send("Reply with a lead number, or `cancel`.")
+                    return
+                index = int(content) - 1
+                leads_list = processing_session.get("leads") or []
+                if index < 0 or index >= len(leads_list):
+                    await message.channel.send("That number isn't in the Lead Inbox. Try again.")
+                    return
+                lead = get_lead_by_id(leads_list[index]["id"])
+                if not lead or lead.get("status") != "unprocessed":
+                    lead_processing_sessions.pop(message.author.id, None)
+                    await message.channel.send("That lead is no longer unprocessed. Run `!leads` to refresh the inbox.")
+                    return
+                processing_session["lead_id"] = lead["id"]
+                processing_session["step"] = "lead_menu"
+                await send_long(message.channel, lead_menu_text(lead))
+                return
+
+            lead = get_lead_by_id(processing_session.get("lead_id"))
+            if not lead:
+                lead_processing_sessions.pop(message.author.id, None)
+                await message.channel.send("I lost that lead. Run `!leads` and try again.")
+                return
+
+            if step == "lead_menu":
+                if content == "1":
+                    processing_session["step"] = "contact_outcome"
+                    await message.channel.send("📞 What happened when you contacted them? Tell me the outcome and what needs to happen next.")
+                    return
+                if content == "2":
+                    processing_session["step"] = "customer_lookup"
+                    await message.channel.send("📇 Type a customer name or phone number to search the Rolodex, or type `new` to create a customer card.")
+                    return
+                if content == "3":
+                    processing_session["step"] = "schedule_note"
+                    await message.channel.send("📅 What was scheduled, or what needs to be scheduled?")
+                    return
+                if content == "4":
+                    processing_session["step"] = "research_task"
+                    await message.channel.send("🔎 What do you need to research for this lead?")
+                    return
+                if content == "5":
+                    processing_session["step"] = "network_task"
+                    await message.channel.send("🤝 Who do you need to ask, and what do you need from them?")
+                    return
+                if content == "6":
+                    processing_session["step"] = "waiting_note"
+                    await message.channel.send("⏳ What are you waiting on? Include a callback date if you know it.")
+                    return
+                if content == "7":
+                    processing_session["step"] = "add_lead_note"
+                    await message.channel.send("📝 Add the note:")
+                    return
+                if content == "8":
+                    processing_session["step"] = "opportunity_name"
+                    await message.channel.send("✅ Give this opportunity a short name, like `Replace 3 vanity lights` or `New mailbox`.")
+                    return
+                if content == "9":
+                    processing_session["step"] = "close_reason"
+                    await message.channel.send("🧹 Why are we removing this from the Lead Inbox?\n\n1. Not responding / went cold\n2. Customer no longer interested\n3. Not a fit for Handley Man\n4. Duplicate\n5. Already handled elsewhere\n6. Other")
+                    return
+                if content == "0":
+                    rows = get_unprocessed_leads()
+                    processing_session.clear(); processing_session.update({"step":"select_lead","leads":rows})
+                    if not rows:
+                        lead_processing_sessions.pop(message.author.id, None)
+                        await message.channel.send("📥 Lead Inbox is clear.")
+                        return
+                    lines=[f"📥 **LEAD INBOX — {len(rows)} unprocessed**",""]
+                    for i,item in enumerate(rows,1):
+                        lines.append(f"**{i}.** {lead_preview(item)}\n   Next: {item.get('next_action') or 'Process lead'}")
+                    lines.extend(["","Reply with a number, or `cancel`."])
+                    await send_long(message.channel,"\n".join(lines)); return
+                await message.channel.send("Reply with 1–9, or 0 to go back.")
+                return
+
+            if step == "contact_outcome":
+                append_lead_note(lead, content, "Contact outcome")
+                supabase.table("chisme_leads").update({"next_action": content[:500], "updated_at": now_iso()}).eq("id", lead["id"]).execute()
+                processing_session["step"]="lead_menu"
+                await message.channel.send("📞 Contact outcome saved.")
+                await send_long(message.channel, lead_menu_text(get_lead_by_id(lead["id"])))
+                return
+
+            if step == "customer_lookup":
+                if content.lower() == "new":
+                    processing_session["step"] = "new_customer"
+                    await message.channel.send("📇 Enter: `Name | phone: 210... | email: ... | address: ...`\nOnly include what you know.")
+                    return
+                matches = find_contacts(content)
+                if not matches:
+                    processing_session["step"] = "customer_lookup_no_match"
+                    await message.channel.send(f"No Rolodex card found for **{content}**.\n\n1. Create new customer\n2. Search again\n3. Go back")
+                    return
+                if len(matches) == 1:
+                    contact=matches[0]
+                    supabase.table("chisme_leads").update({"contact_id":contact["id"],"updated_at":now_iso()}).eq("id",lead["id"]).execute()
+                    append_lead_note(lead,f"Linked to Rolodex customer: {contact.get('name')}","Customer")
+                    processing_session["step"]="lead_menu"
+                    await message.channel.send(f"📇 Lead linked to **{contact.get('name')}**.")
+                    await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"])))
+                    return
+                processing_session["step"]="customer_choose"; processing_session["customer_matches"]=matches
+                lines=["I found multiple possible customer cards:",""]
+                for i,c in enumerate(matches,1): lines.append(f"{i}. **{c.get('name')}** — {c.get('phone') or 'no phone'} — {c.get('address') or 'no address'}")
+                lines.append("\nReply with the customer number, or `0` to search again.")
+                await send_long(message.channel,"\n".join(lines)); return
+
+            if step == "customer_lookup_no_match":
+                if content == "1":
+                    processing_session["step"]="new_customer"; await message.channel.send("📇 Enter: `Name | phone: 210... | email: ... | address: ...`"); return
+                if content == "2":
+                    processing_session["step"]="customer_lookup"; await message.channel.send("Type a customer name or phone number:"); return
+                if content == "3":
+                    processing_session["step"]="lead_menu"; await send_long(message.channel,lead_menu_text(lead)); return
+                await message.channel.send("Reply with 1, 2, or 3."); return
+
+            if step == "customer_choose":
+                if content == "0":
+                    processing_session["step"]="customer_lookup"; await message.channel.send("Type a customer name or phone number:"); return
+                if not content.isdigit(): await message.channel.send("Reply with a customer number, or 0 to search again."); return
+                matches=processing_session.get("customer_matches") or []; index=int(content)-1
+                if index<0 or index>=len(matches): await message.channel.send("That customer number isn't in the list."); return
+                contact=matches[index]
+                supabase.table("chisme_leads").update({"contact_id":contact["id"],"updated_at":now_iso()}).eq("id",lead["id"]).execute()
+                append_lead_note(lead,f"Linked to Rolodex customer: {contact.get('name')}","Customer")
+                processing_session["step"]="lead_menu"; processing_session.pop("customer_matches",None)
+                await message.channel.send(f"📇 Lead linked to **{contact.get('name')}**.")
+                await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"])))
+                return
+
+            if step == "new_customer":
+                lookup, updates = parse_fields(content)
+                if not lookup:
+                    await message.channel.send("Give me at least a customer name or phone number."); return
+                matches=find_contacts(lookup)
+                if len(matches)==1:
+                    contact=matches[0]
+                elif len(matches)>1:
+                    processing_session["step"]="customer_choose"; processing_session["customer_matches"]=matches
+                    lines=["I found existing possible matches instead of creating a duplicate:",""]
+                    for i,c in enumerate(matches,1): lines.append(f"{i}. **{c.get('name')}** — {c.get('phone') or 'no phone'} — {c.get('address') or 'no address'}")
+                    lines.append("\nReply with the customer number, or `0` to search again.")
+                    await send_long(message.channel,"\n".join(lines)); return
+                else:
+                    contact=create_contact_stub(lookup,lead.get("raw_notes") or "")
+                    if not contact: await message.channel.send("I couldn't create the customer card."); return
+                if updates:
+                    supabase.table("chisme_contacts").update(updates).eq("id",contact["id"]).execute()
+                    refreshed=(supabase.table("chisme_contacts").select("*").eq("id",contact["id"]).limit(1).execute()).data or []
+                    if refreshed: contact=refreshed[0]
+                supabase.table("chisme_leads").update({"contact_id":contact["id"],"updated_at":now_iso()}).eq("id",lead["id"]).execute()
+                append_lead_note(lead,f"Linked to Rolodex customer: {contact.get('name')}","Customer")
+                processing_session["step"]="lead_menu"
+                await message.channel.send(f"📇 Customer card linked: **{contact.get('name')}**.")
+                await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"])))
+                return
+
+            if step == "schedule_note":
+                append_lead_note(lead,content,"Scheduling")
+                supabase.table("chisme_leads").update({"next_action":content[:500],"updated_at":now_iso()}).eq("id",lead["id"]).execute()
+                processing_session["step"]="lead_menu"; await message.channel.send("📅 Scheduling plan saved.")
+                await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"]))); return
+
+            if step == "research_task":
+                append_lead_note(lead,content,"Research")
+                supabase.table("chisme_leads").update({"next_action":f"Research: {content}"[:500],"updated_at":now_iso()}).eq("id",lead["id"]).execute()
+                processing_session["step"]="lead_menu"; await message.channel.send("🔎 Research task saved.")
+                await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"]))); return
+
+            if step == "network_task":
+                append_lead_note(lead,content,"Network / subcontractor")
+                supabase.table("chisme_leads").update({"next_action":f"Follow up with network: {content}"[:500],"updated_at":now_iso()}).eq("id",lead["id"]).execute()
+                processing_session["step"]="lead_menu"; await message.channel.send("🤝 Network/subcontractor action saved.")
+                await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"]))); return
+
+            if step == "waiting_note":
+                callback=parse_followup_response(content); append_lead_note(lead,content,"Waiting")
+                payload={"next_action":f"Waiting: {content}"[:500],"updated_at":now_iso()}
+                if callback: payload["callback_date"]=callback
+                supabase.table("chisme_leads").update(payload).eq("id",lead["id"]).execute()
+                processing_session["step"]="lead_menu"
+                await message.channel.send(f"⏳ Waiting note saved.{f' Callback: {callback}' if callback else ''}")
+                await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"]))); return
+
+            if step == "add_lead_note":
+                append_lead_note(lead,content); processing_session["step"]="lead_menu"
+                await message.channel.send("📝 Note added."); await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"]))); return
+
+            if step == "opportunity_name":
+                opportunity_name=content.strip()[:160]
+                if not opportunity_name: await message.channel.send("Give the opportunity a short name."); return
+                rows=(supabase.table("chisme_opportunities").insert({
+                    "lead_id":lead["id"],"contact_id":lead.get("contact_id"),"opportunity_name":opportunity_name,
+                    "scope_notes":lead.get("raw_notes") or "","pipeline_stage":"New Opportunity","temperature":50,
+                    "next_action":lead.get("next_action"),"callback_date":lead.get("callback_date"),"status":"open","updated_at":now_iso(),
+                }).execute()).data or []
+                if not rows: await message.channel.send("I couldn't create the opportunity, so I left the lead unprocessed."); return
+                supabase.table("chisme_leads").update({"status":"processed","next_action":"Opportunity created","updated_at":now_iso()}).eq("id",lead["id"]).execute()
+                lead_processing_sessions.pop(message.author.id,None)
+                await message.channel.send(f"✅ **Lead processed.**\nOpportunity created: **{opportunity_name}**\nThis lead is now out of the Lead Inbox.")
+                return
+
+            if step == "close_reason":
+                reason_map={"1":"Not responding / went cold","2":"Customer no longer interested","3":"Not a fit for Handley Man","4":"Duplicate","5":"Already handled elsewhere"}
+                if content == "6": processing_session["step"]="close_custom_reason"; await message.channel.send("What is the reason?"); return
+                reason=reason_map.get(content)
+                if not reason: await message.channel.send("Reply with 1, 2, 3, 4, 5, or 6."); return
+                append_lead_note(lead,reason,"Lead closed")
+                supabase.table("chisme_leads").update({"status":"closed","next_action":f"Closed: {reason}","callback_date":None,"updated_at":now_iso()}).eq("id",lead["id"]).execute()
+                lead_processing_sessions.pop(message.author.id,None)
+                await message.channel.send(f"🧹 Lead removed from the inbox.\nReason: **{reason}**"); return
+
+            if step == "close_custom_reason":
+                reason=content.strip()[:500] or "Other"; append_lead_note(lead,reason,"Lead closed")
+                supabase.table("chisme_leads").update({"status":"closed","next_action":f"Closed: {reason}"[:500],"callback_date":None,"updated_at":now_iso()}).eq("id",lead["id"]).execute()
+                lead_processing_sessions.pop(message.author.id,None)
+                await message.channel.send(f"🧹 Lead removed from the inbox.\nReason: **{reason}**"); return
 
         # Lead capture scratchpad
         lead_session = lead_sessions.get(message.author.id)
