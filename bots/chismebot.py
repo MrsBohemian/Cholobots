@@ -14,6 +14,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Multi-step Discord sessions
 cremove_sessions = {}
 hotlist_note_sessions = {}
+stovetop_sessions = {}
 
 
 # ------------------------------------------------------------
@@ -534,6 +535,9 @@ async def advance_hotlist_customer(ctx, lookup, step):
 def clear_user_sessions(user_id):
     cleared = []
 
+    if stovetop_sessions.pop(user_id, None):
+        cleared.append("Stovetop")
+
     if hotlist_note_sessions.pop(user_id, None):
         cleared.append("Hot List notes")
 
@@ -634,7 +638,7 @@ def register_chisme(bot):
 
         await ctx.send(
             f"✅ Chisme saved for **{contact.get('name')}**.\n"
-            f"Use `!hotlist {contact.get('name')}` to see their customer workflow."
+            f"Use `!stovetop {contact.get('name')}` to see their customer workflow."
         )
 
     @bot.command(name="cset")
@@ -789,29 +793,41 @@ def register_chisme(bot):
             rows = (
                 supabase.table("chisme_contacts")
                 .select("*")
-                .gte("hotlist_temperature", 50)
+                .gte("hotlist_temperature", 51)
                 .lt("hotlist_temperature", 100)
                 .order("hotlist_temperature", desc=True)
                 .execute()
             ).data or []
 
-            rows = [c for c in rows if c["id"] not in active_ids]
+            rows = [c for c in rows if c["id"] not in active_ids][:15]
 
             if not rows:
-                await ctx.send("No warm customers on the stovetop right now.")
+                await ctx.send("No warm customers on the Stovetop right now.")
                 return
+
+            stovetop_sessions[ctx.author.id] = {
+                "step": "select_customer",
+                "customers": rows,
+            }
 
             lines = ["🍲 **STOVETOP / WARM OPPORTUNITIES**", ""]
 
-            for c in rows[:15]:
-                temp = c.get("hotlist_temperature") or 50
+            for i, c in enumerate(rows, 1):
+                temp = c.get("hotlist_temperature") or 51
                 name = c.get("name") or "Unknown"
-                next_action = c.get("next_action") or "Contact customer / schedule site visit"
+                stage = c.get("pipeline_stage") or "Stage not set"
+                next_action = c.get("next_action") or "No next action set"
 
                 lines.append(
-                    f"**{temp}° {name}**\n"
-                    f"Next:\n{next_action}\n"
+                    f"**{i}. {name} — {temp}° — {stage}**\n"
+                    f"   Next: {next_action}"
                 )
+
+            lines.extend([
+                "",
+                "**Which customer do you want to work with?**",
+                "Reply with a number, or `cancel`."
+            ])
 
             await send_long(ctx, "\n".join(lines))
             return
@@ -942,6 +958,306 @@ def register_chisme(bot):
 
         if message.content.startswith("!"):
             return
+
+        # Interactive Stovetop workspace
+        stovetop_session = stovetop_sessions.get(message.author.id)
+        if stovetop_session:
+            content = message.content.strip()
+            step = stovetop_session.get("step")
+
+            if step == "select_customer":
+                if not content.isdigit():
+                    await message.channel.send("Reply with the customer number, or `cancel`.")
+                    return
+
+                index = int(content) - 1
+                customers = stovetop_session.get("customers") or []
+                if index < 0 or index >= len(customers):
+                    await message.channel.send("That number isn't on the Stovetop. Try again.")
+                    return
+
+                contact = customers[index]
+                stovetop_session["contact_id"] = contact["id"]
+                stovetop_session["contact_name"] = contact.get("name") or "Unknown"
+                stovetop_session["step"] = "customer_menu"
+
+                await message.channel.send(
+                    f"🍲 **{contact.get('name')}**\n"
+                    f"🌡 {contact.get('hotlist_temperature') or 51}° — "
+                    f"{contact.get('pipeline_stage') or 'Stage not set'}\n"
+                    f"Next: {contact.get('next_action') or 'No next action set'}\n\n"
+                    "**What do you want to do?**\n"
+                    "1. 📝 Add chisme\n"
+                    "2. ➡️ Update pipeline stage\n"
+                    "3. 📅 Set a callback\n"
+                    "4. 🌡 Change temperature\n"
+                    "5. 🧊 Move to Fridge\n"
+                    "6. 🔥 Move to Oven\n"
+                    "7. ❌ Cancel"
+                )
+                return
+
+            contact_rows = (
+                supabase.table("chisme_contacts")
+                .select("*")
+                .eq("id", stovetop_session.get("contact_id"))
+                .limit(1)
+                .execute()
+            ).data or []
+
+            if not contact_rows:
+                stovetop_sessions.pop(message.author.id, None)
+                await message.channel.send("I lost that customer card. Run `!stovetop` and try again.")
+                return
+
+            contact = contact_rows[0]
+
+            if step == "customer_menu":
+                if content == "1":
+                    stovetop_session["step"] = "add_chisme"
+                    await message.channel.send(
+                        f"Tell me the chisme about **{contact.get('name')}**.\n"
+                        "I'll save your next message to their journal."
+                    )
+                    return
+
+                if content == "2":
+                    stovetop_session["step"] = "pipeline_stage"
+                    await message.channel.send(
+                        f"Where is **{contact.get('name')}** right now?\n\n"
+                        "1. Site Visit Completed\n"
+                        "2. Estimate Ready\n"
+                        "3. Estimate Sent\n"
+                        "4. Follow-up Completed\n"
+                        "5. Work Paused\n"
+                        "6. Other"
+                    )
+                    return
+
+                if content == "3":
+                    stovetop_session["step"] = "callback"
+                    await message.channel.send(
+                        f"When should we contact **{contact.get('name')}** again?\n\n"
+                        "1. Tomorrow\n"
+                        "2. Next week\n"
+                        "3. Two weeks\n"
+                        "4. Type a date like `10/1/2026`\n"
+                        "5. No callback"
+                    )
+                    return
+
+                if content == "4":
+                    stovetop_session["step"] = "temperature"
+                    await message.channel.send(
+                        f"What temperature should **{contact.get('name')}** be?\n"
+                        "Enter a number from 0 to 99."
+                    )
+                    return
+
+                if content == "5":
+                    supabase.table("chisme_contacts").update({
+                        "hotlist_temperature": 50,
+                        "status": "lead",
+                        "last_outcome": "Moved to Fridge",
+                        "updated_at": now_iso(),
+                    }).eq("id", contact["id"]).execute()
+                    add_note(
+                        contact,
+                        "Moved from Stovetop to Fridge.",
+                        created_by=str(message.author),
+                        note_type="stovetop_movement",
+                    )
+                    stovetop_sessions.pop(message.author.id, None)
+                    await message.channel.send(
+                        f"🧊 **{contact.get('name')}** moved to the Fridge at 50°."
+                    )
+                    return
+
+                if content == "6":
+                    burner = next_available_burner()
+                    supabase.table("chisme_contacts").update({
+                        "hotlist_temperature": 100,
+                        "status": "active_project",
+                        "pipeline_stage": "Active Project",
+                        "next_action": "Active project in oven",
+                        "last_outcome": "Moved to Oven",
+                        "updated_at": now_iso(),
+                    }).eq("id", contact["id"]).execute()
+                    set_active(
+                        contact,
+                        reason="Moved to Oven from interactive Stovetop.",
+                        burner_position=burner,
+                        owner="Daniel",
+                    )
+                    add_note(
+                        contact,
+                        "Moved from Stovetop to Oven.",
+                        created_by=str(message.author),
+                        note_type="stovetop_movement",
+                    )
+                    stovetop_sessions.pop(message.author.id, None)
+                    await message.channel.send(
+                        f"🔥 **{contact.get('name')}** moved to the Oven.\n"
+                        f"Oven slot: {burner}"
+                    )
+                    return
+
+                if content == "7":
+                    stovetop_sessions.pop(message.author.id, None)
+                    await message.channel.send("👍 Stovetop closed. Nothing changed.")
+                    return
+
+                await message.channel.send("Reply with 1, 2, 3, 4, 5, 6, or 7.")
+                return
+
+            if step == "add_chisme":
+                add_note(
+                    contact,
+                    content,
+                    created_by=str(message.author),
+                    note_type="chisme",
+                )
+                stovetop_sessions.pop(message.author.id, None)
+                await message.channel.send(
+                    f"📝 Chisme saved for **{contact.get('name')}**.\n"
+                    "Run `!stovetop` when you're ready for the next thing."
+                )
+                return
+
+            if step == "pipeline_stage":
+                stage_map = {
+                    "1": ("Site Visit Completed", 60, "Write estimate notes"),
+                    "2": ("Estimate Ready", 70, "Send estimate"),
+                    "3": ("Estimate Sent", 80, "Follow up"),
+                    "4": ("Follow-up Completed", 90, "Await approval"),
+                    "5": ("Work Paused", contact.get("hotlist_temperature") or 60,
+                          "Check in with customer about resuming work"),
+                }
+
+                if content == "6":
+                    stovetop_session["step"] = "custom_pipeline_stage"
+                    await message.channel.send("What stage should I use?")
+                    return
+
+                if content not in stage_map:
+                    await message.channel.send("Reply with 1, 2, 3, 4, 5, or 6.")
+                    return
+
+                stage_name, temp, next_action = stage_map[content]
+                supabase.table("chisme_contacts").update({
+                    "pipeline_stage": stage_name,
+                    "hotlist_temperature": temp,
+                    "next_action": next_action,
+                    "last_outcome": f"Pipeline stage updated: {stage_name}",
+                    "updated_at": now_iso(),
+                }).eq("id", contact["id"]).execute()
+                add_note(
+                    contact,
+                    f"Pipeline stage updated to {stage_name}. Next: {next_action}.",
+                    created_by=str(message.author),
+                    note_type="hotlist_progress",
+                )
+                stovetop_sessions.pop(message.author.id, None)
+                await message.channel.send(
+                    f"✅ **{contact.get('name')}** updated.\n"
+                    f"🌡 {temp}° — {stage_name}\n"
+                    f"Next: {next_action}"
+                )
+                return
+
+            if step == "custom_pipeline_stage":
+                stage_name = content[:120]
+                supabase.table("chisme_contacts").update({
+                    "pipeline_stage": stage_name,
+                    "last_outcome": f"Pipeline stage updated: {stage_name}",
+                    "updated_at": now_iso(),
+                }).eq("id", contact["id"]).execute()
+                add_note(
+                    contact,
+                    f"Pipeline stage updated to {stage_name}.",
+                    created_by=str(message.author),
+                    note_type="hotlist_progress",
+                )
+                stovetop_sessions.pop(message.author.id, None)
+                await message.channel.send(
+                    f"✅ **{contact.get('name')}** stage set to **{stage_name}**.\n"
+                    f"Next action left as: {contact.get('next_action') or 'not set'}"
+                )
+                return
+
+            if step == "callback":
+                callback_date = parse_followup_response(content)
+
+                if content == "5":
+                    supabase.table("chisme_contacts").update({
+                        "next_followup_date": None,
+                        "next_contact_date": None,
+                        "updated_at": now_iso(),
+                    }).eq("id", contact["id"]).execute()
+                    add_note(
+                        contact,
+                        "Callback cleared.",
+                        created_by=str(message.author),
+                        note_type="callback",
+                    )
+                    stovetop_sessions.pop(message.author.id, None)
+                    await message.channel.send(
+                        f"📅 No callback scheduled for **{contact.get('name')}**."
+                    )
+                    return
+
+                if not callback_date:
+                    await message.channel.send(
+                        "I couldn't read that date. Use `MM/DD/YYYY` or `YYYY-MM-DD`, "
+                        "or reply 1, 2, 3, or 5."
+                    )
+                    return
+
+                supabase.table("chisme_contacts").update({
+                    "next_followup_date": callback_date,
+                    "next_contact_date": callback_date,
+                    "updated_at": now_iso(),
+                }).eq("id", contact["id"]).execute()
+                add_note(
+                    contact,
+                    f"Callback scheduled for {callback_date}.",
+                    created_by=str(message.author),
+                    note_type="callback",
+                )
+                stovetop_sessions.pop(message.author.id, None)
+                await message.channel.send(
+                    f"📅 Callback set for **{contact.get('name')}**: {callback_date}"
+                )
+                return
+
+            if step == "temperature":
+                try:
+                    new_temp = int(content)
+                except ValueError:
+                    await message.channel.send("Enter a whole number from 0 to 99.")
+                    return
+
+                if new_temp < 0 or new_temp > 99:
+                    await message.channel.send("Enter a number from 0 to 99.")
+                    return
+
+                supabase.table("chisme_contacts").update({
+                    "hotlist_temperature": new_temp,
+                    "updated_at": now_iso(),
+                }).eq("id", contact["id"]).execute()
+                add_note(
+                    contact,
+                    f"Temperature changed to {new_temp}°.",
+                    created_by=str(message.author),
+                    note_type="stovetop_temperature",
+                )
+                stovetop_sessions.pop(message.author.id, None)
+
+                destination = "Stovetop" if new_temp >= 51 else "Fridge"
+                await message.channel.send(
+                    f"🌡 **{contact.get('name')}** is now {new_temp}° — {destination}."
+                )
+                return
 
         # Hotlist site visit note capture
         hotlist_session = hotlist_note_sessions.get(message.author.id)
