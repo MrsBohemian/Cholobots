@@ -2,6 +2,7 @@ import os
 import re
 import traceback
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from config import client
 from supabase import create_client
@@ -586,7 +587,7 @@ def get_lead_by_id(lead_id):
 
 def append_lead_note(lead, note, label="Processing note"):
     existing = (lead.get("raw_notes") or "").strip()
-    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    stamp = datetime.now(ZoneInfo("America/Chicago")).strftime("%Y-%m-%d %H:%M")
     addition = f"[{stamp}] {label}: {note.strip()}"
     combined = f"{existing}\n\n{addition}".strip()
     supabase.table("chisme_leads").update({
@@ -604,15 +605,80 @@ def lead_preview(lead, limit=120):
     return first[:limit] + ("..." if len(first) > limit else "")
 
 
+def try_link_lead_to_existing_contact(lead):
+    """Auto-link an unlinked lead when its raw capture contains a unique phone/email match."""
+    if not lead or lead.get("contact_id"):
+        return lead
+
+    raw = lead.get("raw_notes") or ""
+    raw_lower = raw.lower()
+
+    emails = set(re.findall(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", raw, flags=re.I))
+    phone_candidates = set()
+    for match in re.findall(r"(?:\\+?1[\\s.\\-]?)?(?:\\(?\\d{3}\\)?[\\s.\\-]?)\\d{3}[\\s.\\-]?\\d{4}", raw):
+        digits = re.sub(r"\\D", "", match)
+        if len(digits) == 11 and digits.startswith("1"):
+            digits = digits[1:]
+        if len(digits) == 10:
+            phone_candidates.add(digits)
+
+    if not emails and not phone_candidates:
+        return lead
+
+    contacts = (
+        supabase.table("chisme_contacts")
+        .select("id,name,phone,email")
+        .execute()
+    ).data or []
+
+    matches = []
+    for contact in contacts:
+        email = (contact.get("email") or "").strip().lower()
+        phone = re.sub(r"\\D", "", contact.get("phone") or "")
+        if len(phone) == 11 and phone.startswith("1"):
+            phone = phone[1:]
+
+        email_match = email and email in {e.lower() for e in emails}
+        phone_match = phone and phone in phone_candidates
+        if email_match or phone_match:
+            matches.append(contact)
+
+    unique = {c["id"]: c for c in matches}
+    if len(unique) != 1:
+        return lead
+
+    contact = next(iter(unique.values()))
+    supabase.table("chisme_leads").update({
+        "contact_id": contact["id"],
+        "updated_at": now_iso(),
+    }).eq("id", lead["id"]).execute()
+
+    refreshed = get_lead_by_id(lead["id"])
+    return refreshed or lead
+
+
 def lead_menu_text(lead):
+    lead = try_link_lead_to_existing_contact(lead)
     callback = lead.get("callback_date")
     linked = lead.get("contact_id")
+    customer_label = "Not linked"
+
+    if linked:
+        rows = (
+            supabase.table("chisme_contacts")
+            .select("name")
+            .eq("id", linked)
+            .limit(1)
+            .execute()
+        ).data or []
+        customer_label = rows[0].get("name") if rows else "Linked"
+
     return (
         f"📥 **PROCESS LEAD**\n\n"
         f"{lead.get('raw_notes') or '(no notes)'}\n\n"
         f"**Current next action:** {lead.get('next_action') or 'Not set'}\n"
         f"**Callback:** {callback or 'None'}\n"
-        f"**Customer card:** {'Linked' if linked else 'Not linked'}\n\n"
+        f"**Customer card:** {customer_label}\n\n"
         "**What do you want to do?**\n"
         "1. 📞 Contact customer / log outcome\n"
         "2. 📇 Create or match customer card\n"
@@ -1285,13 +1351,37 @@ def register_chisme(bot):
                 await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"]))); return
 
             if step == "waiting_note":
-                callback=parse_followup_response(content); append_lead_note(lead,content,"Waiting")
-                payload={"next_action":f"Waiting: {content}"[:500],"updated_at":now_iso()}
-                if callback: payload["callback_date"]=callback
-                supabase.table("chisme_leads").update(payload).eq("id",lead["id"]).execute()
-                processing_session["step"]="lead_menu"
-                await message.channel.send(f"⏳ Waiting note saved.{f' Callback: {callback}' if callback else ''}")
-                await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"]))); return
+                # A customer card may have been created after the original lead brain dump.
+                # Re-check the raw capture now so callbacks follow the customer automatically.
+                lead = try_link_lead_to_existing_contact(lead)
+                callback = parse_followup_response(content)
+                append_lead_note(lead, content, "Waiting")
+                payload = {
+                    "next_action": f"Waiting: {content}"[:500],
+                    "updated_at": now_iso(),
+                }
+                if callback:
+                    payload["callback_date"] = callback
+                supabase.table("chisme_leads").update(payload).eq("id", lead["id"]).execute()
+
+                if callback and lead.get("contact_id"):
+                    supabase.table("chisme_contacts").update({
+                        "next_followup_date": callback,
+                        "next_contact_date": callback,
+                    }).eq("id", lead["contact_id"]).execute()
+
+                processing_session["step"] = "lead_menu"
+                if callback and lead.get("contact_id"):
+                    await message.channel.send(
+                        f"⏳ Waiting note saved. Callback: {callback}\n"
+                        "📇 Customer callback updated too."
+                    )
+                elif callback:
+                    await message.channel.send(f"⏳ Waiting note saved. Callback: {callback}")
+                else:
+                    await message.channel.send("⏳ Waiting note saved. No callback date detected.")
+                await send_long(message.channel, lead_menu_text(get_lead_by_id(lead["id"])))
+                return
 
             if step == "add_lead_note":
                 append_lead_note(lead,content); processing_session["step"]="lead_menu"
