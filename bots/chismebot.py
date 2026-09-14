@@ -613,10 +613,10 @@ def try_link_lead_to_existing_contact(lead):
     raw = lead.get("raw_notes") or ""
     raw_lower = raw.lower()
 
-    emails = set(re.findall(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", raw, flags=re.I))
+    emails = set(re.findall(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", raw, flags=re.I))
     phone_candidates = set()
-    for match in re.findall(r"(?:\\+?1[\\s.\\-]?)?(?:\\(?\\d{3}\\)?[\\s.\\-]?)\\d{3}[\\s.\\-]?\\d{4}", raw):
-        digits = re.sub(r"\\D", "", match)
+    for match in re.findall(r"(?:\+?1[\s.\-]?)?(?:\(?\d{3}\)?[\s.\-]?)\d{3}[\s.\-]?\d{4}", raw):
+        digits = re.sub(r"\D", "", match)
         if len(digits) == 11 and digits.startswith("1"):
             digits = digits[1:]
         if len(digits) == 10:
@@ -634,7 +634,7 @@ def try_link_lead_to_existing_contact(lead):
     matches = []
     for contact in contacts:
         email = (contact.get("email") or "").strip().lower()
-        phone = re.sub(r"\\D", "", contact.get("phone") or "")
+        phone = re.sub(r"\D", "", contact.get("phone") or "")
         if len(phone) == 11 and phone.startswith("1"):
             phone = phone[1:]
 
@@ -1140,6 +1140,17 @@ def register_chisme(bot):
             "5. Job completed\n"
             "6. Other"
         )
+
+    @bot.command(name="cancel")
+    async def cancel_workflow(ctx):
+        cleared = clear_user_sessions(ctx.author.id)
+        if cleared:
+            await ctx.send(
+                "👍 Workflow cancelled.\n\n"
+                "Nothing was deleted. You can pick it back up later."
+            )
+        else:
+            await ctx.send("👍 Nothing active to cancel.")
 
     @bot.listen("on_message")
     async def handle_cremove_session(message):
