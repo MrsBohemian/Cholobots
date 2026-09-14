@@ -15,6 +15,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 cremove_sessions = {}
 hotlist_note_sessions = {}
 stovetop_sessions = {}
+chisme_sessions = {}
 
 
 # ------------------------------------------------------------
@@ -535,6 +536,9 @@ async def advance_hotlist_customer(ctx, lookup, step):
 def clear_user_sessions(user_id):
     cleared = []
 
+    if chisme_sessions.pop(user_id, None):
+        cleared.append("Chisme")
+
     if stovetop_sessions.pop(user_id, None):
         cleared.append("Stovetop")
 
@@ -559,7 +563,7 @@ def register_chisme(bot):
 
             "📓 **Chisme Log**\n"
             "`!chisme Name`\n"
-            "Show that customer’s journal.\n\n"
+            "Open that customer’s workspace: recent chisme, callbacks, temperature, and Fridge/Stovetop/Oven moves.\n\n"
             "`!chisme Name | note`\n"
             "Add a note to that customer’s journal.\n\n"
 
@@ -610,26 +614,54 @@ def register_chisme(bot):
             contact = matches[0]
 
         if note is None:
-            journal, notes = get_journal(contact["id"])
-            lines = [
-                f"📓 **Chisme journal: {contact.get('name')}**",
-                f"Phone: {contact.get('phone') or 'not saved'}",
-                f"Stovetop: {contact.get('hotlist_temperature') or 50}° — {contact.get('pipeline_stage') or 'New Lead'}",
-                "",
-            ]
+            # Chisme is the general-purpose customer workspace, regardless of
+            # whether the customer is in the Fridge, on the Stovetop, or in the Oven.
+            clear_user_sessions(ctx.author.id)
 
+            journal, notes = get_journal(contact["id"])
             real_notes = [
                 n for n in notes
                 if n.get("note_type") != "journal_anchor"
                 and (n.get("note_text") or "").strip()
             ]
 
+            chisme_sessions[ctx.author.id] = {
+                "step": "customer_menu",
+                "contact_id": contact["id"],
+                "contact_name": contact.get("name") or "Unknown",
+            }
+
+            callback = contact.get("next_followup_date") or contact.get("next_contact_date")
+            temp = int(contact.get("hotlist_temperature") or 0)
+            location = "Oven" if temp >= 100 else ("Stovetop" if temp >= 51 else "Fridge")
+
+            lines = [
+                f"📓 **{contact.get('name')}**",
+                f"📍 {location} · 🌡 {temp}°",
+                f"Stage: {contact.get('pipeline_stage') or 'Stage not set'}",
+                f"Next: {contact.get('next_action') or 'No next action set'}",
+                f"📅 Callback: {callback or 'None scheduled'}",
+                "",
+                "**Recent chisme**",
+            ]
+
             if not real_notes:
                 lines.append("No chisme notes yet.")
-                lines.append(f"Add one with: `!chisme {contact.get('name')} | <note>`")
             else:
-                for n in real_notes[:8]:
-                    lines.append(f"- {n.get('note_date')}: {short(n.get('note_text'), 250)}")
+                for n in real_notes[:5]:
+                    lines.append(f"• {n.get('note_date')}: {short(n.get('note_text'), 220)}")
+
+            lines.extend([
+                "",
+                "**What do you want to do?**",
+                "1. 📝 Add chisme",
+                "2. 📅 Set / change callback",
+                "3. 🌡 Change temperature",
+                "4. 🍲 Move to Stovetop",
+                "5. 🧊 Move to Fridge",
+                "6. 🔥 Move to Oven",
+                "7. ✅ Done",
+            ])
 
             await send_long(ctx, "\n".join(lines))
             return
@@ -958,6 +990,285 @@ def register_chisme(bot):
 
         if message.content.startswith("!"):
             return
+
+        # Interactive Chisme customer workspace
+        chisme_session = chisme_sessions.get(message.author.id)
+        if chisme_session:
+            content = message.content.strip()
+            step = chisme_session.get("step")
+
+            contact_rows = (
+                supabase.table("chisme_contacts")
+                .select("*")
+                .eq("id", chisme_session.get("contact_id"))
+                .limit(1)
+                .execute()
+            ).data or []
+
+            if not contact_rows:
+                chisme_sessions.pop(message.author.id, None)
+                await message.channel.send("I lost that customer card. Run `!chisme Name` and try again.")
+                return
+
+            contact = contact_rows[0]
+
+            if step == "customer_menu":
+                if content == "1":
+                    chisme_session["step"] = "add_chisme"
+                    await message.channel.send(
+                        f"Tell me the chisme about **{contact.get('name')}**.\n"
+                        "I'll save your next message to their journal."
+                    )
+                    return
+
+                if content == "2":
+                    chisme_session["step"] = "callback"
+                    current_callback = contact.get("next_followup_date") or contact.get("next_contact_date")
+                    await message.channel.send(
+                        f"📅 Callback for **{contact.get('name')}**\n"
+                        f"Current: {current_callback or 'None scheduled'}\n\n"
+                        "1. Tomorrow\n"
+                        "2. Next week\n"
+                        "3. Two weeks\n"
+                        "4. One month\n"
+                        "5. Enter a date\n"
+                        "6. No callback"
+                    )
+                    return
+
+                if content == "3":
+                    chisme_session["step"] = "temperature"
+                    await message.channel.send(
+                        f"What temperature should **{contact.get('name')}** be?\n"
+                        "Enter a whole number from 0 to 100."
+                    )
+                    return
+
+                if content == "4":
+                    new_temp = max(51, min(99, int(contact.get("hotlist_temperature") or 51)))
+                    # If this customer was in the Oven, remove the active-project row.
+                    supabase.table("chisme_active").delete().eq("contact_id", contact["id"]).execute()
+                    supabase.table("chisme_contacts").update({
+                        "hotlist_temperature": new_temp,
+                        "status": "lead",
+                        "pipeline_stage": contact.get("pipeline_stage") or "New Lead",
+                        "next_action": contact.get("next_action") or "Contact customer / schedule site visit",
+                        "last_outcome": "Moved to Stovetop from Chisme workspace",
+                        "updated_at": now_iso(),
+                    }).eq("id", contact["id"]).execute()
+                    add_note(
+                        contact,
+                        f"Moved to Stovetop at {new_temp}°.",
+                        created_by=str(message.author),
+                        note_type="chisme_movement",
+                    )
+                    chisme_sessions.pop(message.author.id, None)
+                    await message.channel.send(
+                        f"🍲 **{contact.get('name')}** moved to the Stovetop at {new_temp}°."
+                    )
+                    return
+
+                if content == "5":
+                    supabase.table("chisme_active").delete().eq("contact_id", contact["id"]).execute()
+                    supabase.table("chisme_contacts").update({
+                        "hotlist_temperature": 50,
+                        "status": "lead",
+                        "last_outcome": "Moved to Fridge from Chisme workspace",
+                        "updated_at": now_iso(),
+                    }).eq("id", contact["id"]).execute()
+                    add_note(
+                        contact,
+                        "Moved to Fridge at 50°.",
+                        created_by=str(message.author),
+                        note_type="chisme_movement",
+                    )
+                    chisme_sessions.pop(message.author.id, None)
+                    await message.channel.send(
+                        f"🧊 **{contact.get('name')}** moved to the Fridge at 50°."
+                    )
+                    return
+
+                if content == "6":
+                    burner = next_available_burner()
+                    supabase.table("chisme_contacts").update({
+                        "hotlist_temperature": 100,
+                        "status": "active_project",
+                        "pipeline_stage": "Active Project",
+                        "next_action": "Active project in oven",
+                        "last_outcome": "Moved to Oven from Chisme workspace",
+                        "updated_at": now_iso(),
+                    }).eq("id", contact["id"]).execute()
+                    set_active(
+                        contact,
+                        reason="Moved to Oven from Chisme workspace.",
+                        burner_position=burner,
+                        owner="Daniel",
+                    )
+                    add_note(
+                        contact,
+                        "Moved to Oven from Chisme workspace.",
+                        created_by=str(message.author),
+                        note_type="chisme_movement",
+                    )
+                    chisme_sessions.pop(message.author.id, None)
+                    await message.channel.send(
+                        f"🔥 **{contact.get('name')}** moved to the Oven.\n"
+                        f"Oven slot: {burner}"
+                    )
+                    return
+
+                if content == "7":
+                    chisme_sessions.pop(message.author.id, None)
+                    await message.channel.send("✅ Chisme workspace closed.")
+                    return
+
+                await message.channel.send("Reply with 1, 2, 3, 4, 5, 6, or 7.")
+                return
+
+            if step == "add_chisme":
+                add_note(
+                    contact,
+                    content,
+                    created_by=str(message.author),
+                    note_type="chisme",
+                )
+                chisme_session["step"] = "customer_menu"
+                await message.channel.send(
+                    f"📝 Chisme saved for **{contact.get('name')}**.\n\n"
+                    "1. Add more chisme\n"
+                    "2. Set / change callback\n"
+                    "3. Change temperature\n"
+                    "4. Move to Stovetop\n"
+                    "5. Move to Fridge\n"
+                    "6. Move to Oven\n"
+                    "7. Done"
+                )
+                return
+
+            if step == "callback":
+                if content == "5":
+                    chisme_session["step"] = "callback_custom"
+                    await message.channel.send("Type the callback date like `10/1/2026` or `2026-10-01`.")
+                    return
+
+                if content == "6":
+                    supabase.table("chisme_contacts").update({
+                        "next_followup_date": None,
+                        "next_contact_date": None,
+                        "updated_at": now_iso(),
+                    }).eq("id", contact["id"]).execute()
+                    add_note(
+                        contact,
+                        "Callback cleared.",
+                        created_by=str(message.author),
+                        note_type="callback",
+                    )
+                    chisme_sessions.pop(message.author.id, None)
+                    await message.channel.send(
+                        f"📅 No callback scheduled for **{contact.get('name')}**."
+                    )
+                    return
+
+                if content == "4":
+                    callback_date = (date.today() + timedelta(days=30)).isoformat()
+                else:
+                    callback_date = parse_followup_response(content)
+
+                if not callback_date:
+                    await message.channel.send("Reply with 1, 2, 3, 4, 5, or 6.")
+                    return
+
+                supabase.table("chisme_contacts").update({
+                    "next_followup_date": callback_date,
+                    "next_contact_date": callback_date,
+                    "updated_at": now_iso(),
+                }).eq("id", contact["id"]).execute()
+                add_note(
+                    contact,
+                    f"Callback scheduled for {callback_date}.",
+                    created_by=str(message.author),
+                    note_type="callback",
+                )
+                chisme_sessions.pop(message.author.id, None)
+                await message.channel.send(
+                    f"📅 Callback set for **{contact.get('name')}**: {callback_date}"
+                )
+                return
+
+            if step == "callback_custom":
+                callback_date = parse_followup_response(content)
+                if not callback_date:
+                    await message.channel.send("Use a date like `10/1/2026` or `2026-10-01`.")
+                    return
+
+                supabase.table("chisme_contacts").update({
+                    "next_followup_date": callback_date,
+                    "next_contact_date": callback_date,
+                    "updated_at": now_iso(),
+                }).eq("id", contact["id"]).execute()
+                add_note(
+                    contact,
+                    f"Callback scheduled for {callback_date}.",
+                    created_by=str(message.author),
+                    note_type="callback",
+                )
+                chisme_sessions.pop(message.author.id, None)
+                await message.channel.send(
+                    f"📅 Callback set for **{contact.get('name')}**: {callback_date}"
+                )
+                return
+
+            if step == "temperature":
+                try:
+                    new_temp = int(content)
+                except ValueError:
+                    await message.channel.send("Enter a whole number from 0 to 100.")
+                    return
+
+                if new_temp < 0 or new_temp > 100:
+                    await message.channel.send("Enter a number from 0 to 100.")
+                    return
+
+                updates = {
+                    "hotlist_temperature": new_temp,
+                    "updated_at": now_iso(),
+                }
+
+                if new_temp >= 100:
+                    updates.update({
+                        "status": "active_project",
+                        "pipeline_stage": "Active Project",
+                        "next_action": "Active project in oven",
+                    })
+                    burner = next_available_burner()
+                    set_active(
+                        contact,
+                        reason="Temperature changed to 100° from Chisme workspace.",
+                        burner_position=burner,
+                        owner="Daniel",
+                    )
+                    destination = "Oven"
+                elif new_temp >= 51:
+                    supabase.table("chisme_active").delete().eq("contact_id", contact["id"]).execute()
+                    updates["status"] = "lead"
+                    destination = "Stovetop"
+                else:
+                    supabase.table("chisme_active").delete().eq("contact_id", contact["id"]).execute()
+                    updates["status"] = "lead"
+                    destination = "Fridge"
+
+                supabase.table("chisme_contacts").update(updates).eq("id", contact["id"]).execute()
+                add_note(
+                    contact,
+                    f"Temperature changed to {new_temp}°.",
+                    created_by=str(message.author),
+                    note_type="chisme_temperature",
+                )
+                chisme_sessions.pop(message.author.id, None)
+                await message.channel.send(
+                    f"🌡 **{contact.get('name')}** is now {new_temp}° — {destination}."
+                )
+                return
 
         # Interactive Stovetop workspace
         stovetop_session = stovetop_sessions.get(message.author.id)
