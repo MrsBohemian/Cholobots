@@ -657,6 +657,52 @@ def try_link_lead_to_existing_contact(lead):
     return refreshed or lead
 
 
+def sync_lead_callback_to_contact(lead):
+    if not lead:
+        return lead
+    lead = try_link_lead_to_existing_contact(lead)
+    if lead.get("callback_date") and lead.get("contact_id"):
+        supabase.table("chisme_contacts").update({
+            "next_followup_date": lead["callback_date"],
+            "next_contact_date": lead["callback_date"],
+        }).eq("id", lead["contact_id"]).execute()
+    return lead
+
+
+def lead_opportunity_name(lead, label):
+    if lead and lead.get("contact_id"):
+        rows=(supabase.table("chisme_contacts").select("name").eq("id",lead["contact_id"]).limit(1).execute()).data or []
+        if rows and rows[0].get("name"):
+            return f"{rows[0]['name']} — {label}"[:160]
+    return label[:160]
+
+
+def promote_lead_to_opportunity(lead, label="Lead opportunity"):
+    if not lead:
+        return None
+    lead=sync_lead_callback_to_contact(try_link_lead_to_existing_contact(lead))
+    existing=(supabase.table("chisme_opportunities").select("*").eq("lead_id",lead["id"]).limit(1).execute()).data or []
+    payload={"contact_id":lead.get("contact_id"),"scope_notes":lead.get("raw_notes") or "","next_action":lead.get("next_action"),"callback_date":lead.get("callback_date"),"status":"open","updated_at":now_iso()}
+    if existing:
+        opp=existing[0]
+        supabase.table("chisme_opportunities").update(payload).eq("id",opp["id"]).execute()
+    else:
+        payload.update({"lead_id":lead["id"],"opportunity_name":lead_opportunity_name(lead,label),"pipeline_stage":"New Opportunity","temperature":50})
+        rows=supabase.table("chisme_opportunities").insert(payload).execute().data or []
+        if not rows:
+            return None
+        opp=rows[0]
+    supabase.table("chisme_leads").update({"status":"processed","updated_at":now_iso()}).eq("id",lead["id"]).execute()
+    return opp
+
+
+def auto_promote_callback_leads():
+    rows=(supabase.table("chisme_leads").select("*").eq("status","unprocessed").execute()).data or []
+    for lead in rows:
+        if lead.get("callback_date"):
+            promote_lead_to_opportunity(lead,"Callback / follow-up")
+
+
 def lead_menu_text(lead):
     lead = try_link_lead_to_existing_contact(lead)
     callback = lead.get("callback_date")
@@ -687,8 +733,7 @@ def lead_menu_text(lead):
         "5. 🤝 Ask colleague / subcontractor\n"
         "6. ⏳ Waiting / set callback\n"
         "7. 📝 Add note\n"
-        "8. ✅ Mark processed → create opportunity\n"
-        "9. 🧹 Close / remove lead\n"
+        "8. 🧹 Close / remove lead\n"
         "0. ↩️ Back to Lead Inbox"
     )
 
@@ -735,6 +780,7 @@ def register_chisme(bot):
     @bot.command(name="leads")
     async def leads(ctx):
         clear_user_sessions(ctx.author.id)
+        auto_promote_callback_leads()
         rows = get_unprocessed_leads()
         if not rows:
             await ctx.send("📥 **Lead Inbox is clear.** No unprocessed leads.")
@@ -1239,10 +1285,6 @@ def register_chisme(bot):
                     await message.channel.send("📝 Add the note:")
                     return
                 if content == "8":
-                    processing_session["step"] = "opportunity_name"
-                    await message.channel.send("✅ Give this opportunity a short name, like `Replace 3 vanity lights` or `New mailbox`.")
-                    return
-                if content == "9":
                     processing_session["step"] = "close_reason"
                     await message.channel.send("🧹 Why are we removing this from the Lead Inbox?\n\n1. Not responding / went cold\n2. Customer no longer interested\n3. Not a fit for Handley Man\n4. Duplicate\n5. Already handled elsewhere\n6. Other")
                     return
@@ -1258,15 +1300,28 @@ def register_chisme(bot):
                         lines.append(f"**{i}.** {lead_preview(item)}\n   Next: {item.get('next_action') or 'Process lead'}")
                     lines.extend(["","Reply with a number, or `cancel`."])
                     await send_long(message.channel,"\n".join(lines)); return
-                await message.channel.send("Reply with 1–9, or 0 to go back.")
+                await message.channel.send("Reply with 1–8, or 0 to go back.")
                 return
 
             if step == "contact_outcome":
                 append_lead_note(lead, content, "Contact outcome")
-                supabase.table("chisme_leads").update({"next_action": content[:500], "updated_at": now_iso()}).eq("id", lead["id"]).execute()
-                processing_session["step"]="lead_menu"
-                await message.channel.send("📞 Contact outcome saved.")
-                await send_long(message.channel, lead_menu_text(get_lead_by_id(lead["id"])))
+
+                # Contacting the lead completes intake. Keep the history, but
+                # remove it from the active Lead Inbox. Do not create an
+                # opportunity unless later activity actually turns into one.
+                supabase.table("chisme_leads").update({
+                    "status": "closed",
+                    "next_action": f"Handled: {content}"[:500],
+                    "updated_at": now_iso(),
+                }).eq("id", lead["id"]).execute()
+
+                lead_processing_sessions.pop(message.author.id, None)
+
+                await message.channel.send(
+                    "✅ **Lead handled and removed from the Lead Inbox.**\n"
+                    f"Contact outcome: {content}\n\n"
+                    "The lead history is still saved."
+                )
                 return
 
             if step == "customer_lookup":
@@ -1310,6 +1365,8 @@ def register_chisme(bot):
                 if index<0 or index>=len(matches): await message.channel.send("That customer number isn't in the list."); return
                 contact=matches[index]
                 supabase.table("chisme_leads").update({"contact_id":contact["id"],"updated_at":now_iso()}).eq("id",lead["id"]).execute()
+                lead=get_lead_by_id(lead["id"])
+                sync_lead_callback_to_contact(lead)
                 append_lead_note(lead,f"Linked to Rolodex customer: {contact.get('name')}","Customer")
                 processing_session["step"]="lead_menu"; processing_session.pop("customer_matches",None)
                 await message.channel.send(f"📇 Lead linked to **{contact.get('name')}**.")
@@ -1337,6 +1394,8 @@ def register_chisme(bot):
                     refreshed=(supabase.table("chisme_contacts").select("*").eq("id",contact["id"]).limit(1).execute()).data or []
                     if refreshed: contact=refreshed[0]
                 supabase.table("chisme_leads").update({"contact_id":contact["id"],"updated_at":now_iso()}).eq("id",lead["id"]).execute()
+                lead=get_lead_by_id(lead["id"])
+                sync_lead_callback_to_contact(lead)
                 append_lead_note(lead,f"Linked to Rolodex customer: {contact.get('name')}","Customer")
                 processing_session["step"]="lead_menu"
                 await message.channel.send(f"📇 Customer card linked: **{contact.get('name')}**.")
@@ -1346,71 +1405,53 @@ def register_chisme(bot):
             if step == "schedule_note":
                 append_lead_note(lead,content,"Scheduling")
                 supabase.table("chisme_leads").update({"next_action":content[:500],"updated_at":now_iso()}).eq("id",lead["id"]).execute()
-                processing_session["step"]="lead_menu"; await message.channel.send("📅 Scheduling plan saved.")
-                await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"]))); return
+                opportunity=promote_lead_to_opportunity(get_lead_by_id(lead["id"]),"Scheduling / estimate")
+                lead_processing_sessions.pop(message.author.id,None)
+                await message.channel.send("📅 Scheduling plan saved. ✅ Lead moved out of intake and into Opportunities." if opportunity else "📅 Scheduling plan saved, but opportunity creation failed, so the lead stayed in intake.")
+                return
 
             if step == "research_task":
                 append_lead_note(lead,content,"Research")
                 supabase.table("chisme_leads").update({"next_action":f"Research: {content}"[:500],"updated_at":now_iso()}).eq("id",lead["id"]).execute()
-                processing_session["step"]="lead_menu"; await message.channel.send("🔎 Research task saved.")
-                await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"]))); return
+                opportunity=promote_lead_to_opportunity(get_lead_by_id(lead["id"]),"Research follow-up")
+                lead_processing_sessions.pop(message.author.id,None)
+                await message.channel.send("🔎 Research task saved. ✅ Lead moved out of intake and into Opportunities." if opportunity else "🔎 Research task saved, but opportunity creation failed, so the lead stayed in intake.")
+                return
 
             if step == "network_task":
                 append_lead_note(lead,content,"Network / subcontractor")
                 supabase.table("chisme_leads").update({"next_action":f"Follow up with network: {content}"[:500],"updated_at":now_iso()}).eq("id",lead["id"]).execute()
-                processing_session["step"]="lead_menu"; await message.channel.send("🤝 Network/subcontractor action saved.")
-                await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"]))); return
+                opportunity=promote_lead_to_opportunity(get_lead_by_id(lead["id"]),"Network / subcontractor follow-up")
+                lead_processing_sessions.pop(message.author.id,None)
+                await message.channel.send("🤝 Network/subcontractor action saved. ✅ Lead moved out of intake and into Opportunities." if opportunity else "🤝 Action saved, but opportunity creation failed, so the lead stayed in intake.")
+                return
 
             if step == "waiting_note":
-                # A customer card may have been created after the original lead brain dump.
-                # Re-check the raw capture now so callbacks follow the customer automatically.
-                lead = try_link_lead_to_existing_contact(lead)
-                callback = parse_followup_response(content)
-                append_lead_note(lead, content, "Waiting")
-                payload = {
-                    "next_action": f"Waiting: {content}"[:500],
-                    "updated_at": now_iso(),
-                }
+                lead=try_link_lead_to_existing_contact(lead)
+                callback=parse_followup_response(content)
+                append_lead_note(lead,content,"Waiting")
+                payload={"next_action":f"Waiting: {content}"[:500],"updated_at":now_iso()}
                 if callback:
-                    payload["callback_date"] = callback
-                supabase.table("chisme_leads").update(payload).eq("id", lead["id"]).execute()
-
-                if callback and lead.get("contact_id"):
-                    supabase.table("chisme_contacts").update({
-                        "next_followup_date": callback,
-                        "next_contact_date": callback,
-                    }).eq("id", lead["contact_id"]).execute()
-
-                processing_session["step"] = "lead_menu"
-                if callback and lead.get("contact_id"):
-                    await message.channel.send(
-                        f"⏳ Waiting note saved. Callback: {callback}\n"
-                        "📇 Customer callback updated too."
-                    )
-                elif callback:
-                    await message.channel.send(f"⏳ Waiting note saved. Callback: {callback}")
+                    payload["callback_date"]=callback
+                supabase.table("chisme_leads").update(payload).eq("id",lead["id"]).execute()
+                lead=get_lead_by_id(lead["id"])
+                sync_lead_callback_to_contact(lead)
+                opportunity=promote_lead_to_opportunity(lead,"Callback / follow-up")
+                lead_processing_sessions.pop(message.author.id,None)
+                if opportunity:
+                    if callback and lead.get("contact_id"):
+                        await message.channel.send(f"⏳ Callback saved for {callback}.\n📇 It is in the normal Chisme customer callback fields too.\n✅ Lead moved out of intake and into Opportunities.")
+                    elif callback:
+                        await message.channel.send(f"⏳ Callback saved for {callback}.\n✅ Lead moved out of intake and into Opportunities.")
+                    else:
+                        await message.channel.send("⏳ Waiting action saved. ✅ Lead moved out of intake and into Opportunities.")
                 else:
-                    await message.channel.send("⏳ Waiting note saved. No callback date detected.")
-                await send_long(message.channel, lead_menu_text(get_lead_by_id(lead["id"])))
+                    await message.channel.send("⏳ Waiting action saved, but opportunity creation failed, so the lead stayed in intake.")
                 return
 
             if step == "add_lead_note":
                 append_lead_note(lead,content); processing_session["step"]="lead_menu"
                 await message.channel.send("📝 Note added."); await send_long(message.channel,lead_menu_text(get_lead_by_id(lead["id"]))); return
-
-            if step == "opportunity_name":
-                opportunity_name=content.strip()[:160]
-                if not opportunity_name: await message.channel.send("Give the opportunity a short name."); return
-                rows=(supabase.table("chisme_opportunities").insert({
-                    "lead_id":lead["id"],"contact_id":lead.get("contact_id"),"opportunity_name":opportunity_name,
-                    "scope_notes":lead.get("raw_notes") or "","pipeline_stage":"New Opportunity","temperature":50,
-                    "next_action":lead.get("next_action"),"callback_date":lead.get("callback_date"),"status":"open","updated_at":now_iso(),
-                }).execute()).data or []
-                if not rows: await message.channel.send("I couldn't create the opportunity, so I left the lead unprocessed."); return
-                supabase.table("chisme_leads").update({"status":"processed","next_action":"Opportunity created","updated_at":now_iso()}).eq("id",lead["id"]).execute()
-                lead_processing_sessions.pop(message.author.id,None)
-                await message.channel.send(f"✅ **Lead processed.**\nOpportunity created: **{opportunity_name}**\nThis lead is now out of the Lead Inbox.")
-                return
 
             if step == "close_reason":
                 reason_map={"1":"Not responding / went cold","2":"Customer no longer interested","3":"Not a fit for Handley Man","4":"Duplicate","5":"Already handled elsewhere"}
