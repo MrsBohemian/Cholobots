@@ -121,7 +121,7 @@ def fetch_metiche_raw_time() -> Dict[str, Any]:
 # ---------- LIVE CRUDOBOT PROJECTS (SUPABASE) ----------
 
 def require_supabase() -> bool:
-    return client is not None
+    return supabase is not None
 
 def sb_rows(response) -> List[Dict[str, Any]]:
     return getattr(response, "data", None) or []
@@ -133,7 +133,7 @@ def find_chisme_contacts(query: str) -> List[Dict[str, Any]]:
     if not q:
         return []
     response = (
-        client.table("chisme_contacts")
+        supabase.table("chisme_contacts")
         .select("id,name,phone,email,address")
         .ilike("name", f"%{q}%")
         .limit(10)
@@ -149,7 +149,7 @@ def find_chisme_contacts(query: str) -> List[Dict[str, Any]]:
 def list_crudo_projects(contact_id: Optional[str] = None, include_completed: bool = False) -> List[Dict[str, Any]]:
     if not require_supabase():
         return []
-    query = client.table("crudo_projects").select("*")
+    query = supabase.table("crudo_projects").select("*")
     if contact_id:
         query = query.eq("contact_id", contact_id)
     if not include_completed:
@@ -160,7 +160,7 @@ def get_crudo_project_tasks(project_id: str) -> List[Dict[str, Any]]:
     if not require_supabase():
         return []
     return sb_rows(
-        client.table("crudo_project_tasks")
+        supabase.table("crudo_project_tasks")
         .select("*")
         .eq("project_id", project_id)
         .order("task_order")
@@ -169,7 +169,7 @@ def get_crudo_project_tasks(project_id: str) -> List[Dict[str, Any]]:
     )
 
 def create_crudo_project(contact_id: str, project_name: str) -> Dict[str, Any]:
-    response = client.table("crudo_projects").insert({
+    response = supabase.table("crudo_projects").insert({
         "contact_id": contact_id,
         "project_name": project_name.strip(),
         "status": "active",
@@ -198,11 +198,11 @@ def create_crudo_tasks(project_id: str, task_names: List[str]) -> List[Dict[str,
         "status": "pending",
         "updated_at": now_iso(),
     } for idx, task in enumerate(cleaned)]
-    return sb_rows(client.table("crudo_project_tasks").insert(payload).execute())
+    return sb_rows(supabase.table("crudo_project_tasks").insert(payload).execute())
 
 def set_crudo_task_status(task_id: str, status: str):
     return (
-        client.table("crudo_project_tasks")
+        supabase.table("crudo_project_tasks")
         .update({
             "status": status,
             "completed_at": now_iso() if status == "completed" else None,
@@ -214,7 +214,7 @@ def set_crudo_task_status(task_id: str, status: str):
 
 def complete_crudo_project(project_id: str):
     return (
-        client.table("crudo_projects")
+        supabase.table("crudo_projects")
         .update({
             "status": "completed",
             "completed_at": now_iso(),
