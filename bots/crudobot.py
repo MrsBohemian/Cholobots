@@ -8,13 +8,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib import request
 
 import discord
-from discord.ext import commands
-
-try:
-    from config import client
-except Exception:
-    client = None
-    
 from config import client
 from supabase import create_client
 
