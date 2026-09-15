@@ -187,6 +187,12 @@ class TimeSession:
     other_tasks_accomplished: List[str] = field(default_factory=list)
     drift_events: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Optional Crudobot linkage for the current project work.
+    crudo_project_id: Optional[str] = None
+    crudo_project_name: Optional[str] = None
+    crudo_task_id: Optional[str] = None
+    crudo_task_name: Optional[str] = None
+
 
 @dataclass
 class FinancialExecution:
@@ -541,7 +547,230 @@ def mark_wakeup_sent(wakeup_id: str):
         .execute()
     )
 
-# ---------- Project task persistence ----------
+# ---------- Crudobot project / job-costing bridge ----------
+
+def find_active_crudo_projects(focus: str, limit: int = 10):
+    """Match a human Metiche focus (for example 'Vasquez') to active Crudobot projects."""
+    focus = (focus or "").strip()
+    if not focus or not require_supabase():
+        return []
+
+    projects = (
+        supabase.table("crudo_projects")
+        .select("*")
+        .eq("status", "active")
+        .limit(limit)
+        .execute()
+    ).data or []
+
+    contact_ids = list({p.get("contact_id") for p in projects if p.get("contact_id")})
+    contacts_by_id = {}
+
+    if contact_ids:
+        contacts = (
+            supabase.table("chisme_contacts")
+            .select("id,name")
+            .in_("id", contact_ids)
+            .execute()
+        ).data or []
+        contacts_by_id = {c.get("id"): c for c in contacts}
+
+    incoming = normalize_task(focus)
+    incoming_words = {
+        w for w in re.findall(r"[a-zA-Z0-9]+", incoming)
+        if len(w) > 2
+    }
+
+    matches = []
+    for project in projects:
+        customer_name = str(
+            (contacts_by_id.get(project.get("contact_id")) or {}).get("name") or ""
+        ).strip()
+        project_name = str(project.get("project_name") or "").strip()
+        customer_norm = normalize_task(customer_name)
+        project_norm = normalize_task(project_name)
+
+        exactish = any(
+            candidate and (
+                candidate == incoming
+                or candidate in incoming
+                or incoming in candidate
+            )
+            for candidate in (customer_norm, project_norm)
+        )
+
+        candidate_words = {
+            w for w in re.findall(
+                r"[a-zA-Z0-9]+",
+                f"{customer_norm} {project_norm}",
+            )
+            if len(w) > 2
+        }
+        overlap = len(incoming_words & candidate_words)
+
+        if exactish or overlap >= 1:
+            row = dict(project)
+            row["customer_name"] = customer_name
+            row["_match_score"] = (100 if exactish else 0) + overlap
+            matches.append(row)
+
+    matches.sort(key=lambda p: p.get("_match_score", 0), reverse=True)
+    return matches
+
+
+def fetch_crudo_project_tasks(project_id: str, include_completed: bool = True):
+    if not project_id or not require_supabase():
+        return []
+
+    query = (
+        supabase.table("crudo_project_tasks")
+        .select("*")
+        .eq("project_id", project_id)
+        .order("task_order")
+        .order("created_at")
+    )
+
+    if not include_completed:
+        query = query.neq("status", "completed")
+
+    return query.execute().data or []
+
+
+def insert_crudo_labor_entry(
+    project_id: str,
+    task_id: Optional[str],
+    worker: str,
+    started_at: str,
+    ended_at: str,
+    actual_minutes: int,
+    source: str,
+    notes: Optional[str] = None,
+):
+    """Persist one Metiche time block as underlying Crudobot job-costing labor."""
+    if not project_id or not require_supabase():
+        return None
+
+    row = {
+        "project_id": project_id,
+        "task_id": task_id,
+        "worker": worker,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "actual_minutes": max(0, int(actual_minutes or 0)),
+        "source": source or "metiche",
+        "notes": (notes or "").strip() or None,
+    }
+
+    response = supabase.table("crudo_labor_entries").insert(row).execute()
+    return (response.data or [None])[0]
+
+
+def format_crudo_task_picker(project, tasks):
+    lines = [
+        f"🔥 **{project.get('project_name') or 'Active project'}**",
+        f"Customer: **{project.get('customer_name') or 'Unknown'}**",
+        "",
+        "What are we working on?",
+    ]
+
+    for idx, task in enumerate(tasks, start=1):
+        completed = str(task.get("status") or "").lower() == "completed"
+        mark = "✅" if completed else "⬜"
+        lines.append(f"{mark} {idx}. {task.get('task_name') or '(unnamed task)'}")
+
+    lines.extend(["", "Reply with a task number, `other`, or `cancel`."])
+    return "\n".join(lines)
+
+
+async def resolve_crudo_focus(bot: commands.Bot, ctx: commands.Context, focus: str):
+    """Resolve an ordinary Metiche focus to an active Crudobot project/task when possible."""
+    matches = find_active_crudo_projects(focus)
+    if not matches:
+        return None
+
+    def check(m: discord.Message):
+        return (
+            m.author.id == ctx.author.id
+            and m.channel.id == ctx.channel.id
+            and not m.content.strip().startswith("!")
+        )
+
+    project = matches[0]
+
+    if len(matches) > 1:
+        lines = ["🔥 I found multiple active Crudobot projects:", ""]
+        for idx, match in enumerate(matches, start=1):
+            lines.append(
+                f"{idx}. **{match.get('customer_name') or 'Unknown customer'} — "
+                f"{match.get('project_name') or 'Unnamed project'}**"
+            )
+        lines.append("\nWhich project? Reply with the number or `cancel`.")
+        await ctx.send("\n".join(lines))
+
+        choice = (await bot.wait_for("message", check=check)).content.strip()
+        if choice.lower() == "cancel":
+            return {"cancelled": True}
+        if not choice.isdigit() or not (1 <= int(choice) <= len(matches)):
+            await ctx.send(
+                "I couldn't read that project number. "
+                "Starting the Metiche focus without a Crudobot link."
+            )
+            return None
+        project = matches[int(choice) - 1]
+
+    tasks = fetch_crudo_project_tasks(project.get("id"), include_completed=True)
+
+    if not tasks:
+        await ctx.send(
+            f"🔥 Matched **{project.get('project_name')}**, but it has no Crudobot punch list yet.\n"
+            "I'll track this as project-level labor."
+        )
+        return {
+            "project_id": project.get("id"),
+            "project_name": project.get("project_name"),
+            "task_id": None,
+            "task_name": None,
+        }
+
+    await ctx.send(format_crudo_task_picker(project, tasks))
+    choice = (await bot.wait_for("message", check=check)).content.strip()
+    lower = choice.lower()
+
+    if lower == "cancel":
+        return {"cancelled": True}
+
+    if lower in {"other", "something else", "none"}:
+        return {
+            "project_id": project.get("id"),
+            "project_name": project.get("project_name"),
+            "task_id": None,
+            "task_name": None,
+        }
+
+    indexes = parse_task_indexes(choice, len(tasks))
+    if len(indexes) != 1:
+        await ctx.send(
+            "I couldn't read one punch-list task number. "
+            "I'll track this as project-level labor instead."
+        )
+        return {
+            "project_id": project.get("id"),
+            "project_name": project.get("project_name"),
+            "task_id": None,
+            "task_name": None,
+        }
+
+    task = tasks[indexes[0]]
+    return {
+        "project_id": project.get("id"),
+        "project_name": project.get("project_name"),
+        "task_id": task.get("id"),
+        "task_name": task.get("task_name"),
+    }
+
+
+# ---------- Legacy Metiche project task persistence ----------
+
 
 def find_chisme_contacts(lookup, limit=5):
     lookup = (lookup or "").strip()
@@ -1517,6 +1746,10 @@ def build_raw_time_payload(session: TimeSession) -> Dict[str, Any]:
         "total_label": minutes_to_label(total_minutes(session.blocks)),
         "blocks_logged": len(session.blocks),
         "blocks": session.blocks,
+        "crudo_project_id": session.crudo_project_id,
+        "crudo_project_name": session.crudo_project_name,
+        "crudo_task_id": session.crudo_task_id,
+        "crudo_task_name": session.crudo_task_name,
     }
 def resolve_focus(tasks: List[Dict[str, Any]], target: str) -> str:
     normalized = normalize_daily_items(tasks)
@@ -1827,8 +2060,27 @@ def register_metiche(bot: commands.Bot):
             "activity": activity_text,
             "active_task": session.active_task,
             "source": source,
+            "crudo_project_id": session.crudo_project_id,
+            "crudo_project_name": session.crudo_project_name,
+            "crudo_task_id": session.crudo_task_id,
+            "crudo_task_name": session.crudo_task_name,
         }
         session.blocks.append(block)
+
+        if session.crudo_project_id and duration > 0:
+            try:
+                insert_crudo_labor_entry(
+                    project_id=session.crudo_project_id,
+                    task_id=session.crudo_task_id,
+                    worker=session.person,
+                    started_at=block["start"],
+                    ended_at=block["end"],
+                    actual_minutes=duration,
+                    source=f"metiche:{source}",
+                    notes=activity_text,
+                )
+            except Exception as exc:
+                print(f"[CRUDO LABOR ERROR] {type(exc).__name__}: {exc}", flush=True)
         session.last_timestamp = now.isoformat()
 
         insert_metiche_checkin({
@@ -3062,6 +3314,19 @@ def register_metiche(bot: commands.Bot):
         if not active_focus:
             await ctx.send("I need a task or focus before starting.")
             return
+
+
+        crudo_binding = await resolve_crudo_focus(
+            bot,
+            ctx,
+            active_focus,
+        )
+
+        if crudo_binding and crudo_binding.get("cancelled"):
+            await ctx.send("Okay. Today's work session was not started.")
+            return
+
+        crudo_binding = crudo_binding or {}
     
         now = local_now().isoformat()
     
@@ -3075,6 +3340,10 @@ def register_metiche(bot: commands.Bot):
             active_task=active_focus,
             focus_started_at=now,
             daily_tasks=tasks,
+            crudo_project_id=crudo_binding.get("project_id"),
+            crudo_project_name=crudo_binding.get("project_name"),
+            crudo_task_id=crudo_binding.get("task_id"),
+            crudo_task_name=crudo_binding.get("task_name"),
         )
     
         active_time_sessions[ctx.channel.id] = session
@@ -3148,8 +3417,15 @@ def register_metiche(bot: commands.Bot):
                 ),
             )
     
+        crudo_text = ""
+        if session.crudo_project_id:
+            crudo_text = f"\n\n💰 Crudobot: {session.crudo_project_name}"
+            if session.crudo_task_name:
+                crudo_text += f" → {session.crudo_task_name}"
+
         await ctx.send(
-            f"🟢 Active:\n{active_focus}\n\n"
+            f"🟢 Active:\n{active_focus}"
+            f"{crudo_text}\n\n"
             f"⏳ Pending:\n{pending_text}"
         )
 
