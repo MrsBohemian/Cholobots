@@ -636,6 +636,65 @@ def fetch_crudo_project_tasks(project_id: str, include_completed: bool = True):
     return query.execute().data or []
 
 
+def set_crudo_project_task_status(task_id: str, status: str):
+    """Update the persistent Crudobot punch-list task from Metiche execution."""
+    if not task_id or not require_supabase():
+        return None
+
+    now = now_iso()
+    payload = {
+        "status": status,
+        "completed_at": now if status == "completed" else None,
+        "updated_at": now,
+    }
+    return (
+        supabase.table("crudo_project_tasks")
+        .update(payload)
+        .eq("id", task_id)
+        .execute()
+    )
+
+
+def resolve_crudo_task_choice(project_id: str, target: str):
+    """Resolve a number or task label against one project's persistent punch list."""
+    if not project_id:
+        return None
+
+    tasks = fetch_crudo_project_tasks(project_id, include_completed=False)
+    if not tasks:
+        return None
+
+    raw = (target or "").strip()
+    indexes = parse_task_indexes(raw, len(tasks))
+    if len(indexes) == 1:
+        return tasks[indexes[0]]
+
+    incoming = normalize_task(raw)
+    if not incoming:
+        return None
+
+    exact = [t for t in tasks if normalize_task(t.get("task_name", "")) == incoming]
+    if len(exact) == 1:
+        return exact[0]
+
+    partial = [
+        t for t in tasks
+        if incoming in normalize_task(t.get("task_name", ""))
+        or normalize_task(t.get("task_name", "")) in incoming
+    ]
+    return partial[0] if len(partial) == 1 else None
+
+
+def format_pending_crudo_tasks(project_id: str):
+    tasks = fetch_crudo_project_tasks(project_id, include_completed=False)
+    if not tasks:
+        return ""
+    return "\n".join(
+        f"{idx}. {task.get('task_name') or '(unnamed task)'}"
+        for idx, task in enumerate(tasks, start=1)
+    )
+
+
 def insert_crudo_labor_entry(
     project_id: str,
     task_id: Optional[str],
@@ -2348,10 +2407,26 @@ def register_metiche(bot: commands.Bot):
             return True
 
         if lower.startswith("switch "):
-            target = resolve_focus(
-                session.daily_tasks,
-                raw[7:].strip(),
-            )
+            requested = raw[7:].strip()
+            crudo_task = None
+
+            # If we're already inside a Crudobot project, a number/task label first
+            # means its punch list. This lets Daniel move task-to-task without
+            # re-selecting the whole project from !mtoday.
+            if session.crudo_project_id:
+                crudo_task = resolve_crudo_task_choice(
+                    session.crudo_project_id,
+                    requested,
+                )
+
+            if crudo_task:
+                target = crudo_task.get("task_name") or requested
+            else:
+                target = resolve_focus(
+                    session.daily_tasks,
+                    requested,
+                )
+
             if not target:
                 await ctx.send("Switch to what?")
                 return True
@@ -2376,6 +2451,16 @@ def register_metiche(bot: commands.Bot):
                 )
             
             start_focus_timer(session, target)
+
+            if crudo_task:
+                session.crudo_task_id = crudo_task.get("id")
+                session.crudo_task_name = crudo_task.get("task_name")
+            elif session.crudo_project_id:
+                # A non-punch-list switch is work outside the bound project.
+                session.crudo_project_id = None
+                session.crudo_project_name = None
+                session.crudo_task_id = None
+                session.crudo_task_name = None
         
             sync_ping_focus(
                 ctx.channel.id,
@@ -2438,6 +2523,19 @@ def register_metiche(bot: commands.Bot):
                 source="done",
             )
         
+            # If the active focus came from a Crudobot punch list, completing it
+            # here completes the persistent project task too.
+            completed_crudo_task = None
+            if session.crudo_task_id:
+                completed_crudo_task = session.crudo_task_name or target
+                try:
+                    set_crudo_project_task_status(session.crudo_task_id, "completed")
+                except Exception as exc:
+                    print(
+                        f"[CRUDO TASK COMPLETE ERROR] {type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+
             tasks = normalize_daily_items(session.daily_tasks)
             indexes = resolve_task_indexes(tasks, target)
         
@@ -2466,6 +2564,47 @@ def register_metiche(bot: commands.Bot):
         
             # The thing we were doing is finished.
             session.active_task = None
+
+            if completed_crudo_task and session.crudo_project_id:
+                session.crudo_task_id = None
+                session.crudo_task_name = None
+
+                crudo_pending = fetch_crudo_project_tasks(
+                    session.crudo_project_id,
+                    include_completed=False,
+                )
+
+                if crudo_pending:
+                    sync_ping_focus(
+                        ctx.channel.id,
+                        session.person,
+                        None,
+                        pause=True,
+                    )
+                    await save_active_day_state(ctx, session)
+                    pending_text = format_pending_crudo_tasks(session.crudo_project_id)
+                    await ctx.send(
+                        f"✅ {completed_crudo_task} — {duration}\n\n"
+                        f"🔥 {session.crudo_project_name} — what's next?\n"
+                        f"{pending_text}\n\n"
+                        "Reply `switch 1` (or another task number)."
+                    )
+                    return True
+
+                # Punch list is empty: project remains a Crudobot project, but
+                # Metiche has no remaining project task to monitor.
+                sync_ping_focus(
+                    ctx.channel.id,
+                    session.person,
+                    None,
+                    pause=True,
+                )
+                await save_active_day_state(ctx, session)
+                await ctx.send(
+                    f"✅ {completed_crudo_task} — {duration}\n"
+                    f"🏁 {session.crudo_project_name} has no punch-list items left."
+                )
+                return True
         
             pending = [
                 (idx, task)
@@ -3327,6 +3466,12 @@ def register_metiche(bot: commands.Bot):
             return
 
         crudo_binding = crudo_binding or {}
+
+        # The daily item can be a project/customer label, but once a Crudobot
+        # punch-list task is chosen, that task is the thing actually being worked.
+        # This makes Que Onda and time accounting observe execution at task level.
+        if crudo_binding.get("task_name"):
+            active_focus = crudo_binding["task_name"]
     
         now = local_now().isoformat()
     
