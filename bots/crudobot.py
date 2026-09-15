@@ -8,12 +8,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib import request
 
 import discord
-from config import client
-from supabase import create_client
+from discord.ext import commands
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+try:
+    from config import client
+except Exception:
+    client = None
 
 # ---------- CRUDOBOT DATA FILES ----------
 # You will reformat historic data into these files.
