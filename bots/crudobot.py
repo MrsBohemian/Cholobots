@@ -116,6 +116,229 @@ def fetch_metiche_raw_time() -> Dict[str, Any]:
     return fetch_json_url(f"{DATA_SERVICE_URL}/tasks", {})
 
 
+
+# ---------- LIVE CRUDOBOT PROJECTS (SUPABASE) ----------
+
+def require_supabase() -> bool:
+    return client is not None
+
+def sb_rows(response) -> List[Dict[str, Any]]:
+    return getattr(response, "data", None) or []
+
+def find_chisme_contacts(query: str) -> List[Dict[str, Any]]:
+    if not require_supabase():
+        return []
+    q = (query or "").strip()
+    if not q:
+        return []
+    response = (
+        client.table("chisme_contacts")
+        .select("id,name,phone,email,address")
+        .ilike("name", f"%{q}%")
+        .limit(10)
+        .execute()
+    )
+    rows = sb_rows(response)
+    rows.sort(key=lambda r: (
+        0 if str(r.get("name", "")).lower() == q.lower() else 1,
+        str(r.get("name", "")).lower()
+    ))
+    return rows
+
+def list_crudo_projects(contact_id: Optional[str] = None, include_completed: bool = False) -> List[Dict[str, Any]]:
+    if not require_supabase():
+        return []
+    query = client.table("crudo_projects").select("*")
+    if contact_id:
+        query = query.eq("contact_id", contact_id)
+    if not include_completed:
+        query = query.neq("status", "completed")
+    return sb_rows(query.order("created_at", desc=True).execute())
+
+def get_crudo_project_tasks(project_id: str) -> List[Dict[str, Any]]:
+    if not require_supabase():
+        return []
+    return sb_rows(
+        client.table("crudo_project_tasks")
+        .select("*")
+        .eq("project_id", project_id)
+        .order("task_order")
+        .order("created_at")
+        .execute()
+    )
+
+def create_crudo_project(contact_id: str, project_name: str) -> Dict[str, Any]:
+    response = client.table("crudo_projects").insert({
+        "contact_id": contact_id,
+        "project_name": project_name.strip(),
+        "status": "active",
+        "started_at": now_iso(),
+        "updated_at": now_iso(),
+    }).execute()
+    rows = sb_rows(response)
+    if not rows:
+        raise RuntimeError("Supabase did not return the new project.")
+    return rows[0]
+
+def next_task_order(project_id: str) -> int:
+    orders = [int(t.get("task_order") or 0) for t in get_crudo_project_tasks(project_id)]
+    return max(orders, default=0) + 1
+
+def create_crudo_tasks(project_id: str, task_names: List[str]) -> List[Dict[str, Any]]:
+    cleaned = [t.strip(" \t-*•0123456789.)") for t in task_names if t.strip()]
+    cleaned = [t for t in cleaned if t]
+    if not cleaned:
+        return []
+    start = next_task_order(project_id)
+    payload = [{
+        "project_id": project_id,
+        "task_name": task,
+        "task_order": start + idx,
+        "status": "pending",
+        "updated_at": now_iso(),
+    } for idx, task in enumerate(cleaned)]
+    return sb_rows(client.table("crudo_project_tasks").insert(payload).execute())
+
+def set_crudo_task_status(task_id: str, status: str):
+    return (
+        client.table("crudo_project_tasks")
+        .update({
+            "status": status,
+            "completed_at": now_iso() if status == "completed" else None,
+            "updated_at": now_iso(),
+        })
+        .eq("id", task_id)
+        .execute()
+    )
+
+def complete_crudo_project(project_id: str):
+    return (
+        client.table("crudo_projects")
+        .update({
+            "status": "completed",
+            "completed_at": now_iso(),
+            "updated_at": now_iso(),
+        })
+        .eq("id", project_id)
+        .execute()
+    )
+
+def parse_punch_list(raw: str) -> List[str]:
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    if "\n" in raw:
+        parts = raw.splitlines()
+    elif ";" in raw:
+        parts = raw.split(";")
+    else:
+        parts = raw.split(",")
+    return [p.strip() for p in parts if p.strip()]
+
+def project_progress(tasks: List[Dict[str, Any]]) -> Tuple[int, int, int]:
+    total = len(tasks)
+    done = sum(1 for t in tasks if t.get("status") == "completed")
+    pct = round((done / total) * 100) if total else 0
+    return done, total, pct
+
+def format_live_project(project: Dict[str, Any], customer_name: str, tasks: List[Dict[str, Any]]) -> str:
+    done, total, pct = project_progress(tasks)
+    lines = [
+        f"🔥 {project.get('project_name') or 'Untitled project'}",
+        f"Customer: {customer_name}",
+        f"Progress: {done}/{total} — {pct}%",
+        "",
+    ]
+    if not tasks:
+        lines.append("No punch-list items yet.")
+    else:
+        for idx, task in enumerate(tasks, start=1):
+            icon = "✅" if task.get("status") == "completed" else "⬜"
+            lines.append(f"{idx}. {icon} {task.get('task_name', 'Untitled task')}")
+    return "\n".join(lines)
+
+async def choose_contact(ctx: commands.Context, bot: commands.Bot, query: str) -> Optional[Dict[str, Any]]:
+    matches = find_chisme_contacts(query)
+    if not matches:
+        await ctx.send(f"I couldn't find a Chisme customer matching `{query}`.")
+        return None
+    if len(matches) == 1:
+        return matches[0]
+    lines = ["I found more than one customer. Which one?"]
+    for idx, row in enumerate(matches, start=1):
+        detail = row.get("phone") or row.get("email") or ""
+        lines.append(f"{idx}. {row.get('name')} {('— ' + detail) if detail else ''}")
+    await ctx.send("\n".join(lines))
+    reply = await ask(ctx, bot, "Reply with the number.")
+    if not reply.isdigit() or not (1 <= int(reply) <= len(matches)):
+        await ctx.send("I couldn't match that selection.")
+        return None
+    return matches[int(reply) - 1]
+
+async def project_workspace(ctx: commands.Context, bot: commands.Bot, customer: Dict[str, Any], project: Dict[str, Any]):
+    while True:
+        tasks = get_crudo_project_tasks(project["id"])
+        await ctx.send(format_live_project(project, customer.get("name", "Unknown customer"), tasks)[:1900])
+        choice = await ask(
+            ctx, bot,
+            "What do you want to do?\n"
+            "1. Add punch-list items\n"
+            "2. Mark something complete\n"
+            "3. Reopen something\n"
+            "4. Complete project\n"
+            "5. Exit\n"
+            "Reply with 1–5."
+        )
+
+        if choice == "1":
+            raw = await ask(ctx, bot, "What's left to do? Send one item, or paste several separated by commas, semicolons, or new lines.")
+            added = create_crudo_tasks(project["id"], parse_punch_list(raw))
+            await ctx.send(f"Added {len(added)} punch-list item{'s' if len(added) != 1 else ''}.")
+        elif choice == "2":
+            pending = [t for t in tasks if t.get("status") != "completed"]
+            if not pending:
+                await ctx.send("Everything on this punch list is already complete.")
+                continue
+            await ctx.send("\n".join(["Which item is done?"] + [f"{i}. {t.get('task_name')}" for i, t in enumerate(pending, 1)]))
+            reply = await ask(ctx, bot, "Reply with the number.")
+            if reply.isdigit() and 1 <= int(reply) <= len(pending):
+                task = pending[int(reply) - 1]
+                set_crudo_task_status(task["id"], "completed")
+                await ctx.send(f"✅ Done: {task.get('task_name')}")
+            else:
+                await ctx.send("I couldn't match that punch-list item.")
+        elif choice == "3":
+            completed = [t for t in tasks if t.get("status") == "completed"]
+            if not completed:
+                await ctx.send("There aren't any completed items to reopen.")
+                continue
+            await ctx.send("\n".join(["Which item needs to be reopened?"] + [f"{i}. {t.get('task_name')}" for i, t in enumerate(completed, 1)]))
+            reply = await ask(ctx, bot, "Reply with the number.")
+            if reply.isdigit() and 1 <= int(reply) <= len(completed):
+                task = completed[int(reply) - 1]
+                set_crudo_task_status(task["id"], "pending")
+                await ctx.send(f"⬜ Reopened: {task.get('task_name')}")
+            else:
+                await ctx.send("I couldn't match that punch-list item.")
+        elif choice == "4":
+            remaining = [t for t in tasks if t.get("status") != "completed"]
+            if remaining:
+                confirm = await ask(
+                    ctx, bot,
+                    f"There are still {len(remaining)} unfinished item(s). Reply `complete anyway` to finish the project, or anything else to keep it active."
+                )
+                if confirm.strip().lower() != "complete anyway":
+                    await ctx.send("Keeping the project active.")
+                    continue
+            complete_crudo_project(project["id"])
+            await ctx.send(f"🏁 {project.get('project_name')} marked complete.")
+            return
+        elif choice == "5":
+            return
+        else:
+            await ctx.send("Reply with a number from 1–5.")
+
+
 # ---------- REPORT NORMALIZATION ----------
 
 def report_title(report: Dict[str, Any]) -> str:
@@ -427,6 +650,8 @@ def register_crudo(bot: commands.Bot):
     async def crudobot_help(ctx: commands.Context):
         await ctx.send(
             "💰 CRUDOBOT COMMANDS\n\n"
+            "`!crudoproject [customer]`\n"
+            "Create/open a live project and manage its punch list.\n\n"
             "`!crudojc`\n"
             "List available job costing reports, pick one, and retrieve the report.\n\n"
             "`!crudoestimate`\n"
@@ -439,11 +664,83 @@ def register_crudo(bot: commands.Bot):
     async def crudo_group(ctx: commands.Context):
         await ctx.send(
             "Crudobot commands:\n"
+            "- `!crudoproject [customer]` — create/open a live project + punch list\n"
             "- `!crudojc` — list and retrieve job costing reports\n"
             "- `!crudoestimate` — estimate support from historical actuals\n"
             "- `!crudoreport` — grounded business report from job costing + narrative data\n"
             "- `!crudo phrase` — receive nonsense from the jobsite cryptid"
         )
+
+    @bot.command(name="crudoproject")
+    async def crudoproject(ctx: commands.Context, *, customer_query: str = ""):
+        if not require_supabase():
+            await ctx.send("Crudobot live projects need the Supabase client configured.")
+            return
+
+        try:
+            if not customer_query.strip():
+                customer_query = await ask(ctx, bot, "💰 New/open project.\nWho is the customer?")
+
+            customer = await choose_contact(ctx, bot, customer_query)
+            if not customer:
+                return
+
+            projects = list_crudo_projects(customer["id"])
+            if projects:
+                if len(projects) == 1:
+                    existing = projects[0]
+                    reply = await ask(
+                        ctx, bot,
+                        f"I found an active project for {customer.get('name')}: `{existing.get('project_name')}`.\n"
+                        "Reply `open` to work on it or `new` to create another project."
+                    )
+                    if reply.strip().lower() == "open":
+                        await project_workspace(ctx, bot, customer, existing)
+                        return
+                    if reply.strip().lower() != "new":
+                        await ctx.send("Okay — no project changes made.")
+                        return
+                else:
+                    lines = [f"I found {len(projects)} active projects for {customer.get('name')}:"]
+                    for idx, p in enumerate(projects, start=1):
+                        lines.append(f"{idx}. {p.get('project_name')}")
+                    lines.append(f"{len(projects) + 1}. Create a new project")
+                    await ctx.send("\n".join(lines))
+                    reply = await ask(ctx, bot, "Which one?")
+                    if not reply.isdigit():
+                        await ctx.send("I couldn't match that selection.")
+                        return
+                    selected = int(reply)
+                    if 1 <= selected <= len(projects):
+                        await project_workspace(ctx, bot, customer, projects[selected - 1])
+                        return
+                    if selected != len(projects) + 1:
+                        await ctx.send("I couldn't match that selection.")
+                        return
+
+            project_name = await ask(ctx, bot, "What are we calling this project?")
+            if not project_name.strip():
+                await ctx.send("I need a project name.")
+                return
+
+            project = create_crudo_project(customer["id"], project_name)
+            await ctx.send(f"🔥 Created `{project_name}` for {customer.get('name')}.\nNow let's build the punch list.")
+
+            raw = await ask(
+                ctx, bot,
+                "What is left to do?\n"
+                "Send one item, or paste several separated by commas, semicolons, or new lines.\n"
+                "Reply `skip` if you want to build the punch list later."
+            )
+            if raw.strip().lower() != "skip":
+                added = create_crudo_tasks(project["id"], parse_punch_list(raw))
+                await ctx.send(f"Added {len(added)} punch-list item{'s' if len(added) != 1 else ''}.")
+
+            await project_workspace(ctx, bot, customer, project)
+
+        except Exception as exc:
+            await ctx.send(f"Crudobot project error: `{type(exc).__name__}: {exc}`")
+
 
     @bot.command(name="crudojc")
     async def crudojc(ctx: commands.Context):
