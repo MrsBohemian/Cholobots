@@ -258,11 +258,31 @@ def format_live_project(project: Dict[str, Any], customer_name: str, tasks: List
             lines.append(f"{idx}. {icon} {task.get('task_name', 'Untitled task')}")
     return "\n".join(lines)
 
+def create_chisme_contact(name: str) -> Dict[str, Any]:
+    response = supabase.table("chisme_contacts").insert({
+        "name": name.strip(),
+    }).execute()
+    rows = sb_rows(response)
+    if not rows:
+        raise RuntimeError("Supabase did not return the new Chisme customer.")
+    return rows[0]
+
+
 async def choose_contact(ctx: commands.Context, bot: commands.Bot, query: str) -> Optional[Dict[str, Any]]:
     matches = find_chisme_contacts(query)
     if not matches:
-        await ctx.send(f"I couldn't find a Chisme customer matching `{query}`.")
-        return None
+        reply = await ask(
+            ctx,
+            bot,
+            f"I couldn't find a Chisme customer matching `{query}`.\n"
+            f"Create `{query}` as a new customer? Reply `yes` or `no`."
+        )
+        if reply.strip().lower() not in {"yes", "y"}:
+            await ctx.send("Okay — no customer created.")
+            return None
+        customer = create_chisme_contact(query)
+        await ctx.send(f"📇 Created Chisme customer card for `{customer.get('name') or query}`.")
+        return customer
     if len(matches) == 1:
         return matches[0]
     lines = ["I found more than one customer. Which one?"]
