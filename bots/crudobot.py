@@ -1,3 +1,6 @@
+import asyncio
+import base64
+import hashlib
 import json
 import os
 import random
@@ -15,6 +18,59 @@ from supabase import create_client
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+# ---------- CRUDOBOT RECEIPT SCANNING ----------
+
+receipt_parse_sessions = {}
+RECEIPT_MODEL = os.getenv("CRUDOBOT_RECEIPT_MODEL", "gpt-5-mini")
+SUPPORTED_RECEIPT_TYPES = {
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+}
+
+RECEIPT_JSON_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "vendor": {"type": "string"},
+        "transaction_date": {"type": ["string", "null"]},
+        "receipt_number": {"type": ["string", "null"]},
+        "transaction_type": {"type": "string", "enum": ["purchase", "return"]},
+        "subtotal": {"type": "number"},
+        "tax": {"type": "number"},
+        "total": {"type": "number"},
+        "currency": {"type": "string"},
+        "notes": {"type": ["string", "null"]},
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "line_type": {"type": "string", "enum": ["purchase", "return"]},
+                    "sku": {"type": ["string", "null"]},
+                    "description": {"type": "string"},
+                    "quantity": {"type": "number"},
+                    "unit": {"type": "string"},
+                    "unit_price": {"type": "number"},
+                    "line_total": {"type": "number"},
+                    "category": {"type": "string"},
+                },
+                "required": [
+                    "line_type", "sku", "description", "quantity", "unit",
+                    "unit_price", "line_total", "category"
+                ],
+            },
+        },
+    },
+    "required": [
+        "vendor", "transaction_date", "receipt_number", "transaction_type",
+        "subtotal", "tax", "total", "currency", "notes", "items"
+    ],
+}
 
 # ---------- CRUDOBOT DATA FILES ----------
 # You will reformat historic data into these files.
@@ -116,6 +172,233 @@ def fetch_metiche_raw_time() -> Dict[str, Any]:
         return {}
     return fetch_json_url(f"{DATA_SERVICE_URL}/tasks", {})
 
+
+
+
+# ---------- RECEIPT HELPERS ----------
+
+def clean_receipt_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(payload or {})
+    payload["vendor"] = (payload.get("vendor") or "Unknown vendor").strip()
+    tx_type = str(payload.get("transaction_type") or "purchase").lower()
+    payload["transaction_type"] = tx_type if tx_type in {"purchase", "return"} else "purchase"
+    payload["subtotal"] = round(abs(money(payload.get("subtotal"))), 2)
+    payload["tax"] = round(abs(money(payload.get("tax"))), 2)
+    payload["total"] = round(abs(money(payload.get("total"))), 2)
+    payload["currency"] = payload.get("currency") or "USD"
+
+    cleaned = []
+    for raw in payload.get("items") or []:
+        quantity = abs(number(raw.get("quantity")))
+        unit_price = abs(money(raw.get("unit_price")))
+        line_total = abs(money(raw.get("line_total")))
+        if not line_total and quantity and unit_price:
+            line_total = quantity * unit_price
+        description = (raw.get("description") or "").strip()
+        if not description or quantity == 0:
+            continue
+        line_type = str(raw.get("line_type") or payload["transaction_type"]).lower()
+        if line_type not in {"purchase", "return"}:
+            line_type = payload["transaction_type"]
+        cleaned.append({
+            "line_type": line_type,
+            "sku": (raw.get("sku") or "").strip() or None,
+            "description": description,
+            "quantity": quantity,
+            "unit": (raw.get("unit") or "each").strip(),
+            "unit_price": round(unit_price, 2),
+            "line_total": round(line_total, 2),
+            "category": (raw.get("category") or "uncategorized").strip(),
+        })
+    payload["items"] = cleaned
+    return payload
+
+
+def parse_receipt_with_openai(filename: str, content_type: str, file_bytes: bytes) -> Dict[str, Any]:
+    prompt = (
+        "Extract this contractor purchase or return receipt into the required schema. Capture every "
+        "material, tool, or equipment line with SKU when visible, quantity, purchasing unit, unit price, "
+        "line total, and a practical construction category. Determine whether the receipt is a purchase "
+        "or return. For a return receipt use transaction_type=return and line_type=return. Keep all dollar "
+        "amounts positive; Crudobot will apply the accounting sign from transaction_type. Do not invent "
+        "missing values. Use 0 for unknown numeric values and null for unknown identifiers or dates."
+    )
+
+    if content_type == "application/pdf":
+        uploaded = client.files.create(
+            file=(filename, file_bytes, content_type),
+            purpose="user_data",
+        )
+        receipt_input = {"type": "input_file", "file_id": uploaded.id}
+    else:
+        encoded = base64.b64encode(file_bytes).decode("ascii")
+        receipt_input = {
+            "type": "input_image",
+            "image_url": f"data:{content_type};base64,{encoded}",
+            "detail": "high",
+        }
+
+    response = client.responses.create(
+        model=RECEIPT_MODEL,
+        input=[{
+            "role": "user",
+            "content": [receipt_input, {"type": "input_text", "text": prompt}],
+        }],
+        text={"format": {
+            "type": "json_schema",
+            "name": "crudobot_contractor_receipt",
+            "strict": True,
+            "schema": RECEIPT_JSON_SCHEMA,
+        }},
+    )
+    raw = response.output_text
+    if not raw:
+        raise ValueError("The receipt parser returned no data.")
+    return clean_receipt_payload(json.loads(raw))
+
+
+def format_receipt_preview(project: Dict[str, Any], customer_name: str, parsed: Dict[str, Any], filename: str) -> str:
+    lines = [
+        f"🧾 **CRUDOBOT RECEIPT PREVIEW**",
+        f"Project: **{customer_name} — {project.get('project_name')}**",
+        f"File: `{filename}`",
+        f"Vendor: **{parsed.get('vendor')}**",
+        f"Date: {parsed.get('transaction_date') or 'unknown'}",
+        f"Receipt/order: {parsed.get('receipt_number') or 'unknown'}",
+        f"Type: **{str(parsed.get('transaction_type', 'purchase')).upper()}**",
+        "",
+        "**Harvested line items**",
+    ]
+    for i, item in enumerate(parsed.get("items") or [], 1):
+        sign = "RETURN · " if item.get("line_type") == "return" else ""
+        lines.append(
+            f"{i}. {sign}{item.get('quantity'):g} {item.get('unit')} · "
+            f"{item.get('description')} · ${item.get('line_total', 0):,.2f}"
+            + (f" · SKU {item.get('sku')}" if item.get("sku") else "")
+        )
+    if not parsed.get("items"):
+        lines.append("⚠️ No usable line items were found.")
+    lines.extend([
+        "",
+        f"Subtotal: ${parsed.get('subtotal', 0):,.2f}",
+        f"Tax: ${parsed.get('tax', 0):,.2f}",
+        f"Total: **${parsed.get('total', 0):,.2f}**",
+        "",
+        "Reply **SAVE** to add this transaction to Crudobot job costing.",
+        "Reply **CANCEL** to discard it. Nothing has been saved yet.",
+    ])
+    return "\n".join(lines)
+
+
+def save_crudo_receipt(session: Dict[str, Any]):
+    parsed = session["parsed"]
+    project = session["project"]
+    tx_payload = {
+        "project_id": project["id"],
+        "transaction_type": parsed.get("transaction_type") or "purchase",
+        "vendor": parsed.get("vendor") or "Unknown vendor",
+        "transaction_date": parsed.get("transaction_date") or datetime.now().date().isoformat(),
+        "receipt_number": parsed.get("receipt_number"),
+        "subtotal": parsed.get("subtotal") or 0,
+        "tax": parsed.get("tax") or 0,
+        "total": parsed.get("total") or 0,
+        "source": "receipt_scan",
+        "notes": parsed.get("notes"),
+        "updated_at": now_iso(),
+    }
+    rows = sb_rows(supabase.table("crudo_material_transactions").insert(tx_payload).execute())
+    if not rows:
+        raise RuntimeError("Crudobot transaction insert returned no row.")
+    tx = rows[0]
+
+    item_rows = []
+    for item in parsed.get("items") or []:
+        item_rows.append({
+            "transaction_id": tx["id"],
+            "project_id": project["id"],
+            "project_material_id": None,
+            "sku": item.get("sku"),
+            "item_name": item.get("description"),
+            "quantity": item.get("quantity") or 0,
+            "unit": item.get("unit") or "each",
+            "unit_price": item.get("unit_price") or 0,
+            "line_total": item.get("line_total") or 0,
+            "category": item.get("category") or "uncategorized",
+        })
+    if item_rows:
+        supabase.table("crudo_material_transaction_items").insert(item_rows).execute()
+    return tx, item_rows
+
+
+def receipt_duplicate(project_id: str, parsed: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    receipt_number = parsed.get("receipt_number")
+    if not receipt_number:
+        return None
+    rows = sb_rows(
+        supabase.table("crudo_material_transactions")
+        .select("id,vendor,total,transaction_type,receipt_number")
+        .eq("project_id", project_id)
+        .eq("receipt_number", receipt_number)
+        .limit(1)
+        .execute()
+    )
+    return rows[0] if rows else None
+
+
+def find_projects_for_receipt(query: str) -> List[Tuple[Dict[str, Any], str]]:
+    q = (query or "").strip()
+    if not q:
+        return []
+
+    projects = sb_rows(
+        supabase.table("crudo_projects")
+        .select("*")
+        .ilike("project_name", f"%{q}%")
+        .order("created_at", desc=True)
+        .limit(20)
+        .execute()
+    )
+
+    contacts = find_chisme_contacts(q)
+    for contact in contacts:
+        for project in list_crudo_projects(contact["id"], include_completed=True):
+            if not any(p.get("id") == project.get("id") for p in projects):
+                projects.append(project)
+
+    contact_ids = list({p.get("contact_id") for p in projects if p.get("contact_id")})
+    names = {}
+    if contact_ids:
+        contact_rows = sb_rows(
+            supabase.table("chisme_contacts")
+            .select("id,name")
+            .in_("id", contact_ids)
+            .execute()
+        )
+        names = {r.get("id"): r.get("name") or "Unknown customer" for r in contact_rows}
+
+    result = [(p, names.get(p.get("contact_id"), "Unknown customer")) for p in projects]
+    result.sort(key=lambda pair: (pair[1].lower(), str(pair[0].get("project_name") or "").lower()))
+    return result
+
+
+async def choose_project_for_receipt(ctx: commands.Context, bot: commands.Bot, query: str):
+    matches = find_projects_for_receipt(query)
+    if not matches:
+        await ctx.send(f"I couldn't find a Crudobot project matching `{query}`.")
+        return None
+    if len(matches) == 1:
+        return matches[0]
+
+    lines = ["Which project does this receipt belong to?"]
+    for i, (project, customer_name) in enumerate(matches[:10], 1):
+        status = project.get("status") or "active"
+        lines.append(f"{i}. {customer_name} — {project.get('project_name')} ({status})")
+    await ctx.send("\n".join(lines))
+    reply = await ask(ctx, bot, "Reply with the number.")
+    if not reply.isdigit() or not (1 <= int(reply) <= min(len(matches), 10)):
+        await ctx.send("I couldn't match that project.")
+        return None
+    return matches[int(reply) - 1]
 
 
 # ---------- LIVE CRUDOBOT PROJECTS (SUPABASE) ----------
@@ -686,7 +969,8 @@ def register_crudo(bot: commands.Bot):
         await ctx.send(
             "Crudobot commands:\n"
             "- `!crudoproject [customer]` — create/open a live project + punch list\n"
-            "- `!crudojc` — list and retrieve job costing reports\n"
+            "- `!crudoreceipt [project/customer]` — scan a purchase/return receipt\n"
+             "- `!crudojc` — list and retrieve job costing reports\n"
             "- `!crudoestimate` — estimate support from historical actuals\n"
             "- `!crudoreport` — grounded business report from job costing + narrative data\n"
             "- `!crudo phrase` — receive nonsense from the jobsite cryptid"
@@ -762,6 +1046,102 @@ def register_crudo(bot: commands.Bot):
         except Exception as exc:
             await ctx.send(f"Crudobot project error: `{type(exc).__name__}: {exc}`")
 
+
+    @bot.command(name="crudoreceipt")
+    async def crudoreceipt(ctx: commands.Context, *, project_query: str = ""):
+        """Scan one purchase or return receipt directly into a live Crudobot project."""
+        if not require_supabase():
+            await ctx.send("Crudobot receipt scanning needs Supabase configured.")
+            return
+        if len(ctx.message.attachments) != 1:
+            await ctx.send(
+                "Use: `!crudoreceipt Brandy` and attach exactly one PDF or receipt photo."
+            )
+            return
+        if not project_query.strip():
+            project_query = await ask(ctx, bot, "Which customer or project is this receipt for?")
+
+        selected = await choose_project_for_receipt(ctx, bot, project_query)
+        if not selected:
+            return
+        project, customer_name = selected
+
+        attachment = ctx.message.attachments[0]
+        content_type = (attachment.content_type or "").split(";", 1)[0].lower()
+        if content_type not in SUPPORTED_RECEIPT_TYPES:
+            await ctx.send("I can parse PDF, JPG, PNG, or WEBP receipts.")
+            return
+        if attachment.size and attachment.size > 15 * 1024 * 1024:
+            await ctx.send("That receipt is larger than 15 MB. Please use a smaller PDF or image.")
+            return
+
+        await ctx.send(
+            f"🔎 Reading `{attachment.filename}` for **{customer_name} — {project.get('project_name')}**..."
+        )
+        try:
+            file_bytes = await attachment.read()
+            parsed = await asyncio.to_thread(
+                parse_receipt_with_openai,
+                attachment.filename,
+                content_type,
+                file_bytes,
+            )
+            duplicate = receipt_duplicate(project["id"], parsed)
+            if duplicate:
+                await ctx.send(
+                    f"⚠️ Receipt `{duplicate.get('receipt_number')}` is already saved to this project "
+                    f"as a {duplicate.get('transaction_type')} from {duplicate.get('vendor')} "
+                    f"(${float(duplicate.get('total') or 0):,.2f})."
+                )
+                return
+        except Exception as exc:
+            await ctx.send(f"I could not parse that receipt: `{type(exc).__name__}: {exc}`")
+            return
+
+        receipt_parse_sessions[ctx.author.id] = {
+            "project": project,
+            "customer_name": customer_name,
+            "parsed": parsed,
+            "filename": attachment.filename,
+            "sha256": hashlib.sha256(file_bytes).hexdigest(),
+        }
+        preview = format_receipt_preview(project, customer_name, parsed, attachment.filename)
+        for start in range(0, len(preview), 1900):
+            await ctx.send(preview[start:start + 1900])
+
+    @bot.listen("on_message")
+    async def handle_crudobot_receipt_confirmation(message):
+        if message.author.bot or message.content.startswith("!"):
+            return
+        session = receipt_parse_sessions.get(message.author.id)
+        if not session:
+            return
+
+        answer = message.content.strip().lower()
+        if answer in {"cancel", "no", "discard", "stop"}:
+            receipt_parse_sessions.pop(message.author.id, None)
+            await message.channel.send("🗑️ Receipt discarded. Nothing was saved.")
+            return
+        if answer not in {"save", "yes", "1", "confirm"}:
+            return
+
+        try:
+            tx, items = save_crudo_receipt(session)
+        except Exception as exc:
+            await message.channel.send(
+                f"Could not save the receipt: `{type(exc).__name__}: {exc}`"
+            )
+            return
+
+        receipt_parse_sessions.pop(message.author.id, None)
+        tx_label = "return" if tx.get("transaction_type") == "return" else "purchase"
+        await message.channel.send(
+            f"✅ Saved {tx_label} receipt to **{session['customer_name']} — "
+            f"{session['project'].get('project_name')}**.\n"
+            f"Vendor: {tx.get('vendor')}\n"
+            f"Total: ${float(tx.get('total') or 0):,.2f}\n"
+            f"Line items harvested: {len(items)}"
+        )
 
     @bot.command(name="crudojc")
     async def crudojc(ctx: commands.Context):
