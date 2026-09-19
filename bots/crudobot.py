@@ -525,6 +525,164 @@ def project_progress(tasks: List[Dict[str, Any]]) -> Tuple[int, int, int]:
     pct = round((done / total) * 100) if total else 0
     return done, total, pct
 
+
+
+def parse_duration_minutes(raw: str) -> Optional[int]:
+    """Parse friendly duration input such as 15, 15m, 1h, or 1h 10m."""
+    text = (raw or "").strip().lower()
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+
+    hours_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)", text)
+    minutes_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes)", text)
+    if not hours_match and not minutes_match:
+        return None
+
+    hours = float(hours_match.group(1)) if hours_match else 0.0
+    minutes = float(minutes_match.group(1)) if minutes_match else 0.0
+    return max(0, round(hours * 60 + minutes))
+
+
+def completed_at_dt(task: Dict[str, Any]) -> Optional[datetime]:
+    raw = task.get("completed_at")
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def get_task_labor_minutes(project_id: str) -> Dict[str, int]:
+    """Read existing Metiche observations without changing Metiche data."""
+    rows = sb_rows(
+        supabase.table("crudo_labor_entries")
+        .select("task_id,actual_minutes")
+        .eq("project_id", project_id)
+        .execute()
+    )
+    totals: Dict[str, int] = {}
+    for row in rows:
+        task_id = row.get("task_id")
+        if not task_id:
+            continue
+        totals[task_id] = totals.get(task_id, 0) + int(row.get("actual_minutes") or 0)
+    return totals
+
+
+def suggest_task_minutes(task: Dict[str, Any], previous_task: Optional[Dict[str, Any]],
+                         labor_by_task: Dict[str, int]) -> Tuple[Optional[int], str, bool]:
+    """Return (suggested_minutes, explanation, looks_weird)."""
+    labor_minutes = labor_by_task.get(task.get("id"), 0)
+    if labor_minutes > 0:
+        return labor_minutes, "Metiche activity captured for this task", False
+
+    current_done = completed_at_dt(task)
+    previous_done = completed_at_dt(previous_task) if previous_task else None
+    if current_done and previous_done:
+        gap_minutes = max(0, round((current_done - previous_done).total_seconds() / 60))
+        gap_minutes = max(1, gap_minutes)
+        weird = current_done.date() != previous_done.date() or gap_minutes > 240
+        return gap_minutes, "time between this completion and the previous task completion", weird
+
+    return None, "not enough timing evidence for an automatic estimate", True
+
+
+def save_task_actual_minutes(task_id: str, minutes: int):
+    return (
+        supabase.table("crudo_project_tasks")
+        .update({"actual_minutes": int(minutes), "updated_at": now_iso()})
+        .eq("id", task_id)
+        .execute()
+    )
+
+
+def format_minutes(minutes: int) -> str:
+    minutes = int(minutes or 0)
+    hours, mins = divmod(minutes, 60)
+    if hours and mins:
+        return f"{hours}h {mins}m"
+    if hours:
+        return f"{hours}h"
+    return f"{mins}m"
+
+
+async def review_project_task_times(ctx: commands.Context, bot: commands.Bot,
+                                    project: Dict[str, Any], customer_name: str,
+                                    review_all: bool = False):
+    tasks = [
+        t for t in get_crudo_project_tasks(project["id"])
+        if t.get("status") == "completed" and t.get("completed_at")
+    ]
+    tasks.sort(key=lambda t: completed_at_dt(t) or datetime.min)
+
+    if not tasks:
+        await ctx.send("There are no completed punch-list tasks to time yet.")
+        return
+
+    targets = tasks if review_all else [t for t in tasks if t.get("actual_minutes") is None]
+    if not targets:
+        answer = await ask(
+            ctx, bot,
+            "Every completed task already has an actual time. Reply `review` to check/change them, or `done` to leave them alone."
+        )
+        if answer.strip().lower() != "review":
+            return
+        targets = tasks
+
+    labor_by_task = get_task_labor_minutes(project["id"])
+    await ctx.send(
+        f"⏱️ **CRUDOBOT TIME REVIEW — {customer_name} — {project.get('project_name')}**\n"
+        "Crudobot will suggest a time from the evidence it has. You choose what gets saved."
+    )
+
+    for task in targets:
+        idx = tasks.index(task)
+        previous_task = tasks[idx - 1] if idx > 0 else None
+        suggestion, reason, weird = suggest_task_minutes(task, previous_task, labor_by_task)
+        existing = task.get("actual_minutes")
+
+        lines = [f"**{task.get('task_name') or 'Untitled task'}**"]
+        if existing is not None:
+            lines.append(f"Currently saved: **{format_minutes(int(existing or 0))}**")
+        if suggestion is not None:
+            prefix = "⚠️ Timestamp estimate" if weird else "Suggested time"
+            lines.append(f"{prefix}: **{format_minutes(suggestion)}**")
+            lines.append(f"Based on: {reason}.")
+            if weird:
+                lines.append("That gap may include a break, distraction, or late check-off.")
+            lines.append("Reply `keep` to save the suggestion, enter a time like `15m` or `1h 10m`, or `skip`.")
+        else:
+            lines.append("I don't have a trustworthy automatic estimate for this one.")
+            lines.append("Enter a time like `15m` or `1h 10m`, or reply `skip`.")
+
+        answer = await ask(ctx, bot, "\n".join(lines))
+        normalized = answer.strip().lower()
+        if normalized in {"skip", "s", "later"}:
+            continue
+        if normalized in {"keep", "k", "yes", "y"} and suggestion is not None:
+            minutes = suggestion
+        else:
+            minutes = parse_duration_minutes(answer)
+            if minutes is None:
+                await ctx.send("I couldn't read that duration, so I left this task unchanged.")
+                continue
+
+        save_task_actual_minutes(task["id"], minutes)
+        task["actual_minutes"] = minutes
+        await ctx.send(f"✅ Saved **{format_minutes(minutes)}** for {task.get('task_name')}.")
+
+    refreshed = get_crudo_project_tasks(project["id"])
+    completed = [t for t in refreshed if t.get("status") == "completed"]
+    captured = [t for t in completed if t.get("actual_minutes") is not None]
+    total_minutes = sum(int(t.get("actual_minutes") or 0) for t in captured)
+    await ctx.send(
+        f"⏱️ Time review saved. {len(captured)}/{len(completed)} completed tasks have actual time. "
+        f"Captured total: **{format_minutes(total_minutes)}**."
+    )
+
 def format_live_project(project: Dict[str, Any], customer_name: str, tasks: List[Dict[str, Any]]) -> str:
     done, total, pct = project_progress(tasks)
     lines = [
@@ -632,6 +790,9 @@ async def project_workspace(ctx: commands.Context, bot: commands.Bot, customer: 
                     "Finish or reopen the work before closeout."
                 )
                 continue
+            await review_project_task_times(
+                ctx, bot, project, customer.get("name", "Unknown customer")
+            )
             mark_project_ready_for_closeout(project["id"])
             project = sb_rows(
                 supabase.table("crudo_projects").select("*").eq("id", project["id"]).limit(1).execute()
@@ -687,7 +848,12 @@ def project_job_cost_snapshot(project_id: str) -> Dict[str, Any]:
         for r in transactions
         if str(r.get("transaction_type") or "").lower() == "return"
     )
-    labor_minutes = sum(int(r.get("actual_minutes") or 0) for r in labor)
+    # Crudobot owns the finalized task durations. Metiche labor rows remain raw observations.
+    labor_minutes = sum(
+        int(t.get("actual_minutes") or 0)
+        for t in tasks
+        if t.get("status") == "completed" and t.get("actual_minutes") is not None
+    )
     done, total, pct = project_progress(tasks)
 
     return {
@@ -1267,6 +1433,8 @@ def register_crudo(bot: commands.Bot):
             "Create/open a live project and manage its punch list.\n\n"
             "`!crudoclose [project/customer]`\n"
             "Open the project closeout workflow.\n\n"
+            "`!crudotime [project/customer]`\n"
+            "Review Crudobot's task-time estimates and save/correct actual minutes.\n\n"
             "`!crudomaterial [project/customer]`\n"
             "Manually add a material purchase or return.\n\n"
             "`!crudojc`\n"
@@ -1285,6 +1453,7 @@ def register_crudo(bot: commands.Bot):
             "- `!crudoreceipt [project/customer]` — scan a purchase/return receipt\n"
             "- `!crudomaterial [project/customer]` — manually add a purchase/return\n"
             "- `!crudoclose [project/customer]` — project closeout workflow\n"
+            "- `!crudotime [project/customer]` — review/correct completed task times\n"
              "- `!crudojc` — list and retrieve job costing reports\n"
             "- `!crudoestimate` — estimate support from historical actuals\n"
             "- `!crudoreport` — grounded business report from job costing + narrative data\n"
@@ -1391,6 +1560,21 @@ def register_crudo(bot: commands.Bot):
             f"{item} · qty {qty:g} · {'return' if kind == 'return' else 'purchase'} ${cost:,.2f}"
         )
 
+
+    @bot.command(name="crudotime")
+    async def crudotime(ctx: commands.Context, *, project_query: str = ""):
+        """Review/correct Crudobot's actual time for completed punch-list tasks."""
+        if not require_supabase():
+            await ctx.send("Crudobot time review needs Supabase configured.")
+            return
+        if not project_query.strip():
+            project_query = await ask(ctx, bot, "Which customer or project are we reviewing time for?")
+        selected = await choose_project_for_receipt(ctx, bot, project_query)
+        if not selected:
+            return
+        project, customer_name = selected
+        await review_project_task_times(ctx, bot, project, customer_name)
+
     @bot.command(name="crudoclose")
     async def crudoclose(ctx: commands.Context, *, project_query: str = ""):
         """Open closeout for a completed-punch-list Crudobot project."""
@@ -1412,6 +1596,7 @@ def register_crudo(bot: commands.Bot):
             )
             return
         customer = get_crudo_project_customer(project)
+        await review_project_task_times(ctx, bot, project, customer_name)
         if project.get("status") != "completed":
             mark_project_ready_for_closeout(project["id"])
         await closeout_workspace(ctx, bot, customer, project)
