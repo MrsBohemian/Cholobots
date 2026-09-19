@@ -133,10 +133,16 @@ def subtract_inventory(item_name, qty, location=""):
             continue
         new_qty = current_qty - take
         remaining -= take
-        supabase.table("inventory_items").update({
-            "quantity": new_qty,
-            "updated_at": now_iso(),
-        }).eq("id", row["id"]).execute()
+
+        # inventory_items represents what physically exists right now.
+        # Once an item reaches zero, remove the row instead of keeping dead stock.
+        if new_qty <= 0:
+            supabase.table("inventory_items").delete().eq("id", row["id"]).execute()
+        else:
+            supabase.table("inventory_items").update({
+                "quantity": new_qty,
+                "updated_at": now_iso(),
+            }).eq("id", row["id"]).execute()
 
     removed = requested - remaining
     if remaining > 0:
