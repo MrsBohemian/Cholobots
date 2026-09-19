@@ -589,7 +589,7 @@ async def project_workspace(ctx: commands.Context, bot: commands.Bot, customer: 
             "1. Add punch-list items\n"
             "2. Mark something complete\n"
             "3. Reopen something\n"
-            "4. Complete project\n"
+            "4. Start closeout\n"
             "5. Exit\n"
             "Reply with 1–5."
         )
@@ -627,20 +627,329 @@ async def project_workspace(ctx: commands.Context, bot: commands.Bot, customer: 
         elif choice == "4":
             remaining = [t for t in tasks if t.get("status") != "completed"]
             if remaining:
-                confirm = await ask(
-                    ctx, bot,
-                    f"There are still {len(remaining)} unfinished item(s). Reply `complete anyway` to finish the project, or anything else to keep it active."
+                await ctx.send(
+                    f"⚠️ There are still {len(remaining)} unfinished punch-list item(s). "
+                    "Finish or reopen the work before closeout."
                 )
-                if confirm.strip().lower() != "complete anyway":
-                    await ctx.send("Keeping the project active.")
-                    continue
-            complete_crudo_project(project["id"])
-            await ctx.send(f"🏁 {project.get('project_name')} marked complete.")
+                continue
+            mark_project_ready_for_closeout(project["id"])
+            project = sb_rows(
+                supabase.table("crudo_projects").select("*").eq("id", project["id"]).limit(1).execute()
+            )[0]
+            await ctx.send(
+                f"🟡 {project.get('project_name')} is **READY FOR CLOSEOUT**. "
+                "Field work is complete; the project is not closed yet."
+            )
+            await closeout_workspace(ctx, bot, customer, project)
             return
         elif choice == "5":
             return
         else:
             await ctx.send("Reply with a number from 1–5.")
+
+
+# ---------- CRUDOBOT CLOSEOUT + MANUAL MATERIALS ----------
+
+def get_crudo_project_customer(project: Dict[str, Any]) -> Dict[str, Any]:
+    rows = sb_rows(
+        supabase.table("chisme_contacts")
+        .select("id,name,phone,email,address,next_action,next_contact_date,next_followup_date,chisme_summary")
+        .eq("id", project["contact_id"])
+        .limit(1)
+        .execute()
+    )
+    return rows[0] if rows else {"id": project["contact_id"], "name": "Unknown customer"}
+
+
+def project_job_cost_snapshot(project_id: str) -> Dict[str, Any]:
+    project_rows = sb_rows(
+        supabase.table("crudo_projects").select("*").eq("id", project_id).limit(1).execute()
+    )
+    if not project_rows:
+        raise RuntimeError("Crudobot project not found.")
+    project = project_rows[0]
+
+    tasks = get_crudo_project_tasks(project_id)
+    labor = sb_rows(
+        supabase.table("crudo_labor_entries").select("*").eq("project_id", project_id).execute()
+    )
+    transactions = sb_rows(
+        supabase.table("crudo_material_transactions").select("*").eq("project_id", project_id).execute()
+    )
+
+    purchases = sum(
+        abs(money(r.get("total")))
+        for r in transactions
+        if str(r.get("transaction_type") or "").lower() == "purchase"
+    )
+    returns = sum(
+        abs(money(r.get("total")))
+        for r in transactions
+        if str(r.get("transaction_type") or "").lower() == "return"
+    )
+    labor_minutes = sum(int(r.get("actual_minutes") or 0) for r in labor)
+    done, total, pct = project_progress(tasks)
+
+    return {
+        "project": project,
+        "tasks": tasks,
+        "done": done,
+        "total": total,
+        "pct": pct,
+        "labor": labor,
+        "labor_minutes": labor_minutes,
+        "transactions": transactions,
+        "purchases": purchases,
+        "returns": returns,
+        "net_materials": purchases - returns,
+    }
+
+
+def save_manual_material(project: Dict[str, Any], item_name: str, qty: float, total_cost: float,
+                         unit: str = "each", vendor: str = "manual entry",
+                         transaction_type: str = "purchase") -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    transaction_type = "return" if transaction_type == "return" else "purchase"
+    qty = abs(float(qty or 0))
+    total_cost = abs(float(total_cost or 0))
+    if qty <= 0:
+        raise ValueError("Quantity must be greater than zero.")
+
+    tx_rows = sb_rows(
+        supabase.table("crudo_material_transactions").insert({
+            "project_id": project["id"],
+            "transaction_type": transaction_type,
+            "vendor": vendor or "manual entry",
+            "transaction_date": datetime.now().date().isoformat(),
+            "subtotal": total_cost,
+            "tax": 0,
+            "total": total_cost,
+            "source": "manual_entry",
+            "notes": "Manual material entry",
+            "updated_at": now_iso(),
+        }).execute()
+    )
+    if not tx_rows:
+        raise RuntimeError("Manual material transaction insert returned no row.")
+    tx = tx_rows[0]
+
+    item_rows = sb_rows(
+        supabase.table("crudo_material_transaction_items").insert({
+            "transaction_id": tx["id"],
+            "project_id": project["id"],
+            "project_material_id": None,
+            "sku": None,
+            "item_name": item_name.strip(),
+            "quantity": qty,
+            "unit": unit or "each",
+            "unit_price": round(total_cost / qty, 2) if qty else 0,
+            "line_total": total_cost,
+            "category": "manual",
+        }).execute()
+    )
+    return tx, (item_rows[0] if item_rows else {})
+
+
+def mark_project_ready_for_closeout(project_id: str):
+    return (
+        supabase.table("crudo_projects")
+        .update({
+            "status": "closeout",
+            "closeout_status": "ready",
+            "updated_at": now_iso(),
+        })
+        .eq("id", project_id)
+        .execute()
+    )
+
+
+def save_invoice_sent(project_id: str, invoice_amount: float):
+    return (
+        supabase.table("crudo_projects")
+        .update({
+            "invoice_amount": float(invoice_amount),
+            "invoice_sent_at": now_iso(),
+            "closeout_status": "payment_pending",
+            "updated_at": now_iso(),
+        })
+        .eq("id", project_id)
+        .execute()
+    )
+
+
+def save_payment(project_id: str, amount_collected: float):
+    return (
+        supabase.table("crudo_projects")
+        .update({
+            "amount_collected": float(amount_collected),
+            "paid_at": now_iso(),
+            "closeout_status": "paid",
+            "updated_at": now_iso(),
+        })
+        .eq("id", project_id)
+        .execute()
+    )
+
+
+def save_customer_followup(project: Dict[str, Any], notes: str):
+    supabase.table("crudo_projects").update({
+        "customer_followup_at": now_iso(),
+        "customer_followup_notes": notes.strip(),
+        "updated_at": now_iso(),
+    }).eq("id", project["id"]).execute()
+
+
+def save_future_customer_followup(contact_id: str, note: str, followup_date: Optional[str] = None):
+    payload = {
+        "next_action": note.strip(),
+        "chisme_summary": note.strip(),
+        "updated_at": now_iso(),
+    }
+    if followup_date:
+        payload["next_followup_date"] = followup_date
+        payload["next_contact_date"] = followup_date
+    supabase.table("chisme_contacts").update(payload).eq("id", contact_id).execute()
+
+
+def close_crudo_project(project_id: str, closeout_notes: str = ""):
+    return (
+        supabase.table("crudo_projects")
+        .update({
+            "status": "completed",
+            "closeout_status": "completed",
+            "closeout_notes": closeout_notes.strip() or None,
+            "completed_at": now_iso(),
+            "updated_at": now_iso(),
+        })
+        .eq("id", project_id)
+        .execute()
+    )
+
+
+def format_closeout_snapshot(snapshot: Dict[str, Any], customer_name: str) -> str:
+    project = snapshot["project"]
+    labor_minutes = snapshot["labor_minutes"]
+    hours, minutes = divmod(labor_minutes, 60)
+    labor_label = f"{hours}h {minutes}m" if hours else f"{minutes}m"
+    invoice = project.get("invoice_amount")
+    collected = project.get("amount_collected")
+    return "\n".join([
+        f"🟡 **CRUDOBOT CLOSEOUT — {customer_name} — {project.get('project_name')}**",
+        f"Punch list: {snapshot['done']}/{snapshot['total']} — {snapshot['pct']}%",
+        f"Actual labor captured: {labor_label}",
+        f"Material purchases: ${snapshot['purchases']:,.2f}",
+        f"Returns: -${snapshot['returns']:,.2f}",
+        f"Net purchased materials: ${snapshot['net_materials']:,.2f}",
+        f"Contract amount: ${money(project.get('contract_amount')):,.2f}",
+        f"Invoice: {'not sent' if not project.get('invoice_sent_at') else '$' + format(money(invoice), ',.2f') + ' sent'}",
+        f"Collected: {'not recorded' if collected is None else '$' + format(money(collected), ',.2f')}",
+        f"Customer follow-up: {'done' if project.get('customer_followup_at') else 'not done'}",
+    ])
+
+
+async def closeout_workspace(ctx: commands.Context, bot: commands.Bot,
+                             customer: Dict[str, Any], project: Dict[str, Any]):
+    while True:
+        snapshot = project_job_cost_snapshot(project["id"])
+        project = snapshot["project"]
+        await ctx.send(format_closeout_snapshot(snapshot, customer.get("name", "Unknown customer"))[:1900])
+
+        choice = await ask(
+            ctx, bot,
+            "Closeout:\n"
+            "1. Add material purchase/return\n"
+            "2. Record invoice sent\n"
+            "3. Record payment\n"
+            "4. Record customer follow-up\n"
+            "5. Capture future customer opportunity/follow-up\n"
+            "6. Close project\n"
+            "7. Exit\n"
+            "Reply with 1–7."
+        )
+
+        if choice == "1":
+            item = await ask(ctx, bot, "What material? Example: `paper`")
+            qty_text = await ask(ctx, bot, "How many? Example: `1`")
+            cost_text = await ask(ctx, bot, "Total amount paid/returned? Example: `5`")
+            kind = (await ask(ctx, bot, "Purchase or return? Reply `purchase` or `return`.")).strip().lower()
+            try:
+                qty = number(qty_text)
+                cost = money(cost_text)
+                if qty <= 0:
+                    raise ValueError("Quantity must be greater than zero.")
+                save_manual_material(project, item, qty, cost, transaction_type=kind)
+                await ctx.send(f"✅ Saved {kind if kind == 'return' else 'purchase'}: {item} · qty {qty:g} · ${cost:,.2f}")
+            except Exception as exc:
+                await ctx.send(f"Could not save material: `{type(exc).__name__}: {exc}`")
+
+        elif choice == "2":
+            default_amount = money(project.get("contract_amount"))
+            raw = await ask(
+                ctx, bot,
+                f"What amount was invoiced? Contract amount is ${default_amount:,.2f}. "
+                "Reply with the invoice amount."
+            )
+            amount = money(raw)
+            save_invoice_sent(project["id"], amount)
+            await ctx.send(f"📨 Invoice recorded as sent for ${amount:,.2f}.")
+
+        elif choice == "3":
+            raw = await ask(ctx, bot, "How much has been collected on this project?")
+            amount = money(raw)
+            save_payment(project["id"], amount)
+            await ctx.send(f"💵 Payment recorded: ${amount:,.2f}.")
+
+        elif choice == "4":
+            notes = await ask(ctx, bot, "What happened in the customer follow-up?")
+            if notes.strip():
+                save_customer_followup(project, notes)
+                await ctx.send("📞 Customer follow-up saved.")
+            else:
+                await ctx.send("No follow-up saved.")
+
+        elif choice == "5":
+            note = await ask(
+                ctx, bot,
+                "What future work or follow-up should Chisme remember? "
+                "Example: `Possible second origami chair for Christmas family visit`"
+            )
+            date_text = await ask(
+                ctx, bot,
+                "Follow-up date? Use YYYY-MM-DD, or reply `skip` if you don't want to set one yet."
+            )
+            followup_date = None if date_text.strip().lower() == "skip" else date_text.strip()
+            save_future_customer_followup(project["contact_id"], note, followup_date)
+            await ctx.send("🗣️ Sent that future customer follow-up back to Chisme.")
+
+        elif choice == "6":
+            snapshot = project_job_cost_snapshot(project["id"])
+            project = snapshot["project"]
+            missing = []
+            if snapshot["pct"] < 100:
+                missing.append("punch list is not 100%")
+            if not project.get("invoice_sent_at"):
+                missing.append("invoice has not been recorded as sent")
+            if project.get("amount_collected") is None:
+                missing.append("payment has not been recorded")
+            if not project.get("customer_followup_at"):
+                missing.append("customer follow-up has not been recorded")
+
+            if missing:
+                await ctx.send("⚠️ Not ready to close:\n- " + "\n- ".join(missing))
+                continue
+
+            notes = await ask(ctx, bot, "Final closeout note? Reply `skip` if none.")
+            close_crudo_project(project["id"], "" if notes.lower() == "skip" else notes)
+            await ctx.send(
+                f"✅ **{project.get('project_name')} CLOSED.**\n"
+                "It will leave the Oven, but its project, labor, material, invoice, payment, "
+                "and closeout history remain in Crudobot."
+            )
+            return
+
+        elif choice == "7":
+            return
+        else:
+            await ctx.send("Reply with a number from 1–7.")
 
 
 # ---------- REPORT NORMALIZATION ----------
@@ -956,6 +1265,10 @@ def register_crudo(bot: commands.Bot):
             "💰 CRUDOBOT COMMANDS\n\n"
             "`!crudoproject [customer]`\n"
             "Create/open a live project and manage its punch list.\n\n"
+            "`!crudoclose [project/customer]`\n"
+            "Open the project closeout workflow.\n\n"
+            "`!crudomaterial [project/customer]`\n"
+            "Manually add a material purchase or return.\n\n"
             "`!crudojc`\n"
             "List available job costing reports, pick one, and retrieve the report.\n\n"
             "`!crudoestimate`\n"
@@ -970,6 +1283,8 @@ def register_crudo(bot: commands.Bot):
             "Crudobot commands:\n"
             "- `!crudoproject [customer]` — create/open a live project + punch list\n"
             "- `!crudoreceipt [project/customer]` — scan a purchase/return receipt\n"
+            "- `!crudomaterial [project/customer]` — manually add a purchase/return\n"
+            "- `!crudoclose [project/customer]` — project closeout workflow\n"
              "- `!crudojc` — list and retrieve job costing reports\n"
             "- `!crudoestimate` — estimate support from historical actuals\n"
             "- `!crudoreport` — grounded business report from job costing + narrative data\n"
@@ -1046,6 +1361,60 @@ def register_crudo(bot: commands.Bot):
         except Exception as exc:
             await ctx.send(f"Crudobot project error: `{type(exc).__name__}: {exc}`")
 
+
+    @bot.command(name="crudomaterial")
+    async def crudomaterial(ctx: commands.Context, *, project_query: str = ""):
+        """Manually add a purchase or return to Crudobot job costing."""
+        if not require_supabase():
+            await ctx.send("Crudobot materials need Supabase configured.")
+            return
+        if not project_query.strip():
+            project_query = await ask(ctx, bot, "Which customer or project is this material for?")
+        selected = await choose_project_for_receipt(ctx, bot, project_query)
+        if not selected:
+            return
+        project, customer_name = selected
+
+        item = await ask(ctx, bot, "What material?")
+        qty_text = await ask(ctx, bot, "How many?")
+        cost_text = await ask(ctx, bot, "What was the total cost?")
+        kind = (await ask(ctx, bot, "Purchase or return?")).strip().lower()
+        try:
+            qty = number(qty_text)
+            cost = money(cost_text)
+            save_manual_material(project, item, qty, cost, transaction_type=kind)
+        except Exception as exc:
+            await ctx.send(f"Could not save material: `{type(exc).__name__}: {exc}`")
+            return
+        await ctx.send(
+            f"✅ Saved to **{customer_name} — {project.get('project_name')}**: "
+            f"{item} · qty {qty:g} · {'return' if kind == 'return' else 'purchase'} ${cost:,.2f}"
+        )
+
+    @bot.command(name="crudoclose")
+    async def crudoclose(ctx: commands.Context, *, project_query: str = ""):
+        """Open closeout for a completed-punch-list Crudobot project."""
+        if not require_supabase():
+            await ctx.send("Crudobot closeout needs Supabase configured.")
+            return
+        if not project_query.strip():
+            project_query = await ask(ctx, bot, "Which customer or project are we closing out?")
+        selected = await choose_project_for_receipt(ctx, bot, project_query)
+        if not selected:
+            return
+        project, customer_name = selected
+        tasks = get_crudo_project_tasks(project["id"])
+        _, _, pct = project_progress(tasks)
+        if pct < 100:
+            await ctx.send(
+                f"⚠️ **{customer_name} — {project.get('project_name')}** is only {pct}% complete. "
+                "Finish the punch list before closeout."
+            )
+            return
+        customer = get_crudo_project_customer(project)
+        if project.get("status") != "completed":
+            mark_project_ready_for_closeout(project["id"])
+        await closeout_workspace(ctx, bot, customer, project)
 
     @bot.command(name="crudoreceipt")
     async def crudoreceipt(ctx: commands.Context, *, project_query: str = ""):
