@@ -15,7 +15,7 @@ SUPABASE_KEY = (
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-HOOD_UBER_CHANNEL_ID = int(os.getenv("HOOD_UBER_CHANNEL_ID", "0"))
+TRANSPORTATION_CHANNEL_ID = int(os.getenv("TRANSPORTATION_CHANNEL_ID", "0"))
 
 
 # =========================================================
@@ -926,16 +926,16 @@ class VueltaBot(commands.Cog):
             f"Trip Gig #{gig_id} has been opened for **${delivery_offer:.2f}**."
         )
 
-        if not HOOD_UBER_CHANNEL_ID:
+        if not TRANSPORTATION_CHANNEL_ID:
             await ctx.send(
-                "⚠️ The trip is saved, but `HOOD_UBER_CHANNEL_ID` hasn't been configured yet."
+                "⚠️ The trip is saved, but `TRANSPORTATION_CHANNEL_ID` hasn't been configured yet."
             )
             return
 
-        hood_channel = self.bot.get_channel(HOOD_UBER_CHANNEL_ID)
-        if not hood_channel:
+        transportation_channel = self.bot.get_channel(TRANSPORTATION_CHANNEL_ID)
+        if not transportation_channel:
             await ctx.send(
-                "⚠️ I created the trip, but I couldn't find the Hood Uber channel."
+                "⚠️ I created the trip, but I couldn't find the Transportation channel."
             )
             return
 
@@ -952,11 +952,11 @@ class VueltaBot(commands.Cog):
         gig_embed.add_field(name="Status", value="OPEN", inline=True)
         gig_embed.set_footer(text=f"Claim this trip with !tripclaim {gig_id}")
 
-        gig_message = await hood_channel.send(embed=gig_embed)
+        gig_message = await transportation_channel.send(embed=gig_embed)
         (
             supabase.table("transport_gigs")
             .update({
-                "gig_channel_id": str(hood_channel.id),
+                "gig_channel_id": str(transportation_channel.id),
                 "gig_message_id": str(gig_message.id)
             })
             .eq("id", gig_id)
