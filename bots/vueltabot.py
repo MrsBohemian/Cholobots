@@ -1,5 +1,6 @@
 import os
 import re
+from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
@@ -13,6 +14,8 @@ SUPABASE_KEY = (
 )
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+HOOD_UBER_CHANNEL_ID = int(os.getenv("HOOD_UBER_CHANNEL_ID", "0"))
 
 
 # =========================================================
@@ -128,6 +131,73 @@ class VueltaBot(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+
+    async def ask_user(self, ctx, question, timeout=120):
+        await ctx.send(question)
+
+        def check(message):
+            return (
+                message.author.id == ctx.author.id
+                and message.channel.id == ctx.channel.id
+            )
+
+        try:
+            message = await self.bot.wait_for(
+                "message", timeout=timeout, check=check
+            )
+            return message.content.strip()
+        except TimeoutError:
+            await ctx.send(
+                "⌛ Transportation request timed out. "
+                "The item is still claimed."
+            )
+            return None
+
+    # =====================================================
+    # !VUELTABOT
+    # =====================================================
+
+    @commands.command(name="vueltabot")
+    async def vueltabot(self, ctx, *, topic: str = None):
+        embed = discord.Embed(
+            title="♻️ Qué onda, I’m Vueltabot.",
+            description=(
+                "I help stuff keep moving instead of sitting around unused.\n\n"
+                "List what you have, tell me what you need, claim available "
+                "items, and request a local delivery gig when you need help "
+                "moving something."
+            )
+        )
+        embed.add_field(
+            name="📦 !tengo",
+            value="List something you have available.\nExample: `!tengo cast iron skillet $10`",
+            inline=False
+        )
+        embed.add_field(
+            name="🔎 !busco",
+            value="Tell me what you're looking for and save the search.\nExample: `!busco pots and pans`",
+            inline=False
+        )
+        embed.add_field(
+            name="🤝 !claim",
+            value=(
+                "Claim an available item. After claiming, I can help you "
+                "request paid transportation.\nExample: `!claim 57`"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🚗 !tripclaim",
+            value="Claim an open transportation gig.\nExample: `!tripclaim 7`",
+            inline=False
+        )
+        embed.add_field(
+            name="🛣️ !vuelta",
+            value="See an item's current status and route history.\nExample: `!vuelta 57`",
+            inline=False
+        )
+        embed.set_footer(text="Have it → find it → claim it → keep it moving. 🔄")
+        await ctx.send(embed=embed)
 
 
     # =====================================================
@@ -682,6 +752,9 @@ class VueltaBot(commands.Cog):
             )
             return
 
+        transaction = transaction_result.data[0]
+        transaction_id = transaction["id"]
+
         # Mark item claimed
         (
             supabase
@@ -763,5 +836,216 @@ class VueltaBot(commands.Cog):
             )
         )
         
+
+        # =====================================================
+        # TRANSPORTATION OPTION
+        # =====================================================
+
+        transport_answer = await self.ask_user(
+            ctx,
+            "🚗 **Need a homie to move it?**\n\n"
+            "Reply `yes` if you're willing to pay for delivery.\n"
+            "Reply `no` if you'll handle pickup yourself."
+        )
+
+        if not transport_answer:
+            return
+
+        if transport_answer.lower() not in {"yes", "y", "yeah", "yep", "sure"}:
+            await ctx.send("👍 Got it. You'll handle pickup.")
+            return
+
+        offer_text = await self.ask_user(
+            ctx,
+            "💵 **What are you willing to pay for delivery?**\n\n"
+            "Enter a dollar amount, for example: `15`"
+        )
+        if not offer_text:
+            return
+
+        offer_match = re.search(r"\d+(?:\.\d{1,2})?", offer_text)
+        if not offer_match:
+            await ctx.send("⚠️ I couldn't understand that delivery amount.")
+            return
+
+        delivery_offer = float(offer_match.group())
+        if delivery_offer <= 0:
+            await ctx.send("⚠️ The delivery offer needs to be more than $0.")
+            return
+
+        pickup_area = await self.ask_user(
+            ctx,
+            "📍 **What general area is the pickup in?**\n\n"
+            "Don't post the full address here.\n"
+            "Example: `Walzem / 78218`"
+        )
+        if not pickup_area:
+            return
+
+        dropoff_area = await self.ask_user(
+            ctx,
+            "📍 **What general area should it be delivered to?**\n\n"
+            "Don't post the full address here.\n"
+            "Example: `Downtown / 78205`"
+        )
+        if not dropoff_area:
+            return
+
+        (
+            supabase.table("vuelta_transactions")
+            .update({"transport_required": True})
+            .eq("id", transaction_id)
+            .execute()
+        )
+
+        transport_record = {
+            "item_id": str(item_id),
+            "claim_id": str(transaction_id),
+            "buyer_discord_id": buyer_id,
+            "seller_discord_id": seller_id,
+            "pickup_area": pickup_area,
+            "dropoff_area": dropoff_area,
+            "delivery_offer": delivery_offer,
+            "status": "open"
+        }
+        transport_result = (
+            supabase.table("transport_gigs")
+            .insert(transport_record)
+            .execute()
+        )
+        if not transport_result.data:
+            await ctx.send(
+                "⚠️ The item is claimed, but I couldn't create the transportation gig."
+            )
+            return
+
+        gig = transport_result.data[0]
+        gig_id = gig["id"]
+        await ctx.send(
+            f"🚗 **Transportation requested!**\n"
+            f"Trip Gig #{gig_id} has been opened for **${delivery_offer:.2f}**."
+        )
+
+        if not HOOD_UBER_CHANNEL_ID:
+            await ctx.send(
+                "⚠️ The trip is saved, but `HOOD_UBER_CHANNEL_ID` hasn't been configured yet."
+            )
+            return
+
+        hood_channel = self.bot.get_channel(HOOD_UBER_CHANNEL_ID)
+        if not hood_channel:
+            await ctx.send(
+                "⚠️ I created the trip, but I couldn't find the Hood Uber channel."
+            )
+            return
+
+        gig_embed = discord.Embed(
+            title=f"🚗 Trip Gig #{gig_id}",
+            description=item_name
+        )
+        gig_embed.add_field(name="Pickup", value=pickup_area, inline=True)
+        gig_embed.add_field(name="Dropoff", value=dropoff_area, inline=True)
+        gig_embed.add_field(
+            name="Delivery Offer", value=f"${delivery_offer:.2f}", inline=True
+        )
+        gig_embed.add_field(name="Item", value=f"#{item_id}", inline=True)
+        gig_embed.add_field(name="Status", value="OPEN", inline=True)
+        gig_embed.set_footer(text=f"Claim this trip with !tripclaim {gig_id}")
+
+        gig_message = await hood_channel.send(embed=gig_embed)
+        (
+            supabase.table("transport_gigs")
+            .update({
+                "gig_channel_id": str(hood_channel.id),
+                "gig_message_id": str(gig_message.id)
+            })
+            .eq("id", gig_id)
+            .execute()
+        )
+
+    # =====================================================
+    # !TRIPCLAIM
+    # =====================================================
+
+    @commands.command(name="tripclaim")
+    async def tripclaim(self, ctx, gig_id: int = None):
+        if not gig_id:
+            await ctx.send("Use it like this:\n`!tripclaim 7`")
+            return
+
+        driver_id = str(ctx.author.id)
+        result = (
+            supabase.table("transport_gigs")
+            .select("*")
+            .eq("id", gig_id)
+            .execute()
+        )
+        if not result.data:
+            await ctx.send(f"❌ I can't find Trip Gig #{gig_id}.")
+            return
+
+        gig = result.data[0]
+        if gig.get("status") != "open":
+            await ctx.send(
+                f"⚠️ Trip Gig #{gig_id} is already **{gig.get('status')}**."
+            )
+            return
+
+        if gig.get("buyer_discord_id") == driver_id:
+            await ctx.send("😂 Homie, you can't claim your own delivery gig.")
+            return
+
+        claim_result = (
+            supabase.table("transport_gigs")
+            .update({
+                "driver_discord_id": driver_id,
+                "status": "claimed",
+                "claimed_at": datetime.now(timezone.utc).isoformat()
+            })
+            .eq("id", gig_id)
+            .eq("status", "open")
+            .execute()
+        )
+        if not claim_result.data:
+            await ctx.send(
+                f"⚠️ Trip Gig #{gig_id} was just claimed by someone else."
+            )
+            return
+
+        claimed_gig = claim_result.data[0]
+        await ctx.send(
+            f"🚗 **Trip Gig #{gig_id} claimed!**\n\n"
+            f"<@{driver_id}> is taking this trip.\n"
+            f"Pickup: **{claimed_gig.get('pickup_area')}**\n"
+            f"Dropoff: **{claimed_gig.get('dropoff_area')}**\n"
+            f"Pay: **${float(claimed_gig['delivery_offer']):.2f}**",
+            allowed_mentions=discord.AllowedMentions(
+                users=True, everyone=False, roles=False
+            )
+        )
+
+        channel_id = claimed_gig.get("gig_channel_id")
+        message_id = claimed_gig.get("gig_message_id")
+        if channel_id and message_id:
+            try:
+                gig_channel = self.bot.get_channel(int(channel_id))
+                if gig_channel:
+                    gig_message = await gig_channel.fetch_message(int(message_id))
+                    if gig_message.embeds:
+                        gig_embed = gig_message.embeds[0]
+                        gig_embed.set_field_at(
+                            4,
+                            name="Status",
+                            value=f"CLAIMED by {ctx.author}",
+                            inline=True
+                        )
+                        gig_embed.set_footer(text="This trip has been claimed.")
+                        await gig_message.edit(embed=gig_embed)
+            except (
+                discord.NotFound, discord.Forbidden, discord.HTTPException,
+                ValueError, IndexError
+            ):
+                pass
+
 async def setup(bot):
     await bot.add_cog(VueltaBot(bot))
