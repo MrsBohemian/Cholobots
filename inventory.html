@@ -5,13 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Guardabot Garage Map</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
   <style>
     :root {
       --gold: #ffbf2f;
-      --panel: rgba(8, 12, 18, .94);
-      --line: rgba(255, 255, 255, .22);
+      --panel: rgba(8, 12, 18, .98);
+      --panel-2: #111720;
+      --line: rgba(255, 255, 255, .14);
       --text: #f5f7fa;
       --muted: #aab3c0;
+      --green: #58d68d;
+      --red: #ff7b7b;
     }
 
     * { box-sizing: border-box; }
@@ -22,6 +26,11 @@
       background: #05070a;
       color: var(--text);
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button,
+    input {
+      font: inherit;
     }
 
     .topbar {
@@ -89,10 +98,6 @@
       -webkit-user-drag: none;
     }
 
-    /*
-      Clickable overlay aligned to the A1–E5 floor grid in the artwork.
-      The artwork remains the visual map; these cells are transparent hit areas.
-    */
     .zone-grid {
       position: absolute;
       left: 10.2%;
@@ -162,14 +167,19 @@
       background: rgba(0,0,0,.58);
     }
 
-    .sheet-backdrop.open { display: block; }
+    .sheet-backdrop.open {
+      display: block;
+    }
 
     .sheet {
       position: absolute;
       left: 0;
       right: 0;
       bottom: 0;
-      padding: 18px 18px calc(20px + env(safe-area-inset-bottom));
+      max-height: min(88vh, 900px);
+      display: flex;
+      flex-direction: column;
+      padding: 18px 14px calc(14px + env(safe-area-inset-bottom));
       border-radius: 18px 18px 0 0;
       background: var(--panel);
       border-top: 1px solid #3a4350;
@@ -177,22 +187,29 @@
     }
 
     .handle {
+      flex: 0 0 auto;
       width: 42px;
       height: 4px;
-      margin: -7px auto 14px;
+      margin: -7px auto 12px;
       border-radius: 999px;
       background: #657080;
     }
 
+    .sheet-head {
+      position: relative;
+      flex: 0 0 auto;
+      padding-right: 72px;
+    }
+
     .sheet h2 {
-      margin: 0 0 5px;
+      margin: 0 0 4px;
       color: var(--gold);
       font-size: 22px;
     }
 
     .sheet .zone-name {
-      margin: 0 0 8px;
-      font-size: 18px;
+      margin: 0 0 4px;
+      font-size: 17px;
       font-weight: 700;
     }
 
@@ -204,8 +221,8 @@
 
     .close {
       position: absolute;
-      top: 18px;
-      right: 18px;
+      top: 0;
+      right: 0;
       border: 0;
       border-radius: 8px;
       padding: 7px 10px;
@@ -215,12 +232,228 @@
       cursor: pointer;
     }
 
+    .inventory-tools {
+      flex: 0 0 auto;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #303946;
+    }
+
+    .inventory-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .1em;
+      margin-bottom: 9px;
+    }
+
+    .inventory-label span:last-child {
+      letter-spacing: 0;
+      font-weight: 700;
+      color: #d7dde5;
+    }
+
+    .search-box {
+      position: relative;
+    }
+
+    .search-box input {
+      width: 100%;
+      border: 1px solid #384250;
+      border-radius: 11px;
+      padding: 11px 12px;
+      color: #fff;
+      background: #0d1219;
+      outline: none;
+    }
+
+    .search-box input:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 2px rgba(255,191,47,.12);
+    }
+
+    .filters {
+      display: flex;
+      gap: 7px;
+      overflow-x: auto;
+      padding: 9px 0 2px;
+      scrollbar-width: none;
+    }
+
+    .filters::-webkit-scrollbar {
+      display: none;
+    }
+
+    .filter {
+      flex: 0 0 auto;
+      border: 1px solid #394451;
+      border-radius: 999px;
+      padding: 7px 10px;
+      color: #d6dde6;
+      background: #111720;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .filter.active {
+      border-color: var(--gold);
+      color: #111;
+      background: var(--gold);
+    }
+
+    .inventory-scroll {
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      margin-top: 10px;
+      padding-right: 2px;
+    }
+
+    .summary {
+      color: var(--muted);
+      font-size: 12px;
+      margin: 2px 2px 10px;
+    }
+
+    .category-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    details.category {
+      border: 1px solid #303946;
+      border-radius: 12px;
+      background: rgba(255,255,255,.03);
+      overflow: hidden;
+    }
+
+    details.category[open] {
+      border-color: #465362;
+    }
+
+    details.category > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 12px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+      user-select: none;
+    }
+
+    details.category > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .category-name {
+      min-width: 0;
+      font-weight: 850;
+      font-size: 15px;
+    }
+
+    .category-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .category-meta .count {
+      color: var(--gold);
+      font-weight: 900;
+    }
+
+    .chevron {
+      display: inline-block;
+      transition: transform .15s ease;
+      color: #7f8a98;
+    }
+
+    details[open] .chevron {
+      transform: rotate(90deg);
+    }
+
+    .items {
+      display: grid;
+      border-top: 1px solid #2c3540;
+    }
+
+    .item-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 11px 12px;
+      border-bottom: 1px solid rgba(255,255,255,.07);
+    }
+
+    .item-row:last-child {
+      border-bottom: 0;
+    }
+
+    .item-name {
+      min-width: 0;
+      font-weight: 760;
+      line-height: 1.25;
+    }
+
+    .item-notes {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.25;
+    }
+
+    .qty {
+      min-width: 62px;
+      text-align: right;
+      color: var(--gold);
+      font-weight: 900;
+    }
+
+    .qty.zero {
+      color: #8a94a3;
+    }
+
+    .empty-state,
+    .loading-state,
+    .error-state {
+      padding: 20px 12px;
+      border: 1px dashed #3a4350;
+      border-radius: 12px;
+      color: var(--muted);
+      text-align: center;
+    }
+
     @media (min-width: 800px) {
-      .wrap { padding-top: 20px; }
-      .coord { font-size: 12px; }
+      .wrap {
+        padding-top: 20px;
+      }
+
+      .coord {
+        font-size: 12px;
+      }
+
+      .sheet {
+        left: 50%;
+        right: auto;
+        width: min(720px, calc(100vw - 30px));
+        transform: translateX(-50%);
+        border: 1px solid #3a4350;
+        border-bottom: 0;
+      }
     }
   </style>
 </head>
+
 <body>
   <header class="topbar">
     <a class="back" href="index.html" aria-label="Back to Cholobots">‹</a>
@@ -239,20 +472,55 @@
       />
       <div class="zone-grid" id="zoneGrid" aria-label="Garage zones"></div>
     </div>
+
     <div class="status" id="status">Loading garage zones…</div>
   </main>
 
-  <div class="sheet-backdrop" id="sheetBackdrop" role="dialog" aria-modal="true" aria-labelledby="sheetCell">
+  <div
+    class="sheet-backdrop"
+    id="sheetBackdrop"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="sheetCell"
+  >
     <section class="sheet">
       <div class="handle"></div>
-      <button class="close" id="closeSheet" type="button">Close</button>
-      <h2 id="sheetCell">A1</h2>
-      <p class="zone-name" id="sheetName">Zone</p>
-      <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid #303946">
-<div style="color:#aab3c0;font-size:12px;font-weight:800;letter-spacing:.1em;margin-bottom:9px">📦 INVENTORY</div>
-<div id="inventoryList" style="display:grid;gap:8px">Loading inventory…</div>
-</div>
-<p class="updated" id="sheetUpdated"></p>
+
+      <div class="sheet-head">
+        <button class="close" id="closeSheet" type="button">Close</button>
+        <h2 id="sheetCell">A1</h2>
+        <p class="zone-name" id="sheetName">Zone</p>
+        <p class="updated" id="sheetUpdated"></p>
+      </div>
+
+      <div class="inventory-tools">
+        <div class="inventory-label">
+          <span>📦 INVENTORY</span>
+          <span id="inventoryCount"></span>
+        </div>
+
+        <div class="search-box">
+          <input
+            id="inventorySearch"
+            type="search"
+            placeholder="Search this location…"
+            autocomplete="off"
+          />
+        </div>
+
+        <div class="filters" aria-label="Inventory filters">
+          <button class="filter active" type="button" data-filter="all">All</button>
+          <button class="filter" type="button" data-filter="in">In stock</button>
+          <button class="filter" type="button" data-filter="out">Out of stock</button>
+        </div>
+      </div>
+
+      <div class="inventory-scroll">
+        <div class="summary" id="inventorySummary"></div>
+        <div id="inventoryList">
+          <div class="loading-state">Loading inventory…</div>
+        </div>
+      </div>
     </section>
   </div>
 
@@ -266,19 +534,30 @@
 
     const zoneGrid = document.getElementById("zoneGrid");
     const status = document.getElementById("status");
+
     const sheetBackdrop = document.getElementById("sheetBackdrop");
     const sheetCell = document.getElementById("sheetCell");
     const sheetName = document.getElementById("sheetName");
     const sheetUpdated = document.getElementById("sheetUpdated");
-    const inventoryList = document.getElementById("inventoryList");
     const closeSheet = document.getElementById("closeSheet");
+
+    const inventoryList = document.getElementById("inventoryList");
+    const inventoryCount = document.getElementById("inventoryCount");
+    const inventorySummary = document.getElementById("inventorySummary");
+    const inventorySearch = document.getElementById("inventorySearch");
+    const filterButtons = [...document.querySelectorAll(".filter")];
 
     const zoneData = new Map();
 
+    let currentInventory = [];
+    let currentFilter = "all";
+
     function prettyDate(value) {
       if (!value) return "No update date";
+
       const d = new Date(value);
       if (Number.isNaN(d.getTime())) return value;
+
       return "Updated " + d.toLocaleString([], {
         month: "short",
         day: "numeric",
@@ -293,57 +572,227 @@
         for (const col of COLS) {
           const cell = row + col;
           const button = document.createElement("button");
+
           button.type = "button";
           button.className = "zone";
           button.dataset.cell = cell;
           button.setAttribute("aria-label", `Garage zone ${cell}`);
           button.innerHTML = `<span class="coord">${cell}</span>`;
           button.addEventListener("click", () => openZone(cell, button));
+
           zoneGrid.appendChild(button);
         }
       }
     }
 
+    function normalizeCategory(value) {
+      const cleaned = String(value || "").trim();
+      return cleaned || "Uncategorized";
+    }
+
+    function isInStock(item) {
+      return Number(item.quantity ?? 0) > 0;
+    }
+
+    function filteredInventory() {
+      const search = inventorySearch.value.trim().toLowerCase();
+
+      return currentInventory.filter(item => {
+        const matchesFilter =
+          currentFilter === "all" ||
+          (currentFilter === "in" && isInStock(item)) ||
+          (currentFilter === "out" && !isInStock(item));
+
+        if (!matchesFilter) return false;
+        if (!search) return true;
+
+        const haystack = [
+          item.item_name,
+          item.category,
+          item.notes,
+          item.unit
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(search);
+      });
+    }
+
+    function groupByCategory(items) {
+      const groups = new Map();
+
+      items.forEach(item => {
+        const category = normalizeCategory(item.category);
+
+        if (!groups.has(category)) {
+          groups.set(category, []);
+        }
+
+        groups.get(category).push(item);
+      });
+
+      return [...groups.entries()].sort((a, b) =>
+        a[0].localeCompare(b[0], undefined, { sensitivity: "base" })
+      );
+    }
+
+    function renderInventory() {
+      const visibleItems = filteredInventory();
+      const groups = groupByCategory(visibleItems);
+      const total = currentInventory.length;
+      const inStock = currentInventory.filter(isInStock).length;
+      const outStock = total - inStock;
+
+      inventoryCount.textContent = `${total} item${total === 1 ? "" : "s"}`;
+      inventorySummary.textContent =
+        `${groups.length} categor${groups.length === 1 ? "y" : "ies"} shown · ` +
+        `${inStock} in stock · ${outStock} out of stock`;
+
+      inventoryList.innerHTML = "";
+
+      if (!visibleItems.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty-state";
+
+        if (inventorySearch.value.trim()) {
+          empty.textContent = "No items match that search.";
+        } else if (currentFilter === "in") {
+          empty.textContent = "No in-stock items in this location.";
+        } else if (currentFilter === "out") {
+          empty.textContent = "No out-of-stock items in this location.";
+        } else {
+          empty.textContent = "No inventory recorded in this zone yet.";
+        }
+
+        inventoryList.appendChild(empty);
+        return;
+      }
+
+      const list = document.createElement("div");
+      list.className = "category-list";
+
+      const searchActive = inventorySearch.value.trim().length > 0;
+
+      groups.forEach(([category, items]) => {
+        const details = document.createElement("details");
+        details.className = "category";
+
+        // Search results open automatically. Normal browsing stays collapsed.
+        if (searchActive) details.open = true;
+
+        const summary = document.createElement("summary");
+
+        const categoryName = document.createElement("div");
+        categoryName.className = "category-name";
+        categoryName.textContent = category;
+
+        const meta = document.createElement("div");
+        meta.className = "category-meta";
+
+        const categoryInStock = items.filter(isInStock).length;
+        meta.innerHTML = `
+          <span class="count">${items.length}</span>
+          <span>${categoryInStock} in stock</span>
+          <span class="chevron">›</span>
+        `;
+
+        summary.append(categoryName, meta);
+
+        const itemWrap = document.createElement("div");
+        itemWrap.className = "items";
+
+        items.forEach(item => {
+          const row = document.createElement("div");
+          row.className = "item-row";
+
+          const info = document.createElement("div");
+
+          const name = document.createElement("div");
+          name.className = "item-name";
+          name.textContent = item.item_name || "Unnamed item";
+          info.appendChild(name);
+
+          if (item.notes) {
+            const notes = document.createElement("div");
+            notes.className = "item-notes";
+            notes.textContent = item.notes;
+            info.appendChild(notes);
+          }
+
+          const qty = document.createElement("div");
+          qty.className = "qty";
+          if (!isInStock(item)) qty.classList.add("zero");
+          qty.textContent = `${item.quantity ?? 0}${item.unit ? " " + item.unit : ""}`;
+
+          row.append(info, qty);
+          itemWrap.appendChild(row);
+        });
+
+        details.append(summary, itemWrap);
+        list.appendChild(details);
+      });
+
+      inventoryList.appendChild(list);
+    }
+
     async function openZone(cell, button) {
-      document.querySelectorAll(".zone.active").forEach(el => el.classList.remove("active"));
+      document
+        .querySelectorAll(".zone.active")
+        .forEach(el => el.classList.remove("active"));
+
       button.classList.add("active");
+
       const row = zoneData.get(cell);
+
       sheetCell.textContent = cell;
       sheetName.textContent = row?.zone_name || "Open / unmapped";
       sheetUpdated.textContent = row ? prettyDate(row.updated_at) : "No zone record";
-      inventoryList.textContent = "Loading inventory…";
+
+      currentInventory = [];
+      currentFilter = "all";
+      inventorySearch.value = "";
+
+      filterButtons.forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.filter === "all");
+      });
+
+      inventoryCount.textContent = "";
+      inventorySummary.textContent = "";
+      inventoryList.innerHTML = `<div class="loading-state">Loading inventory…</div>`;
+
       sheetBackdrop.classList.add("open");
 
       try {
-        const { data, error } = await sb.from("inventory_items")
+        const { data, error } = await sb
+          .from("inventory_items")
           .select("id,item_name,quantity,unit,location,category,notes")
-          .eq("location", cell).order("item_name");
+          .eq("location", cell)
+          .order("category", { ascending: true })
+          .order("item_name", { ascending: true });
+
         if (error) throw error;
-        inventoryList.innerHTML = "";
-        if (!data || !data.length) {
-          inventoryList.textContent = "No inventory recorded in this zone yet.";
-          return;
-        }
-        data.forEach(item => {
-          const line = document.createElement("div");
-          line.style.cssText = "display:flex;justify-content:space-between;gap:14px;padding:10px 12px;border:1px solid #303946;border-radius:10px;background:rgba(255,255,255,.035)";
-          const name = document.createElement("strong");
-          name.textContent = item.item_name || "Unnamed item";
-          const qty = document.createElement("strong");
-          qty.style.color = "#ffbf2f";
-          qty.textContent = `${item.quantity ?? 0}${item.unit ? " " + item.unit : ""}`;
-          line.append(name, qty);
-          inventoryList.appendChild(line);
-        });
+
+        currentInventory = data || [];
+        renderInventory();
       } catch (err) {
         console.error(err);
-        inventoryList.textContent = "Could not load inventory for this zone.";
+
+        inventoryList.innerHTML = `
+          <div class="error-state">
+            Could not load inventory for this zone.
+          </div>
+        `;
       }
     }
 
     function closeZone() {
       sheetBackdrop.classList.remove("open");
-      document.querySelectorAll(".zone.active").forEach(el => el.classList.remove("active"));
+
+      document
+        .querySelectorAll(".zone.active")
+        .forEach(el => el.classList.remove("active"));
     }
 
     async function loadZones() {
@@ -355,18 +804,40 @@
 
         if (error) throw error;
 
-        (data || []).forEach(row => zoneData.set(String(row.cell).toUpperCase(), row));
-        status.textContent = `${zoneData.size} mapped garage zones · tap anywhere on the map`;
+        (data || []).forEach(row => {
+          zoneData.set(String(row.cell).toUpperCase(), row);
+        });
+
+        status.textContent =
+          `${zoneData.size} mapped garage zones · tap anywhere on the map`;
       } catch (err) {
         console.error(err);
-        status.textContent = "Could not load live garage zones. The map artwork is still available.";
+
+        status.textContent =
+          "Could not load live garage zones. The map artwork is still available.";
       }
     }
 
+    inventorySearch.addEventListener("input", renderInventory);
+
+    filterButtons.forEach(button => {
+      button.addEventListener("click", () => {
+        currentFilter = button.dataset.filter;
+
+        filterButtons.forEach(btn => {
+          btn.classList.toggle("active", btn === button);
+        });
+
+        renderInventory();
+      });
+    });
+
     closeSheet.addEventListener("click", closeZone);
+
     sheetBackdrop.addEventListener("click", event => {
       if (event.target === sheetBackdrop) closeZone();
     });
+
     document.addEventListener("keydown", event => {
       if (event.key === "Escape") closeZone();
     });
