@@ -165,6 +165,11 @@ class TestValidation:
         assert result["status"] == "invalid"
         assert any("#1" in e and "itself" in e for e in result["errors"])
 
+    def test_soft_self_ordering_is_invalid(self):
+        result = build("", [story(1)], [], [{"ref": 1, "after": 1, "reason": "x"}])
+        assert result["status"] == "invalid"
+        assert any("#1" in e and "after itself" in e for e in result["errors"])
+
 
 class TestCli:
     def files(self, tmp_path, deps, description="Prose."):
@@ -201,14 +206,29 @@ class TestCli:
         bad = tmp_path / "bad.json"
         bad.write_text("{not json")
         _, depf = self.files(tmp_path, [])
-        result = run_cli(["--epic-json", str(bad), "--deps", depf, "--out", str(tmp_path / "o.md")])
+        out = tmp_path / "o.md"
+        result = run_cli(["--epic-json", str(bad), "--deps", depf, "--out", str(out)])
         assert result.returncode == 1
+        assert f"ERROR: cannot read {bad}" in result.stderr
+        assert not out.exists()
 
     def test_cli_missing_file_exits_1(self, tmp_path):
         _, depf = self.files(tmp_path, [])
-        result = run_cli(["--epic-json", str(tmp_path / "nope.json"), "--deps", depf,
-                          "--out", str(tmp_path / "o.md")])
+        missing = tmp_path / "nope.json"
+        out = tmp_path / "o.md"
+        result = run_cli(["--epic-json", str(missing), "--deps", depf, "--out", str(out)])
         assert result.returncode == 1
+        assert f"ERROR: cannot read {missing}" in result.stderr
+        assert not out.exists()
+
+    def test_cli_malformed_dep_exits_1(self, tmp_path):
+        epic, depf = self.files(tmp_path, [{"ref": 2}])
+        out = tmp_path / "o.md"
+        result = run_cli(["--epic-json", epic, "--deps", depf, "--out", str(out)])
+        assert result.returncode == 1
+        assert "ERROR: malformed input" in result.stderr
+        assert "dependsOn" in result.stderr
+        assert not out.exists()
 
     def test_unchanged_out_is_original_description(self, tmp_path):
         description = "## Dependency Diagram\n\n```\n#1 (Story 1)\n  └─► #2 (Story 2)\n```\n"
