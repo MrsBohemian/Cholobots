@@ -22,6 +22,14 @@ description and the reported edges. Soft orderings are listed under the diagram 
 never edges.
 
 Exit codes: 0 ok, 2 invalid (nothing written), 1 usage or I/O error.
+
+Fallback mode
+  python3 epic_dependency_diagram.py --fallback-state <state.json> --epic-refs 47,48,...
+  Reads the /fully-analyze-stories state file and prints {"<ref>": ["upstream", "soft"], ...}:
+  for each in-epic story, the dependency categories that were not reported (null, or the
+  story is not in the state file) and so must be read from the story's description. Each
+  category is decided on its own: `upstreamDeps: []` with `softDeps: null` needs ["soft"].
+  Exit 0, or 1 on a usage or I/O error.
 """
 
 import argparse
@@ -243,7 +251,8 @@ def build_description(description, stories, deps, soft_deps):
         if dep_ref not in existing.get(ref, [])
     )
 
-    if graph == existing and set(soft) == set(_existing_soft(description)):
+    # Compare reasons too: a soft ordering whose reason alone changed must be rewritten.
+    if graph == existing and soft == _existing_soft(description):
         result["status"] = "unchanged"
         result["diagram"] = _current_block(description)
         return result
@@ -286,12 +295,58 @@ def _load_json(path):
         sys.exit(1)
 
 
+def description_fallback(state_stories, epic_refs):
+    """Map each in-epic ref to the dependency categories it must take from its description.
+
+    A category is unreported when its field is null or the story is absent from the state
+    file. Each category is decided on its own, so a story that reported `upstreamDeps: []`
+    but `softDeps: null` still falls back for its soft orderings. Refs with nothing to
+    recover are omitted.
+    """
+    by_ref = {s["ref"]: s for s in state_stories}
+    fallback = {}
+    for ref in epic_refs:
+        entry = by_ref.get(ref, {})
+        missing = [
+            name for name, field in (("upstream", "upstreamDeps"), ("soft", "softDeps"))
+            if entry.get(field) is None
+        ]
+        if missing:
+            fallback[ref] = missing
+    return fallback
+
+
+def _fallback_main(args):
+    state = _load_json(args.fallback_state)
+    try:
+        refs = [int(r) for r in args.epic_refs.split(",") if r.strip()]
+        result = description_fallback(state.get("stories", []), refs)
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        print(f"ERROR: malformed input: {exc!r}", file=sys.stderr)
+        return 1
+    print(json.dumps({str(ref): cats for ref, cats in result.items()}))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Merge and validate an epic dependency diagram.")
-    parser.add_argument("--epic-json", required=True)
-    parser.add_argument("--deps", required=True)
-    parser.add_argument("--out", required=True)
+    parser.add_argument("--epic-json")
+    parser.add_argument("--deps")
+    parser.add_argument("--out")
+    parser.add_argument("--fallback-state")
+    parser.add_argument("--epic-refs")
     args = parser.parse_args(argv)
+
+    # Usage errors exit 1, never argparse's 2, which this script reserves for `invalid`.
+    merge_args = (args.epic_json, args.deps, args.out)
+    if args.fallback_state or args.epic_refs:
+        if any(merge_args) or not (args.fallback_state and args.epic_refs):
+            print("ERROR: fallback mode takes exactly --fallback-state and --epic-refs", file=sys.stderr)
+            return 1
+        return _fallback_main(args)
+    if not all(merge_args):
+        print("ERROR: --epic-json, --deps and --out are required", file=sys.stderr)
+        return 1
 
     epic = _load_json(args.epic_json)
     spec = _load_json(args.deps)

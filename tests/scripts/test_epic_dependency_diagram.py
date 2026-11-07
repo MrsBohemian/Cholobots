@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts", "lib"))
 
 from dependency_parser import parse_dependency_diagram  # noqa: E402
-from epic_dependency_diagram import build_description  # noqa: E402
+from epic_dependency_diagram import build_description, description_fallback  # noqa: E402
 
 
 def story(ref, subject=None, in_epic=True):
@@ -148,6 +148,15 @@ class TestSoftDeps:
         assert again["status"] == "unchanged"
         assert again["description"] == first["description"]
 
+    def test_changed_soft_reason_is_written(self):
+        """A soft ordering whose reason alone changed is a change, not `unchanged` (PR #6 review)."""
+        stories = [story(2), story(3)]
+        first = build("", stories, [], [{"ref": 3, "after": 2, "reason": "old reason"}])
+        again = build(first["description"], stories, [], [{"ref": 3, "after": 2, "reason": "new reason"}])
+        assert again["status"] == "written"
+        assert "- #3 after #2: new reason" in again["description"]
+        assert "old reason" not in again["description"]
+
 
 class TestValidation:
     def test_cycle_is_invalid_and_named(self):
@@ -238,3 +247,38 @@ class TestCli:
         assert result.returncode == 0
         assert json.loads(result.stdout)["status"] == "unchanged"
         assert out.read_text() == description
+
+
+class TestDescriptionFallback:
+    """Which dependency categories must be read from a story's description (PR #6 review)."""
+
+    def test_mixed_none_and_unknown_falls_back_for_the_unknown_side_only(self):
+        state = [
+            {"ref": 47, "upstreamDeps": [], "softDeps": None},
+            {"ref": 48, "upstreamDeps": None, "softDeps": []},
+        ]
+        assert description_fallback(state, [47, 48]) == {47: ["soft"], 48: ["upstream"]}
+
+    def test_fully_reported_story_needs_no_fallback(self):
+        state = [{"ref": 47, "upstreamDeps": [{"ref": 31, "reason": "x"}], "softDeps": []}]
+        assert description_fallback(state, [47]) == {}
+
+    def test_in_epic_story_missing_from_state_falls_back_for_both(self):
+        assert description_fallback([], [50]) == {50: ["upstream", "soft"]}
+
+    def test_out_of_epic_state_story_is_ignored(self):
+        state = [{"ref": 99, "upstreamDeps": None, "softDeps": None}]
+        assert description_fallback(state, [50]) == {50: ["upstream", "soft"]}
+
+    def test_cli_prints_fallback_map(self, tmp_path):
+        state = write_json(tmp_path / "state.json", {"stories": [
+            {"ref": 47, "upstreamDeps": [], "softDeps": None},
+        ]})
+        result = run_cli(["--fallback-state", state, "--epic-refs", "47,48"])
+        assert result.returncode == 0
+        assert json.loads(result.stdout) == {"47": ["soft"], "48": ["upstream", "soft"]}
+
+    def test_cli_rejects_mixed_modes(self, tmp_path):
+        state = write_json(tmp_path / "state.json", {"stories": []})
+        result = run_cli(["--fallback-state", state, "--epic-refs", "1", "--out", str(tmp_path / "o.md")])
+        assert result.returncode == 1
