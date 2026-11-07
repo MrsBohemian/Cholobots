@@ -20,7 +20,13 @@ python cholobots.py                  # same as the Procfile worker
 
 `cholobots.py` calls `bot.run()` at module level with no `__main__` guard: importing it starts the bot. For static checks use `python -m py_compile cholobots.py config.py db/database.py bots/*.py`.
 
-There are no tests, linters, CI, or a README. The Supabase schema is not in the repo; column names must be inferred from the queries in each bot module.
+There are no tests, linters or CI for the bot itself yet (Taiga stories #33, #34, #35). The Supabase schema is not in the repo; column names must be inferred from the queries in each bot module.
+
+## Agent pipeline
+
+`.claude/` holds the Claude Code pipeline ported from the you-thon repo (Taiga story #70): skills (`/analyze-story`, `/fully-implement-story`, `/fix-single-bug`, `/triage-bugs`, `/overseer`, ...), agents, shared includes and `.claude/autonomous-pipeline.md`, which is the overview. Everything Taiga-specific (project 39's statuses and ids, the pipeline tags, the MCP tool mapping, the branch and PR conventions) is in `.claude/skills/shared/taiga-project.md`; update that file first when the project configuration changes.
+
+Prerequisites: `python3 scripts/taiga_project_setup.py --check` must exit 0. If it exits 2, Jon runs it with `--apply` (see `scripts/README.md`); the agent account cannot change project settings. The helper scripts in `scripts/` read `TAIGA_API_URL`, `TAIGA_USERNAME`, `TAIGA_PASSWORD` from the shell (the git-ignored `.envrc` exports them). Every `gh` call is `env -u GH_TOKEN gh ... --repo MrsBohemian/Cholobots`; pipeline branches are pushed to the `upstream` remote and PRs open there. Script tests: `pip install -r requirements-dev.txt && python -m pytest tests/scripts -q`.
 
 ## Architecture
 

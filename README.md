@@ -38,7 +38,17 @@ claude mcp add -s local taiga-py -- <path-to-taiga-mcp-launcher> workflow projec
 
 The launcher reads `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` from the encrypted store; nothing is stored in the repo. Verify with a read-only `list_projects` call before filing anything.
 
-**Contributing.** Direct pushes to `MrsBohemian/Cholobots` are restricted. Fork, branch, and open a pull request; keep each change in its own commit. The access model and licensing are being settled under Taiga story #58.
+**Agent pipeline.** `.claude/` contains the skills, agents and shared includes that let Claude Code take a Taiga story or bug through analysis, implementation, PR, review and merge; `.claude/autonomous-pipeline.md` is the overview and `.claude/skills/shared/taiga-project.md` pins this project's Taiga configuration. The supporting scripts live in `scripts/` (see `scripts/README.md`) with tests in `tests/scripts/`:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests/scripts -q
+python3 scripts/taiga_project_setup.py --check   # exit 0 when the Taiga project has the statuses and tags the pipeline needs
+```
+
+The setup script is run once by a project admin with `--apply`; it reads credentials from `--env-file scripts/taiga-auth.env` (copy `scripts/taiga-auth.env.example`), the `TAIGA_*` shell variables, or an interactive prompt.
+
+**Contributing.** Branch from `main`, open a pull request against `MrsBohemian/Cholobots`, keep each change in its own commit. Pipeline branches are pushed to the upstream repo directly so stacked pull requests work; the `Alterna-Dev-Studio` fork is a mirror. The access model and licensing are being settled under Taiga story #58.
 
 ## Layout
 

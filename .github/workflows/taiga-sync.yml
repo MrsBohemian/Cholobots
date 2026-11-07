@@ -1,0 +1,98 @@
+# ABOUTME: GitHub Actions workflow that updates Taiga item status when a PR is merged.
+# ABOUTME: Catches all merge paths; Done/Closed and task closing are opt-in via close-tasks-on-merge / mark-done-on-merge label or tag.
+#
+# Requires repository secrets TAIGA_API_URL, TAIGA_USERNAME and TAIGA_PASSWORD on
+# MrsBohemian/Cholobots. They do not exist yet: until they are added, every merged PR
+# that claims a Taiga ref fails at "Verify Taiga login". Taiga project 39 (cholo-bots).
+name: Taiga Sync on PR Merge
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  update-taiga:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        sparse-checkout: |
+          scripts/taiga-update-on-merge.sh
+          scripts/taiga_closing_refs.py
+        sparse-checkout-cone-mode: false
+
+    - name: Extract Taiga closing refs from PR
+      id: extract
+      env:
+        PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_BODY: ${{ github.event.pull_request.body }}
+      run: |
+        # A ref only counts where our conventions claim the work: a "#<ref>:"
+        # title prefix, a "fix(#<ref>):" scope, a trailing "(bug #<ref>)", a
+        # standalone "Fixes #<ref>" body line, or a feature/fix branch suffix.
+        # A bare mention must never close anything (bug #2237).
+        REFS=$(python3 scripts/taiga_closing_refs.py)
+        if [ -z "$REFS" ]; then
+          echo "PR #${{ github.event.pull_request.number }} claims no Taiga item (a bare #ref mention is not a claim)"
+          echo "found=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "PR claims Taiga ref(s): $REFS"
+          echo "refs=$REFS" >> "$GITHUB_OUTPUT"
+          echo "found=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Verify Taiga login
+      if: steps.extract.outputs.found == 'true'
+      env:
+        TAIGA_API_URL: ${{ secrets.TAIGA_API_URL }}
+        TAIGA_USERNAME: ${{ secrets.TAIGA_USERNAME }}
+        TAIGA_PASSWORD: ${{ secrets.TAIGA_PASSWORD }}
+      run: |
+        AUTH_PAYLOAD=$(python3 -c 'import json, os; print(json.dumps({"type": "normal", "username": os.environ["TAIGA_USERNAME"], "password": os.environ["TAIGA_PASSWORD"]}))')
+        CURL_STDERR=$(mktemp)
+        trap 'rm -f "$CURL_STDERR"' EXIT
+        set +e
+        HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+          -X POST "${TAIGA_API_URL}/api/v1/auth" \
+          -H "Content-Type: application/json" \
+          -d @- <<<"$AUTH_PAYLOAD" 2>"$CURL_STDERR")
+        CURL_EXIT_CODE=$?
+        set -e
+        if [ "$CURL_EXIT_CODE" -ne 0 ]; then
+          # Name the exit code: a resolve/TLS/timeout failure means TAIGA_API_URL is
+          # not an address this runner can use, a different fault from a rejected
+          # credential.
+          case "$CURL_EXIT_CODE" in
+            6)  DIAGNOSIS="could not resolve host — TAIGA_API_URL names a host this runner has no DNS for" ;;
+            7)  DIAGNOSIS="connection refused/unreachable — host resolves but nothing is listening on that port" ;;
+            28) DIAGNOSIS="timed out — host is unreachable from this runner (firewall/routing)" ;;
+            35|60) DIAGNOSIS="TLS failure — certificate not trusted by this runner, or wrong scheme" ;;
+            *)  DIAGNOSIS="see the curl message below" ;;
+          esac
+          echo "::error::Taiga login request failed before receiving a valid HTTP response (curl exit $CURL_EXIT_CODE: $DIAGNOSIS). TAIGA_API_URL must be an origin reachable from this runner (https://backlog.growthgarage.org), with no trailing slash and no /api/v1 suffix."
+          sed 's/^/  curl: /' "$CURL_STDERR"
+          exit 1
+        fi
+        if [ "$HTTP_CODE" != "200" ]; then
+          echo "::error::Taiga login failed (HTTP $HTTP_CODE). Check TAIGA_API_URL, TAIGA_USERNAME, and TAIGA_PASSWORD secrets."
+          exit 1
+        fi
+        echo "Taiga login OK"
+
+    - name: Update Taiga item
+      if: steps.extract.outputs.found == 'true'
+      env:
+        TAIGA_API_URL: ${{ secrets.TAIGA_API_URL }}
+        TAIGA_USERNAME: ${{ secrets.TAIGA_USERNAME }}
+        TAIGA_PASSWORD: ${{ secrets.TAIGA_PASSWORD }}
+        TAIGA_REFS: ${{ steps.extract.outputs.refs }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_URL: ${{ github.event.pull_request.html_url }}
+        PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+      run: |
+        chmod +x scripts/taiga-update-on-merge.sh
+        for ref in $TAIGA_REFS; do
+          ./scripts/taiga-update-on-merge.sh "$ref" "$PR_NUMBER" "$PR_URL"
+        done
