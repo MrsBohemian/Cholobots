@@ -80,7 +80,7 @@ Write the initial state to `/tmp/fully-analyze-stories-<epic-ref>.json`:
 }
 ```
 
-`upstreamDeps` and `softDeps` are `null` until the agent reports them (`null` means "not reported", which differs from `[]`, "reported none"); once reported each is a list of `{"ref": <n>, "reason": "<text>"}`. `diagram` is `null` until Step 4 runs, then a record `{"status": "written" | "unchanged" | "invalid" | "failed" | "skipped", "errors": [...], "added": [...], "droppedRefs": [...], "outOfEpic": [...], "attempts": <n>}`. Phases: `analyzing` -> `diagram` -> `complete`.
+`upstreamDeps` and `softDeps` are `null` until the agent reports them (`null` means "not reported", which differs from `[]`, "reported none"); once reported each is a list of `{"ref": <n>, "reason": "<text>"}`. `diagram` is `null` until Step 4 runs, then a record `{"status": "written" | "unchanged" | "invalid" | "failed", "errors": [...], "diagram": "<code block text from the helper>", "added": [...], "droppedRefs": [...], "outOfEpic": [...], "attempts": <n>}`. Phases: `analyzing` -> `diagram` -> `complete`.
 
 Include ALL eligible stories in the array, ordered by ref (ascending). (`id` is Taiga's internal id, informational only; every call uses `ref`.)
 
@@ -132,11 +132,11 @@ For each story in the batch, spawn an agent **in parallel** (all in a single mes
      REASON: <what went wrong>
 
   6. EVERY outcome above (ANALYSIS_COMPLETE, NEEDS_CLARIFICATION, ANALYSIS_REJECTED, ANALYSIS_FAILED) ends with this block, after everything else:
-     UPSTREAM_DEPS:
-     - #<ref>: <reason this story cannot start before #<ref> is done>
-     SOFT_DEPS:
-     - #<ref>: <reason it is better done after #<ref>, but not blocked by it>
-     One bullet per story ref (in this epic or outside it). Write `UPSTREAM_DEPS: none` or `SOFT_DEPS: none` when there are none. Write `unknown` for both when you stopped before you could tell. Hard dependencies are real prerequisites found in the analysis (the plan's Architecture, tasks and hazard checklist, for example #47 local Supabase stack, #32 baseline migration, #34 unit tests, #31 test Discord server, #37 tenant decision); soft ones are orderings that only reduce rework.
+     UPSTREAM_DEPS: #<ref>, #<ref>
+     - #<ref>: <one-line reason this story cannot start before #<ref> is merged>
+     SOFT_DEPS: #<ref>
+     - #<ref>: <one-line reason it is better done after #<ref>, but not blocked by it>
+     The header line lists the refs; one bullet per ref gives the reason. Refs may be in this epic or outside it. Write `UPSTREAM_DEPS: none` or `SOFT_DEPS: none` when there are none, and `UPSTREAM_DEPS: unknown` / `SOFT_DEPS: unknown` when you stopped before you could tell. Report dependencies stated in the story description too. Hard dependencies are real prerequisites found in the analysis (the plan's Architecture, tasks and hazard checklist, for example #47 local Supabase stack, #32 baseline migration, #34 unit tests, #31 test Discord server, #37 tenant decision); soft ones are orderings that only reduce rework.
   ```
 
   If the story has a non-null `answer` field (from a previous clarification round), append to the prompt:
@@ -169,7 +169,7 @@ When all agents in the batch return, process each result:
 - **If output contains `ANALYSIS_FAILED`** or agent errors: set story `status` to `"failed"`, store reason in `failureReason`
 - **If output doesn't match any pattern**: treat as `"failed"` with reason `"unexpected agent output"`
 
-For every outcome, also parse the trailing deps block from the agent output into the story's `upstreamDeps` and `softDeps`: each `- #<n>: <reason>` bullet under `UPSTREAM_DEPS:` / `SOFT_DEPS:` becomes `{"ref": <n>, "reason": "<reason>"}`; `none` becomes `[]`; `unknown` or a missing or unparseable block leaves the field `null` (not reported); self-references are dropped. The `- #<n>: <reason>` bullets are authoritative even when the header line also lists refs. A malformed deps block never changes the story's analysis status. A re-run after a clarification answer replaces the earlier report.
+For every outcome, also parse the trailing deps block from the agent output into the story's `upstreamDeps` and `softDeps`: each ref on the `UPSTREAM_DEPS:` / `SOFT_DEPS:` header line becomes `{"ref": <n>, "reason": "<reason>"}`, the reason taken from its `- #<n>: <reason>` bullet (empty when the bullet is missing; a bullet whose ref is not on the header line is still taken); `none` becomes `[]`; `unknown` or a missing or unparseable block leaves the field `null` (not reported); self-references are dropped. A malformed deps block never changes the story's analysis status. A re-run after a clarification answer replaces the earlier report.
 
 Update the state file after processing the batch.
 
@@ -237,7 +237,7 @@ A problem in this step is recorded in the state file's `diagram` record and repo
     "deps": [{"ref": 48, "dependsOn": 47, "reason": "..."}],
     "softDeps": [{"ref": 50, "after": 48, "reason": "..."}]}
    ```
-   If `deps` and `softDeps` are both empty, set `diagram` to `{"status": "skipped", "attempts": 0}`, `phase = "complete"`, and go to Step 5.
+   Continue even when `deps` and `softDeps` are both empty: the helper then writes a roots-only diagram listing every in-epic story (or reports `unchanged` when the existing diagram already covers them), which still gives `/merge-train epic:<ref>` a diagram to read.
 
 ### 4c. Merge, validate and render
 
@@ -246,7 +246,7 @@ A problem in this step is recorded in the state file's `diagram` record and repo
 It prints one JSON object (`status` of `written`, `unchanged` or `invalid`, plus `errors`, `graph`, `added`, `outOfEpic`, `diagram`, `softDeps`). Exit 0 is `written` or `unchanged`, exit 2 is `invalid` (nothing is written to `--out`), exit 1 is a usage or I/O error (record `failed`).
 
 - **`invalid`** (exit 2): do not write anything to the epic. Record `{"status": "invalid", "errors": <errors>, ...}` and go to Step 5.
-- **`unchanged`**: record it and skip 4d and 4e.
+- **`unchanged`**: record it (with the helper's `diagram`) and skip 4d and 4e.
 - **`written`**: continue with 4d.
 
 ### 4d. Cross-check
@@ -257,7 +257,7 @@ It prints one JSON object (`status` of `written`, `unchanged` or `invalid`, plus
 
 `scripts/taiga-epic.sh patch <epic-ref> --description-file /tmp/fully-analyze-stories-<epic-ref>-description.md --version <version from the get in 4a>`
 
-- Exit 0: record `written` with the helper's `added` and `outOfEpic` lists and the dropped refs.
+- Exit 0: record `written` with the helper's `diagram`, `added` and `outOfEpic` and the dropped refs.
 - Exit 3 (the epic changed since the get): repeat 4a (new version and description), 4c and 4d on the new description, then patch again with the new version. At most 3 patch attempts in total; after the third conflict record `{"status": "failed", "errors": ["version conflict after 3 attempts"], "attempts": 3}`.
 - Any other non-zero exit: record `failed` with the script's message.
 
@@ -276,11 +276,12 @@ Store `attempts` in the record, set `phase = "complete"`, and go to Step 5.
    - For any story tagged `planning-heavy` or `epic-candidate`, note explicitly that it may still need higher-level planning review rather than immediate implementation
    - Stories with a non-null `designDocEdited`: list the refs and file paths, and note these design docs have uncommitted Open-Questions resolutions in the working tree that still need to be committed
    - Dependency diagram (from the state file's `diagram` record):
+     - `written` or `unchanged`: print the `diagram` text in a fenced code block
      - `written`: epic <epic-ref>'s `## Dependency Diagram` now has the added edges (list them as `#a depends on #b`), any soft orderings, and the out-of-epic roots (`[outside epic]`); note that /implement-epic Step 2a-bis resolves those roots by Done status and that merge-train epic mode then queues that ref's open PR
      - `unchanged`: the diagram already held every reported edge; nothing was patched
      - `invalid`: the validator rejected the merge and nothing was written; list the errors so Jon can fix the reported dependencies or the diagram by hand (the run itself did not fail)
      - `failed`: the patch kept conflicting or errored after 3 attempts, or the cross-check failed; give the reason
-     - `skipped`: no dependencies were reported by any story or found in descriptions
+     - Stories whose `upstreamDeps` is still `null` (not reported): list them, since their edges may be missing from the diagram
      - Refs dropped because `scripts/taiga-story.sh` exited 44 (no such story)
 
 ## Error handling
