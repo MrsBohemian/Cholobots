@@ -169,7 +169,7 @@ When all agents in the batch return, process each result:
 - **If output contains `ANALYSIS_FAILED`** or agent errors: set story `status` to `"failed"`, store reason in `failureReason`
 - **If output doesn't match any pattern**: treat as `"failed"` with reason `"unexpected agent output"`
 
-For every outcome, also parse the trailing deps block from the agent output into the story's `upstreamDeps` and `softDeps`: each `- #<n>: <reason>` bullet under `UPSTREAM_DEPS:` / `SOFT_DEPS:` becomes `{"ref": <n>, "reason": "<reason>"}`; `none` becomes `[]`; `unknown` or a missing or unparseable block leaves the field `null` (not reported). A malformed deps block never changes the story's analysis status. A re-run after a clarification answer replaces the earlier report.
+For every outcome, also parse the trailing deps block from the agent output into the story's `upstreamDeps` and `softDeps`: each `- #<n>: <reason>` bullet under `UPSTREAM_DEPS:` / `SOFT_DEPS:` becomes `{"ref": <n>, "reason": "<reason>"}`; `none` becomes `[]`; `unknown` or a missing or unparseable block leaves the field `null` (not reported); self-references are dropped. The `- #<n>: <reason>` bullets are authoritative even when the header line also lists refs. A malformed deps block never changes the story's analysis status. A re-run after a clarification answer replaces the earlier report.
 
 Update the state file after processing the batch.
 
