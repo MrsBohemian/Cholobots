@@ -63,6 +63,7 @@ for a scope that does not exist.
 | `taiga-story.sh <ref> [39] [--issue\|--epic] [--with-tasks]` | Fetch a story/issue/epic as JSON; exit 44 when the ref does not exist |
 | `taiga-epic.sh get <ref>` / `patch <ref> --description-file F [--version N]` | Read or replace an epic description (dependency diagram, hand-off); exit 3 on a version conflict, 44 when missing |
 | `taiga-comment.sh <id> "<text>" [--issue]` | Comment on a story or issue by internal id |
+| `epic_dependency_diagram.py --epic-json F --deps F --out F` | Merges reported story dependencies into an epic description's diagram (existing edges kept, out-of-epic refs as `[outside epic]` roots, soft orderings below the block), validates it with the shared parser and writes the new description to `--out`; prints a JSON status (`written`/`unchanged`/`invalid`). Exit 0 ok, 2 invalid (nothing written), 1 usage or I/O error |
 | `taiga-wiki.sh get\|patch <slug\|page-id> ...` | Read a wiki page into a `/tmp` file or PATCH it from a file; exit 3 on a version conflict |
 | `taiga_select_issues.py --purpose triage\|analyze\|fix\|sprint ...` | Read-only issue selector; prints JSON (`selected`, `urgent`, `skippedRefs`) |
 | `taiga_audit.py [--out-dir D] [--roadmap F]` | Milestone and epic-link audit; writes `output/taiga-audit/report.{json,md}` and a manifest template |
