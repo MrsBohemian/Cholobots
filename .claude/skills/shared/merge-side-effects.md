@@ -2,7 +2,7 @@
 
 `.github/workflows/taiga-sync.yml` runs `scripts/taiga-update-on-merge.sh` for every Taiga ref a merged PR claims. Its two status side effects are **opt-in**. This file is the single source for what enables them and which skill sets which signal. Skills link here instead of restating the rules.
 
-**The workflow is not live yet.** It needs repository secrets `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` on `MrsBohemian/Cholobots`, which do not exist yet. Until they do, whoever merges (the merge train, the overseer, or Jon) runs the same script by hand after the merge: `scripts/taiga-update-on-merge.sh` (`--dry-run` first; `--help` shows the arguments). Skills still set the signals below exactly as if the workflow ran.
+**The workflow is not live yet.** It needs repository secrets `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` on `MrsBohemian/Cholobots`, which do not exist yet. Until they do, whoever merges (the merge train, the overseer, or Jon) runs the same script by hand after the merge: `PR_LABELS="<the PR's labels, space separated>" scripts/taiga-update-on-merge.sh <ref> <pr> <url>` (`--dry-run` first; `--help` shows the arguments). The workflow passes the labels in `PR_LABELS`; without that variable a manual run sees no label and leaves the status unchanged. Skills still set the signals below exactly as if the workflow ran.
 
 ## Semantics
 
