@@ -24,7 +24,7 @@ recolours anything, and never changes `is_closed` on an existing status.
 Exit codes: 0 success (or complete, for --check), 1 error, 2 incomplete (--check).
 
 Jon's one-off run, after storing the admin scope with envtool set:
-  (eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)
+  (eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)
 """
 
 import argparse
@@ -43,7 +43,7 @@ EXIT_INCOMPLETE = 2
 ENV_KEYS = ("TAIGA_API_URL", "TAIGA_USERNAME", "TAIGA_PASSWORD")
 # Printed for Jon wherever the project is incomplete; the skills print the same line.
 APPLY_COMMAND = (
-    '(eval "$(dv export project/growthgarage-admin)"'
+    '(eval "$(dv export project/taiga-growthgarage-jonroberts)"'
     " && python3 scripts/taiga_project_setup.py --apply)"
 )
 

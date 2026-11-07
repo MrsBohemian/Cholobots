@@ -61,7 +61,7 @@ If `<n>` > 3, warn:
 
 **Preflight, once:** `python3 scripts/taiga_project_setup.py --check`. Exit 2 means the Taiga
 project lacks the pipeline statuses or tags this skill reads and writes: stop and print
-`Run: (eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)` for Jon.
+`Run: (eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)` for Jon.
 
 **Substrate check.** `git remote get-url upstream` must name `MrsBohemian/Cholobots`, and
 `env -u GH_TOKEN gh repo view MrsBohemian/Cholobots --json name` must succeed. If either fails,

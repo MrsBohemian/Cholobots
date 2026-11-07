@@ -28,19 +28,19 @@ argument against member full names or emails, not Taiga usernames. Always write
 The pipeline uses statuses, a priority, tags and a wiki page that project 39 did not start with.
 Jon (Taiga admin) adds them once with `scripts/taiga_project_setup.py`, which is idempotent and
 never deletes or renames anything. The agent account cannot change project settings, so the
-`--apply` run loads Jon's admin credentials from the `project/growthgarage-admin` scope of
+`--apply` run loads Jon's admin credentials from the `project/taiga-growthgarage-jonroberts` scope of
 `~/work/utils/jon-dev-env` into a subshell. `dv` is that vault's command, on `PATH` once Jon's
 shell has loaded its profile. `scripts/README.md` has the one-time `dv set` commands.
 
 ```bash
-(eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)
+(eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)
 ```
 
 **Preflight rule.** Orchestrating skills (`overseer`, `fully-*`, `implement-epic`, `merge-train`,
 `triage-bugs`, `fix-bugs`, `parallel-fix-bugs`) run `python3 scripts/taiga_project_setup.py --check`
 once at startup. It checks the statuses, the Urgent priority, the pipeline/surface/source tags and
 the roadmap wiki page. Exit 0: proceed. Exit 2: stop, print the missing list and
-`Run: (eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)` for Jon
+`Run: (eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)` for Jon
 (`triage-bugs --dry-run` prints them as a warning and continues, since it writes nothing).
 Leaf skills do not preflight.
 

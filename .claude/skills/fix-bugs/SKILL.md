@@ -34,7 +34,7 @@ Repo and workflow facts (branches and PRs live on `upstream` = `MrsBohemian/Chol
 
 ## Step 1: Fetch all open bugs from Taiga
 
-First run `python3 scripts/taiga_project_setup.py --check` once. Exit 0: proceed. Exit 2: stop and print `Run: (eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)` for Jon (the project is missing statuses, the `Urgent` priority or pipeline tags this skill relies on).
+First run `python3 scripts/taiga_project_setup.py --check` once. Exit 0: proceed. Exit 2: stop and print `Run: (eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)` for Jon (the project is missing statuses, the `Urgent` priority or pipeline tags this skill relies on).
 
 Parse arguments and select bugs per [`../shared/bug-sweep-options.md`](../shared/bug-sweep-options.md) by running `python3 scripts/taiga_select_issues.py --purpose fix <flags>` (it defaults to project 39). `/fix-bugs` keeps no state file, so the include's "Record" step means listing the effective options in the final report, and Resume does not apply. Report the `Urgent` block first; those bugs go to `/fix-single-bug`, not this sweep.
 

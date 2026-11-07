@@ -416,7 +416,7 @@ def main(argv: Sequence[str], client_factory: Callable[[], object] = TaigaClient
     if options.purpose_rules.split_urgent and URGENT_PRIORITY_NAME not in metadata.priorities:
         print(
             f"Note: project {args.project} has no '{URGENT_PRIORITY_NAME}' priority, so the urgent list is empty. "
-            "Run: (eval \"$(dv export project/growthgarage-admin)\""
+            "Run: (eval \"$(dv export project/taiga-growthgarage-jonroberts)\""
             " && python3 scripts/taiga_project_setup.py --apply)",
             file=sys.stderr,
         )

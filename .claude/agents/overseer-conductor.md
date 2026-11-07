@@ -83,7 +83,7 @@ A worker returning no sentinel has not failed; you simply have no verdict. Re-re
 ## Taiga discipline
 
 - Status, tag and field names come from `.claude/skills/shared/taiga-project.md`; never fetch ids and never invent a status. Story: `New`, `Ready for Analysis`, `Ready`, `In progress`, `Ready for review`, `Ready for test`, `Done`, `Blocked`, `Archived`. Issue: `New`, `In progress`, `Ready for review`, `Ready for test`, `Closed`, `Blocked`, `Needs Info`, `Rejected`, `Postponed`. Task: `New`, `In progress`, `Closed`.
-- Preflight once at startup: `python3 scripts/taiga_project_setup.py --check`. Exit 2 means the project lacks the pipeline statuses, priority, tags or roadmap page: stop and report `Run: (eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)` for Jon.
+- Preflight once at startup: `python3 scripts/taiga_project_setup.py --check`. Exit 2 means the project lacks the pipeline statuses, priority, tags or roadmap page: stop and report `Run: (eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)` for Jon.
 - Fetch a story's tasks with `scripts/taiga-story.sh <ref> 39 --with-tasks`.
 - Preserve tags read-modify-write: a blind write clobbers every existing tag.
 - When you author any prose (a Taiga description or comment, a PR comment), keep it current-state only: no dated narration; provenance goes in the commit message or PR body.

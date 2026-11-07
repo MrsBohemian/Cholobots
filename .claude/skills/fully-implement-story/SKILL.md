@@ -71,7 +71,7 @@ If a second token remains, it is `<base-branch>`, the branch this story's featur
 
 Run once, before anything else: `python3 scripts/taiga_project_setup.py --check`.
 - Exit 0: proceed.
-- Exit 2: the project lacks statuses, priorities or tags this pipeline uses. Do not write a state file or touch Taiga. Print the missing list and `Run: (eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)` for Jon, and stop.
+- Exit 2: the project lacks statuses, priorities or tags this pipeline uses. Do not write a state file or touch Taiga. Print the missing list and `Run: (eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)` for Jon, and stop.
 - Any other exit: report the error and stop.
 
 ## Step 1: Validate and initialize

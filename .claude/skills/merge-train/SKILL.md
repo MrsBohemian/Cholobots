@@ -36,7 +36,7 @@ All PRs and branches live on `MrsBohemian/Cholobots` (the `upstream` remote); ev
 
 Run `python3 scripts/taiga_project_setup.py --check` once. Exit 2 means the Taiga project lacks the
 statuses the train gates on: stop and print
-`Run: (eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)` for Jon.
+`Run: (eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)` for Jon.
 
 ## Step 1: Invoke the script
 

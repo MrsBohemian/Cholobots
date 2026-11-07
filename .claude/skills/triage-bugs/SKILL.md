@@ -39,7 +39,7 @@ Names this project uses (the workflow server resolves them, so no id lookups):
 - `--refs <ref,ref,...>`: limit the sweep to those refs (still skips any that already carry `triaged` unless the ref is listed explicitly, in which case re-triage it and comment on what changed).
 - No arguments: full sweep.
 
-Run `python3 scripts/taiga_project_setup.py --check` once. It checks the statuses, the Urgent priority, the pipeline/surface/source tags and the roadmap wiki page. Exit 0: proceed. Exit 2 on a real run: stop, print the missing list and `Run: (eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)` for Jon. Exit 2 with `--dry-run`: print the missing list and the same apply command as a warning at the top of the report, then continue (no writes happen, so the missing names only affect what a real run could apply).
+Run `python3 scripts/taiga_project_setup.py --check` once. It checks the statuses, the Urgent priority, the pipeline/surface/source tags and the roadmap wiki page. Exit 0: proceed. Exit 2 on a real run: stop, print the missing list and `Run: (eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)` for Jon. Exit 2 with `--dry-run`: print the missing list and the same apply command as a warning at the top of the report, then continue (no writes happen, so the missing names only affect what a real run could apply).
 
 ## Step 2: Fetch candidates
 

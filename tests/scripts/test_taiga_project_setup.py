@@ -202,7 +202,7 @@ class TestCheck:
         assert "tag 'triaged'" in out and "tag 'ci'" not in out
         assert "wiki page 'cross-project-execution-order'" in out
         assert f"Run: {setup.APPLY_COMMAND}" in out
-        assert "dv export project/growthgarage-admin" in setup.APPLY_COMMAND
+        assert "dv export project/taiga-growthgarage-jonroberts" in setup.APPLY_COMMAND
 
     def test_check_exits_0_when_complete(self):
         fake = FakeTaiga()

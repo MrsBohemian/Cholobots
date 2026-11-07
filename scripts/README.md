@@ -17,13 +17,13 @@ Python 3.14 and bash (`curl`, `jq`, `git`, `gh`; `codex` for reviews). None of t
 ### Credentials
 
 The scripts read the Taiga credentials from the shell and never from a file in this repo. The
-checkout's git-ignored `.envrc` loads them with direnv from the `project/growthgarage` scope of
+checkout's git-ignored `.envrc` loads them with direnv from the `project/taiga-growthgarage-slave1-codex` scope of
 Jon's SOPS vault, `~/work/utils/jon-dev-env`. That scope holds the agent account, `slave1-codex`,
 which the scripts and the Taiga MCP server use day to day:
 
 ```bash
-watch_file "$HOME/work/utils/jon-dev-env/secrets/project/growthgarage.enc.json"
-_dev_env_exports="$("$HOME/work/utils/jon-dev-env/scripts/envtool" export project/growthgarage)" || exit 1
+watch_file "$HOME/work/utils/jon-dev-env/secrets/project/taiga-growthgarage-slave1-codex.enc.json"
+_dev_env_exports="$("$HOME/work/utils/jon-dev-env/scripts/envtool" export project/taiga-growthgarage-slave1-codex)" || exit 1
 eval "$_dev_env_exports"; unset _dev_env_exports
 ```
 
@@ -37,9 +37,9 @@ vault's own command; a shell that has loaded the `jon-dev-env` profile has it on
 `$DEV_ENV_HOME/scripts/envtool` is the same tool for a script that runs without that profile:
 
 ```bash
-dv set project/growthgarage-admin TAIGA_API_URL   # https://backlog.growthgarage.org
-dv set project/growthgarage-admin TAIGA_USERNAME  # jonroberts
-dv set project/growthgarage-admin TAIGA_PASSWORD
+dv set project/taiga-growthgarage-jonroberts TAIGA_API_URL   # https://backlog.growthgarage.org
+dv set project/taiga-growthgarage-jonroberts TAIGA_USERNAME  # jonroberts
+dv set project/taiga-growthgarage-jonroberts TAIGA_PASSWORD
 ```
 
 The dry run and `--check` work with the agent account. The apply loads the admin scope into a
@@ -47,7 +47,7 @@ subshell, so the admin password stays out of the interactive shell:
 
 ```bash
 python3 scripts/taiga_project_setup.py
-(eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)
+(eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)
 python3 scripts/taiga_project_setup.py --check
 ```
 

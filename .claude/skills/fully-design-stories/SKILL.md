@@ -25,7 +25,7 @@ Sequentially design all `design`-tagged stories in a Taiga epic (project 39, `ch
 
 ## Step 0: Preflight and parse arguments
 
-Run `python3 scripts/taiga_project_setup.py --check` once. Exit 0: proceed. Exit 2: stop and print `Run: (eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)` for Jon (the project is missing statuses, the `Urgent` priority or pipeline tags this skill relies on).
+Run `python3 scripts/taiga_project_setup.py --check` once. Exit 0: proceed. Exit 2: stop and print `Run: (eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)` for Jon (the project is missing statuses, the `Urgent` priority or pipeline tags this skill relies on).
 
 `$ARGUMENTS` must contain an `<epic-ref>` (required): the epic reference number. If no epic-ref is provided, ask the user for it.
 

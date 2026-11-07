@@ -22,7 +22,7 @@ Autonomously analyze all open unanalyzed bugs in Taiga project 39 (`cholo-bots`)
 
 ## Step 0: Preflight and parse arguments
 
-Run `python3 scripts/taiga_project_setup.py --check` once. Exit 0: proceed. Exit 2: stop and print `Run: (eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)` for Jon (the project is missing statuses, the `Urgent` priority or pipeline tags this skill relies on).
+Run `python3 scripts/taiga_project_setup.py --check` once. Exit 0: proceed. Exit 2: stop and print `Run: (eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)` for Jon (the project is missing statuses, the `Urgent` priority or pipeline tags this skill relies on).
 
 If the first whitespace-separated token of `$ARGUMENTS` is an integer, use it as the concurrency level (max parallel agents). Numbers elsewhere (for example `--refs 123` or `--milestone 12`) are filter values, never concurrency. Default: 3.
 

@@ -153,7 +153,7 @@ conflict protocol below depends on the version being the one you just read.
 
 A not-found result means the setup has not been applied: stop with
 `BLOCKED: cross-project-execution-order wiki page missing in project 39 — Run:
-(eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)`.
+(eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)`.
 
 ### 2. Idempotency check
 

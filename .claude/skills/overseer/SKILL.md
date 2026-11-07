@@ -80,7 +80,7 @@ is wrong: **escalate instead**.
 
 ## Step 1: Route
 
-**Preflight, once per run:** `python3 scripts/taiga_project_setup.py --check`. Exit 2 means the project lacks pipeline statuses, tags or the roadmap page: stop and print `Run: (eval "$(dv export project/growthgarage-admin)" && python3 scripts/taiga_project_setup.py --apply)` for Jon.
+**Preflight, once per run:** `python3 scripts/taiga_project_setup.py --check`. Exit 2 means the project lacks pipeline statuses, tags or the roadmap page: stop and print `Run: (eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)` for Jon.
 
 Parse `$ARGUMENTS` and route the run — number vs. `epic <n>` vs. `sprint <id|name>` vs.
 `new`/free-form, the story → issue → epic by-ref fall-through, the inverse ownership guard,
