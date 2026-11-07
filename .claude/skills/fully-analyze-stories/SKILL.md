@@ -6,6 +6,9 @@ allowed-tools:
   - Agent
   - Bash(scripts/taiga-story.sh *)
   - Bash(python3 scripts/taiga_project_setup.py --check)
+  - Bash(scripts/taiga-epic.sh *)
+  - Bash(python3 scripts/epic_dependency_diagram.py *)
+  - Bash(python3 scripts/lib/parse_roadmap.py *)
   - mcp__taiga-py__*
   - Read(//tmp/**)
   - Edit(//tmp/**)
@@ -17,7 +20,7 @@ allowed-tools:
 
 # Fully Analyze Stories
 
-Autonomously analyze all stories in a Taiga epic (project 39, `cholo-bots`): parallel analysis with agents, question queue for missing information, and Taiga updates. Analysis only reads code and writes to Taiga (plus the design-doc Open Questions edit noted below), so the agents share the main checkout and need no worktrees. Taiga names are in `.claude/skills/shared/taiga-project.md`; every Taiga call is ref-based with `project=39`. Codebase background for the agents is the root `CLAUDE.md`.
+Autonomously analyze all stories in a Taiga epic (project 39, `cholo-bots`): parallel analysis with agents, question queue for missing information, Taiga updates, and one validated write of the epic's dependency diagram at the end. Analysis only reads code and writes to Taiga (plus the design-doc Open Questions edit noted below), so the agents share the main checkout and need no worktrees. Taiga names are in `.claude/skills/shared/taiga-project.md`; every Taiga call is ref-based with `project=39`. Codebase background for the agents is the root `CLAUDE.md`.
 
 ## Step 0: Preflight and parse arguments
 
@@ -38,7 +41,7 @@ Check if `/tmp/fully-analyze-stories-<epic-ref>.json` exists:
 - If it exists and `phase` is not `"complete"`:
   - Read the state file
   - Report current state (how many stories total, how many analyzed, how many need clarification)
-  - Resume from the appropriate phase
+  - Resume from the appropriate phase: `"analyzing"` continues at Step 2; `"diagram"` re-runs only Step 4 (no agents are launched again)
 - If it doesn't exist or `phase` is `"complete"`, proceed with fresh initialization
 
 ### 1b. Fetch epic and stories
@@ -58,6 +61,7 @@ Write the initial state to `/tmp/fully-analyze-stories-<epic-ref>.json`:
   "phase": "analyzing",
   "epicRef": <epic-ref>,
   "concurrency": <N>,
+  "diagram": null,
   "stories": [
     {
       "ref": <ref>,
@@ -68,11 +72,15 @@ Write the initial state to `/tmp/fully-analyze-stories-<epic-ref>.json`:
       "answer": null,
       "failureReason": null,
       "tagFailure": false,
-      "designDocEdited": null
+      "designDocEdited": null,
+      "upstreamDeps": null,
+      "softDeps": null
     }
   ]
 }
 ```
+
+`upstreamDeps` and `softDeps` are `null` until the agent reports them (`null` means "not reported", which differs from `[]`, "reported none"); once reported each is a list of `{"ref": <n>, "reason": "<text>"}`. `diagram` is `null` until Step 4 runs, then a record `{"status": "written" | "unchanged" | "invalid" | "failed" | "skipped", "errors": [...], "added": [...], "droppedRefs": [...], "outOfEpic": [...], "attempts": <n>}`. Phases: `analyzing` -> `diagram` -> `complete`.
 
 Include ALL eligible stories in the array, ordered by ref (ascending). (`id` is Taiga's internal id, informational only; every call uses `ref`.)
 
@@ -101,7 +109,7 @@ For each story in the batch, spawn an agent **in parallel** (all in a single mes
 
   IMPORTANT MODIFICATIONS for unattended mode:
 
-  1. SKIP Step 3 (epic assignment) and Step 3a (dependency diagram) entirely - the story is already linked to its epic.
+  1. SKIP Step 3 (epic assignment) and Step 3a (dependency diagram) entirely - the story is already linked to its epic. Never edit the epic: the orchestrator is the single writer of the diagram.
 
   2. At any point during the /analyze-story workflow where you would normally ask the operator for clarification or confirmation - including but not limited to: Step 2 (story completeness), design-doc "Open Questions", or any later blocking question - do NOT ask interactively. Instead STOP immediately and return:
      NEEDS_CLARIFICATION
@@ -122,6 +130,13 @@ For each story in the batch, spawn an agent **in parallel** (all in a single mes
   5. If you encounter an error, or the skill ends with `BLOCKED: <reason>`, return:
      ANALYSIS_FAILED
      REASON: <what went wrong>
+
+  6. EVERY outcome above (ANALYSIS_COMPLETE, NEEDS_CLARIFICATION, ANALYSIS_REJECTED, ANALYSIS_FAILED) ends with this block, after everything else:
+     UPSTREAM_DEPS:
+     - #<ref>: <reason this story cannot start before #<ref> is done>
+     SOFT_DEPS:
+     - #<ref>: <reason it is better done after #<ref>, but not blocked by it>
+     One bullet per story ref (in this epic or outside it). Write `UPSTREAM_DEPS: none` or `SOFT_DEPS: none` when there are none. Write `unknown` for both when you stopped before you could tell. Hard dependencies are real prerequisites found in the analysis (the plan's Architecture, tasks and hazard checklist, for example #47 local Supabase stack, #32 baseline migration, #34 unit tests, #31 test Discord server, #37 tenant decision); soft ones are orderings that only reduce rework.
   ```
 
   If the story has a non-null `answer` field (from a previous clarification round), append to the prompt:
@@ -153,6 +168,8 @@ When all agents in the batch return, process each result:
 - **If output contains `NEEDS_CLARIFICATION`**: set story `status` to `"needs-clarification"`, extract the question and store in `question` field
 - **If output contains `ANALYSIS_FAILED`** or agent errors: set story `status` to `"failed"`, store reason in `failureReason`
 - **If output doesn't match any pattern**: treat as `"failed"` with reason `"unexpected agent output"`
+
+For every outcome, also parse the trailing deps block from the agent output into the story's `upstreamDeps` and `softDeps`: each `- #<n>: <reason>` bullet under `UPSTREAM_DEPS:` / `SOFT_DEPS:` becomes `{"ref": <n>, "reason": "<reason>"}`; `none` becomes `[]`; `unknown` or a missing or unparseable block leaves the field `null` (not reported). A malformed deps block never changes the story's analysis status. A re-run after a clarification answer replaces the earlier report.
 
 Update the state file after processing the batch.
 
@@ -197,7 +214,56 @@ After processing all operator responses:
 - If at least one story was marked `"re-queued"`, update the state file and go back to Step 2 to process re-queued stories.
 - If no stories were marked `"re-queued"` (for example, the operator said "skip all" or skipped every question), update the state file and proceed directly to Step 4, leaving unresolved stories in `"needs-clarification"`.
 
-## Step 4: Complete
+## Step 4: Diagram
+
+The orchestrator is the single writer of the epic's dependency diagram: agents only report dependencies (Step 2). Set `phase = "diagram"` in the state file first, so an interrupted run resumes here without launching agents again. Temp files for this step are `/tmp/fully-analyze-stories-<epic-ref>-epic.json`, `-deps.json` and `-description.md`. Never use `/tmp/epic-<ref>*`: `/implement-epic` and `/analyze-story` own those names.
+
+A problem in this step is recorded in the state file's `diagram` record and reported in Step 5; it never fails the run.
+
+### 4a. Get the epic
+
+`scripts/taiga-epic.sh get <epic-ref> > /tmp/fully-analyze-stories-<epic-ref>-epic.json`. Remember its `version`. On any failure (exit 44 included), set `diagram` to `{"status": "failed", "errors": ["<reason>"], "attempts": 0}`, `phase = "complete"`, and go to Step 5.
+
+### 4b. Gather the stories and their dependencies
+
+1. **In-epic stories**: every story from `get_epic_overview(project=39, ref=<epic-ref>)` except those with status `Archived` (Done, Ready, In progress and the rest stay: they are real nodes for ordering). Each is `{"ref": <n>, "subject": "<subject>", "inEpic": true}`.
+2. **Reported dependencies**: from each state-file story whose `upstreamDeps` / `softDeps` is not `null`, one `{"ref": <story ref>, "dependsOn": <dep ref>, "reason": "<reason>"}` per upstream entry and one `{"ref": <story ref>, "after": <dep ref>, "reason": "<reason>"}` per soft entry.
+3. **In-epic stories without reported deps** (not analyzed this run, or fields still `null`): `get_story(project=39, ref=<ref>)` and take only **explicit dependency statements** from the description (for example "depends on #47", "blocked by #32", "after #34"; an unqualified mention of another ref is not a dependency). Hard statements become `dependsOn`, "ideally after" statements become `after`.
+4. **Out-of-epic refs**: for every dependency ref that is not an in-epic story, run `scripts/taiga-story.sh <ref> 39`. Exit 44 (no such story): drop every dependency that mentions that ref and remember the ref for the Step 5 report (`droppedRefs`). Otherwise add `{"ref": <ref>, "subject": "<subject>", "inEpic": false}` to `stories`; the helper renders it as a `[outside epic]` root. Drop self-dependencies.
+5. Write `/tmp/fully-analyze-stories-<epic-ref>-deps.json`:
+   ```json
+   {"epicRef": <epic-ref>,
+    "stories": [{"ref": 47, "subject": "...", "inEpic": true}, {"ref": 12, "subject": "...", "inEpic": false}],
+    "deps": [{"ref": 48, "dependsOn": 47, "reason": "..."}],
+    "softDeps": [{"ref": 50, "after": 48, "reason": "..."}]}
+   ```
+   If `deps` and `softDeps` are both empty, set `diagram` to `{"status": "skipped", "attempts": 0}`, `phase = "complete"`, and go to Step 5.
+
+### 4c. Merge, validate and render
+
+`python3 scripts/epic_dependency_diagram.py --epic-json /tmp/fully-analyze-stories-<epic-ref>-epic.json --deps /tmp/fully-analyze-stories-<epic-ref>-deps.json --out /tmp/fully-analyze-stories-<epic-ref>-description.md`
+
+It prints one JSON object (`status` of `written`, `unchanged` or `invalid`, plus `errors`, `graph`, `added`, `outOfEpic`, `diagram`, `softDeps`). Exit 0 is `written` or `unchanged`, exit 2 is `invalid` (nothing is written to `--out`), exit 1 is a usage or I/O error (record `failed`).
+
+- **`invalid`** (exit 2): do not write anything to the epic. Record `{"status": "invalid", "errors": <errors>, ...}` and go to Step 5.
+- **`unchanged`**: record it and skip 4d and 4e.
+- **`written`**: continue with 4d.
+
+### 4d. Cross-check
+
+`python3 scripts/lib/parse_roadmap.py /tmp/fully-analyze-stories-<epic-ref>-description.md` must succeed and have every in-epic ref (from 4b.1) as a key. Otherwise record `{"status": "failed", "errors": ["roadmap cross-check: <detail>"], ...}`, do not patch, and go to Step 5.
+
+### 4e. Patch the epic
+
+`scripts/taiga-epic.sh patch <epic-ref> --description-file /tmp/fully-analyze-stories-<epic-ref>-description.md --version <version from the get in 4a>`
+
+- Exit 0: record `written` with the helper's `added` and `outOfEpic` lists and the dropped refs.
+- Exit 3 (the epic changed since the get): repeat 4a (new version and description), 4c and 4d on the new description, then patch again with the new version. At most 3 patch attempts in total; after the third conflict record `{"status": "failed", "errors": ["version conflict after 3 attempts"], "attempts": 3}`.
+- Any other non-zero exit: record `failed` with the script's message.
+
+Store `attempts` in the record, set `phase = "complete"`, and go to Step 5.
+
+## Step 5: Complete
 
 1. Update state file: `phase = "complete"`
 2. Report summary:
@@ -209,9 +275,17 @@ After processing all operator responses:
    - Remind: analyzed stories now have the `llm-analyzed` tag
    - For any story tagged `planning-heavy` or `epic-candidate`, note explicitly that it may still need higher-level planning review rather than immediate implementation
    - Stories with a non-null `designDocEdited`: list the refs and file paths, and note these design docs have uncommitted Open-Questions resolutions in the working tree that still need to be committed
+   - Dependency diagram (from the state file's `diagram` record):
+     - `written`: epic <epic-ref>'s `## Dependency Diagram` now has the added edges (list them as `#a depends on #b`), any soft orderings, and the out-of-epic roots (`[outside epic]`); note that /implement-epic Step 2a-bis resolves those roots by Done status and that merge-train epic mode then queues that ref's open PR
+     - `unchanged`: the diagram already held every reported edge; nothing was patched
+     - `invalid`: the validator rejected the merge and nothing was written; list the errors so Jon can fix the reported dependencies or the diagram by hand (the run itself did not fail)
+     - `failed`: the patch kept conflicting or errored after 3 attempts, or the cross-check failed; give the reason
+     - `skipped`: no dependencies were reported by any story or found in descriptions
+     - Refs dropped because `scripts/taiga-story.sh` exited 44 (no such story)
 
 ## Error handling
 
 - If an agent spawn fails, set the story to `status = "failed"`, `failureReason = "agent spawn failed"`, and continue with the remaining stories.
-- The state file at `/tmp/fully-analyze-stories-<epic-ref>.json` enables resumability: if interrupted, re-invoke to resume.
+- The state file at `/tmp/fully-analyze-stories-<epic-ref>.json` enables resumability: if interrupted, re-invoke to resume (phase `diagram` re-runs only Step 4).
+- A diagram problem (`invalid`, `failed`) is reported in Step 5 and never fails the run or changes a story's analysis result.
 - **Never stop the entire run for a single story failure**: mark it as failed and continue.
