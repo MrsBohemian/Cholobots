@@ -92,10 +92,11 @@ def test_env_example_lists_only_variables_the_code_reads():
     assert example_keys() <= code_env_names()
 
 
-def test_env_example_explains_every_variable():
-    for key, (_value, _commented, preceding) in example_entries().items():
-        assert preceding.lstrip().startswith("#"), f"{key} has no comment line above it"
-        assert not KEY_LINE.match(preceding), f"{key} is preceded by another key line"
+@pytest.mark.parametrize("key", sorted(example_keys()))
+def test_env_example_explains_every_variable(key):
+    _value, _commented, preceding = example_entries()[key]
+    assert preceding.lstrip().startswith("#"), f"{key} has no comment line above it"
+    assert not KEY_LINE.match(preceding), f"{key} is preceded by another key line"
 
 
 @pytest.mark.parametrize("key", ["DISCORD_TOKEN", "OPENAI_API_KEY", "SUPABASE_SERVICE_ROLE_KEY"])
