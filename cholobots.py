@@ -156,4 +156,5 @@ async def cholobots(ctx):
     """
     await ctx.send(msg)
 
-bot.run(DISCORD_TOKEN)
+if __name__ == "__main__":
+    bot.run(DISCORD_TOKEN)
