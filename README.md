@@ -18,11 +18,11 @@ Data lives in Supabase. The companion repo [Cholobots-Mobile](https://github.com
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # once it exists; see the env list in CLAUDE.md
+cp .env.example .env   # fill in the blanks; see docs/test-discord-server.md
 python cholobots.py
 ```
 
-Required: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. The full list, including optional variables and which ones crash the process at import, is in [CLAUDE.md](CLAUDE.md). `.env` is loaded with `override=True`, so it wins over your shell. There is no test suite yet; `python -m py_compile cholobots.py config.py db/database.py bots/*.py` is the only static check.
+Required: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. To try commands without touching production, follow [docs/test-discord-server.md](docs/test-discord-server.md) (test Discord server and local Supabase). The full list, including optional variables and which ones crash the process at import, is in [CLAUDE.md](CLAUDE.md). `.env` is loaded with `override=True`, so it wins over your shell. There is no test suite yet; `python -m py_compile cholobots.py config.py db/database.py bots/*.py` is the only static check.
 
 ## Development environment
 
