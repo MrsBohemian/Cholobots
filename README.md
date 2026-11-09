@@ -16,13 +16,13 @@ Data lives in Supabase. The companion repo [Cholobots-Mobile](https://github.com
 ## Running locally
 
 ```bash
-python -m venv .venv && . .venv/bin/activate
+python3.14 -m venv .venv && . .venv/bin/activate   # the version in .python-version
 pip install -r requirements.txt
 cp .env.example .env   # once it exists; see the env list in CLAUDE.md
 python cholobots.py
 ```
 
-Required: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. The full list, including optional variables and which ones crash the process at import, is in [CLAUDE.md](CLAUDE.md). `.env` is loaded with `override=True`, so it wins over your shell. There is no test suite yet; `python -m py_compile cholobots.py config.py db/database.py bots/*.py` is the only static check.
+Required: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. The full list, including optional variables and which ones crash the process at import, is in [CLAUDE.md](CLAUDE.md). `.env` is loaded with `override=True`, so it wins over your shell. Static checks: `python -m py_compile cholobots.py config.py db/database.py bots/*.py` and `ruff check .`.
 
 ## Development environment
 
@@ -41,7 +41,7 @@ The launcher reads `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` from t
 **Agent pipeline.** `.claude/` contains the skills, agents and shared includes that let Claude Code take a Taiga story or bug through analysis, implementation, PR, review and merge; `.claude/autonomous-pipeline.md` is the overview and `.claude/skills/shared/taiga-project.md` pins this project's Taiga configuration. The supporting scripts live in `scripts/` (see `scripts/README.md`) with tests in `tests/scripts/`:
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt && pre-commit install   # pytest, ruff and the ruff-check commit hook
 python -m pytest tests/scripts -q
 python3 scripts/taiga_project_setup.py --check   # exit 0 when the Taiga project has the statuses and tags the pipeline needs
 ```

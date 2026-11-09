@@ -246,7 +246,7 @@ def _status_name(issue: dict, metadata: Metadata) -> str:
 
 
 def _level_name(levels: Dict[str, Level], level_id: Optional[int]) -> Optional[str]:
-    return next((n for n, l in levels.items() if l.id == level_id), None)
+    return next((n for n, label in levels.items() if label.id == level_id), None)
 
 
 def _level_order(levels: Dict[str, Level], level_id: Optional[int]) -> Optional[int]:
@@ -426,8 +426,8 @@ def main(argv: Sequence[str], client_factory: Callable[[], object] = TaigaClient
         "ids": {
             "bugTypeId": metadata.bug_type_id,
             "statuses": {n: s.id for n, s in metadata.statuses.items()},
-            "priorities": {n: l.id for n, l in metadata.priorities.items()},
-            "severities": {n: l.id for n, l in metadata.severities.items()},
+            "priorities": {n: label.id for n, label in metadata.priorities.items()},
+            "severities": {n: label.id for n, label in metadata.severities.items()},
         },
         "selected": result.selected,
         "urgent": result.urgent,

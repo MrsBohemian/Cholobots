@@ -82,15 +82,10 @@ import re
 import traceback
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error, request
 from zoneinfo import ZoneInfo
-
-LOCAL_TZ = ZoneInfo("America/Chicago")
-
-def local_now():
-    return datetime.now(LOCAL_TZ)
 
 import discord
 from discord.ext import commands
@@ -102,6 +97,11 @@ from db.database import (
     insert_metiche_checkin,
     fetch_latest_metiche_weekly,
 )
+
+LOCAL_TZ = ZoneInfo("America/Chicago")
+
+def local_now():
+    return datetime.now(LOCAL_TZ)
 
 DAY_NAMES = [
     "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
@@ -3402,7 +3402,7 @@ def register_metiche(bot: commands.Bot):
 
         person = get_person_from_discord(ctx.author.id)
 
-        important_result = save_important_items(
+        save_important_items(
             person=person,
             discord_user=str(ctx.author),
             channel_id=str(ctx.channel.id),
