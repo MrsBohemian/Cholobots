@@ -259,7 +259,7 @@ def parse_receipt_with_openai(filename: str, content_type: str, file_bytes: byte
 
 def format_receipt_preview(project: Dict[str, Any], customer_name: str, parsed: Dict[str, Any], filename: str) -> str:
     lines = [
-        f"🧾 **CRUDOBOT RECEIPT PREVIEW**",
+        "🧾 **CRUDOBOT RECEIPT PREVIEW**",
         f"Project: **{customer_name} — {project.get('project_name')}**",
         f"File: `{filename}`",
         f"Vendor: **{parsed.get('vendor')}**",
@@ -1328,7 +1328,7 @@ def format_estimate_basis(job_type: str, quantity: float, unit: str, matches: Li
     avg_revenue = average(revenue_per_unit)
 
     lines = [
-        f"🧮 Crudobot estimate support",
+        "🧮 Crudobot estimate support",
         f"{crudo_phrase()}",
         "",
         f"Estimate type: {job_type}",
