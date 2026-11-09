@@ -41,8 +41,10 @@ One account per seed person (story #48). List each Discord id next to the seed r
 
 ## 6. Run it
 
-1. `supabase start`
-2. `supabase db reset`
+> **Steps 1 and 2 are not runnable yet.** `supabase start` and `supabase db reset` need `supabase/config.toml`, which story #47 adds, plus the schema migrations (#32) and seed data (#48). On a checkout without those, skip to step 3 only if you point `SUPABASE_URL` and the key at a non-production Supabase project you already own; never at the hosted production project.
+
+1. `supabase start` (needs #47)
+2. `supabase db reset` (needs #47 for the config, #32 for the schema, #48 for the seed)
 3. `cp .env.example .env`, then fill `DISCORD_TOKEN`, `OPENAI_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` (the `SERVICE_ROLE_KEY` line of `supabase status -o env`).
 4. `python cholobots.py`
 5. Expect these console lines: `✅ ObiJuan loaded`, `✅ Vueltabot loaded`, `✅ Logged in as ...`.
