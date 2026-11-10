@@ -48,6 +48,26 @@ case " $* " in
     *" -i "* | *--password-stdin*) stdin="$(cat)" ;;
 esac
 echo "docker $* <<stdin:$stdin>>" >>"$STUB_LOG_DIR/docker.log"
+# Emulate the container's global git config in a file, so tests can assert resulting state.
+case "$*" in
+    *"git config --global "*"url."*)
+        args=("$@")
+        for i in "${!args[@]}"; do
+            if [ "${args[$i]}" = "--global" ]; then
+                unset 'args[i]'
+                args=("${args[@]}")
+                break
+            fi
+        done
+        # args: exec -u vscode cid git config <rest>; rebuild as git config --file F <rest>
+        for i in "${!args[@]}"; do
+            if [ "${args[$i]}" = "config" ]; then
+                git config --file "$STUB_LOG_DIR/containergitconfig" "${args[@]:$((i + 1))}"
+                exit $?
+            fi
+        done
+        ;;
+esac
 if [ "${1:-}" = "pull" ]; then
     exit "${STUB_PULL_EXIT:-0}"
 fi
@@ -97,6 +117,11 @@ assert_true "1: gh auth login gets the token on stdin with GH_TOKEN unset" \
 assert_true "1: gh auth setup-git runs" "grep -qF 'exec -u vscode cid gh auth setup-git' \"\$STUB_LOG_DIR/docker.log\""
 assert_true "1: both insteadOf rewrites are configured" \
     "grep -qF 'insteadOf git@github.com:' \"\$STUB_LOG_DIR/docker.log\" && grep -qF 'insteadOf ssh://git@github.com/' \"\$STUB_LOG_DIR/docker.log\""
+assert_true "1: both insteadOf values survive in the resulting git config" \
+    "[ \"\$(git config --file \"\$STUB_LOG_DIR/containergitconfig\" --get-all url.https://github.com/.insteadOf | sort | tr '\\n' ' ')\" = 'git@github.com: ssh://git@github.com/ ' ]"
+GH_TOKEN=hosttoken CHOLOBOTS_CONTAINER_GH_TOKEN=ctoken launch "$TMP/wt1" feature/one --worktree main || true
+assert_true "1: relaunch does not duplicate insteadOf values" \
+    "[ \"\$(git config --file \"\$STUB_LOG_DIR/containergitconfig\" --get-all url.https://github.com/.insteadOf | wc -l)\" -eq 2 ]"
 assert_true "1: host token appears only on the ghcr login line" \
     "[ -z \"\$(grep hosttoken \"\$STUB_LOG_DIR/docker.log\" | grep -v 'login ghcr.io')\" ]"
 assert_true "1: container token appears in no argv" \

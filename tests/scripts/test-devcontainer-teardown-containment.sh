@@ -37,6 +37,9 @@ cat >"$TMP/bin/docker" <<'STUB'
 echo "$*" >>"$STUB_LOG"
 case "$1" in
   ps)
+    # STUB_PS_FAIL: the daemon is unreachable for every ps. STUB_PS_FAIL_AFTER_RM: only once rm succeeded.
+    if [ -n "${STUB_PS_FAIL:-}" ]; then exit 1; fi
+    if [ -n "${STUB_PS_FAIL_AFTER_RM:-}" ] && [ -e "$STUB_STATE" ]; then exit 1; fi
     if [ ! -e "$STUB_STATE" ]; then echo cid; fi
     ;;
   inspect)
@@ -153,6 +156,34 @@ assert_true "(e) names the surviving container" "grep -q 'still bound' \"$TMP/e.
 assert_true "(e) no volume rm" "! grep -q '^volume rm' \"$TMP/log\""
 assert_true "(e) clone still exists" "[ -d \"$TMP/clone\" ]"
 assert_true "(e) override dir still exists" "[ -d \"$OVERRIDE\" ]"
+
+# (f) docker ps fails on the initial query: nothing may be deleted, and it must not look like "no containers".
+make_clone
+reset_state
+ABS="$(cd "$TMP/clone" && pwd -P)"
+OVERRIDE="$XDG_CACHE_HOME/cholobots-devcontainer/$(override_key "$ABS")"
+mkdir -p "$OVERRIDE"
+F_EXIT=0
+STUB_PS_FAIL=1 "$TEARDOWN" "$TMP/clone" >"$TMP/f.out" 2>"$TMP/f.err" || F_EXIT=$?
+assert_true "(f) exits 1" "[ \"$F_EXIT\" -eq 1 ]"
+assert_true "(f) stderr says Teardown incomplete" "grep -q 'Teardown incomplete' \"$TMP/f.err\""
+assert_true "(f) no volume rm" "! grep -q '^volume rm' \"$TMP/log\""
+assert_true "(f) clone still exists" "[ -d \"$TMP/clone\" ]"
+assert_true "(f) override dir still exists" "[ -d \"$OVERRIDE\" ]"
+
+# (g) rm succeeds but the survivor re-check ps fails: cannot confirm removal, so keep the clone.
+make_clone
+reset_state
+ABS="$(cd "$TMP/clone" && pwd -P)"
+OVERRIDE="$XDG_CACHE_HOME/cholobots-devcontainer/$(override_key "$ABS")"
+mkdir -p "$OVERRIDE"
+G_EXIT=0
+STUB_PS_FAIL_AFTER_RM=1 "$TEARDOWN" "$TMP/clone" >"$TMP/g.out" 2>"$TMP/g.err" || G_EXIT=$?
+assert_true "(g) exits 1" "[ \"$G_EXIT\" -eq 1 ]"
+assert_true "(g) stderr says Teardown incomplete" "grep -q 'Teardown incomplete' \"$TMP/g.err\""
+assert_true "(g) no volume rm" "! grep -q '^volume rm' \"$TMP/log\""
+assert_true "(g) clone still exists" "[ -d \"$TMP/clone\" ]"
+assert_true "(g) override dir still exists" "[ -d \"$OVERRIDE\" ]"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

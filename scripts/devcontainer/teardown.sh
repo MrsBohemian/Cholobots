@@ -30,8 +30,17 @@ VOLUMES=()
 # live container's bind mount is what left two containers bound to one folder
 # in bug #2465. A bounded stop gives the container a moment to flush, then
 # rm -f guarantees removal regardless of the stop's outcome.
-mapfile -t CONTAINER_IDS < <(docker ps -aq --filter "label=devcontainer.local_folder=$ABS_PATH" 2>/dev/null || true)
-for CONTAINER_ID in "${CONTAINER_IDS[@]}"; do
+# A failed `docker ps` (daemon down, permission denied) must not read as "no
+# containers": the ids are captured first so the exit status is not lost to a
+# process substitution, and a failure marks the teardown FAILED.
+CONTAINER_IDS=()
+if PS_OUT=$(docker ps -aq --filter "label=devcontainer.local_folder=$ABS_PATH" 2>/dev/null); then
+    mapfile -t CONTAINER_IDS <<<"$PS_OUT"
+else
+    echo "Could not list containers for $ABS_PATH (is the Docker daemon reachable?); nothing was removed." >&2
+    FAILED=1
+fi
+for CONTAINER_ID in ${CONTAINER_IDS[@]+"${CONTAINER_IDS[@]}"}; do
     [ -z "$CONTAINER_ID" ] && continue
     # Record the container's venv and DinD volumes before it is removed.
     while IFS= read -r VOLUME; do
@@ -46,7 +55,14 @@ for CONTAINER_ID in "${CONTAINER_IDS[@]}"; do
 done
 
 # Re-check: anything still bound to this folder means the teardown did not work.
-mapfile -t SURVIVORS < <(docker ps -aq --filter "label=devcontainer.local_folder=$ABS_PATH" 2>/dev/null || true)
+# A failed re-query cannot confirm removal, so it counts as failure too.
+SURVIVORS=()
+if SURVIVOR_OUT=$(docker ps -aq --filter "label=devcontainer.local_folder=$ABS_PATH" 2>/dev/null); then
+    mapfile -t SURVIVORS <<<"$SURVIVOR_OUT"
+else
+    echo "Could not re-check containers bound to $ABS_PATH after teardown; cannot confirm removal." >&2
+    FAILED=1
+fi
 if [ "${#SURVIVORS[@]}" -gt 0 ] && [ -n "${SURVIVORS[0]}" ]; then
     echo "Containers still bound to $ABS_PATH after teardown: ${SURVIVORS[*]}" >&2
     FAILED=1

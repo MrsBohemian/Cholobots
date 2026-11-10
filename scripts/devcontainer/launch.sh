@@ -304,11 +304,17 @@ if [ -n "$CONTAINER_TOKEN" ]; then
     # A worktree keeps its scp-style origin (rewriting it would mutate the
     # shared .git/config of the main checkout), so the HTTPS rewrite happens
     # inside the container instead, for the user agents run as.
+    # Two values share one multivalue key, so clear it first (idempotent across
+    # relaunches; exit 5 when unset is fine) and then --add each rule. A plain
+    # set would let the second rule replace the first.
     docker exec -u vscode "$CONTAINER_ID" \
-        git config --global url."https://github.com/".insteadOf "git@github.com:" \
+        git config --global --unset-all url."https://github.com/".insteadOf \
+        >/dev/null 2>&1 || true
+    docker exec -u vscode "$CONTAINER_ID" \
+        git config --global --add url."https://github.com/".insteadOf "git@github.com:" \
         >/dev/null 2>&1 || echo "Warning: could not configure HTTPS git rewriting for vscode; pushes may fail." >&2
     docker exec -u vscode "$CONTAINER_ID" \
-        git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" \
+        git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/" \
         >/dev/null 2>&1 || echo "Warning: could not configure ssh:// git rewriting for vscode; pushes may fail." >&2
 elif [ "$SSH_AGENT_MOUNTED" -eq 1 ]; then
     # IdentityAgent rather than SSH_AUTH_SOCK, because docker exec does not apply remoteEnv.
