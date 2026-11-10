@@ -88,6 +88,7 @@ for a scope that does not exist.
 | Script | Purpose |
 |---|---|
 | `check_schema_coverage.py [--repo-root .] [--migrations supabase/migrations] [--mobile-dir D] [--json]` | Lists every table/view the bots (`.table("x")` in `bots/*.py`, `db/database.py`) and dashboards (`.from("x")` in `D/*.html`, `D/assets/*.js`) reference, and whether `supabase/migrations/*.sql` defines it, with kind, RLS state and policy count; objects nobody references are listed separately. `--mobile-dir` defaults to `mobile/`, else `../Cholobots-Mobile` (pass it explicitly from a worktree). Exit 0 all present, 1 something missing, 2 a directory not found. A dashboard-read table with RLS off is a `WARN` line, not a failure. Reads files only; never connects to Supabase |
+| `supabase_migrations.py lint [--dir D] [--base REF]` / `check-push-plan PLAN\|-` | `lint` checks `supabase/migrations/` names (14-digit timestamp, lowercase snake case, no duplicates, one baseline that is the earliest) and, with `--base`, that a PR only adds migrations newer than the base's newest and never edits, renames or deletes merged ones. `check-push-plan` reads `supabase db push --dry-run` output and fails when the baseline is pending. Used by `.github/workflows/supabase-db-push.yml`; see `docs/database-migrations.md`. Reads files and git only; never connects to Supabase |
 
 ## Tests
 
