@@ -18,7 +18,9 @@ WORKTREE_PATH="${1:?Usage: teardown.sh <path> [--keep-clone]}"
 KEEP_CLONE=false
 [[ "${2:-}" == "--keep-clone" ]] && KEEP_CLONE=true
 
-ABS_PATH=$(cd "$WORKTREE_PATH" 2>/dev/null && pwd || echo "$WORKTREE_PATH")
+# Physical path (pwd -P), the same resolution as launch.sh's realpath, so the
+# container label and the override-dir hash match what launch.sh used.
+ABS_PATH=$(cd "$WORKTREE_PATH" 2>/dev/null && pwd -P || echo "$WORKTREE_PATH")
 
 FAILED=0
 VOLUMES=()

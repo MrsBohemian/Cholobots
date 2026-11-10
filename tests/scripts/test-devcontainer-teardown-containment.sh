@@ -131,6 +131,24 @@ STUB_VOLUME_RM_FAIL=1 "$TEARDOWN" "$TMP/clone" >"$TMP/c.out" 2>"$TMP/c.err" || C
 assert_true "(c) exits 0" "[ \"$C_EXIT\" -eq 0 ]"
 assert_true "(c) warns could not remove volume" "grep -q 'could not remove volume' \"$TMP/c.err\""
 
+# (d) Workspace given through a symlink: launch.sh hashes realpath, so teardown
+# must remove the override dir keyed by the physical path.
+make_clone
+reset_state
+PHYS="$(cd "$TMP/clone" && pwd -P)"
+ln -sfn "$PHYS" "$TMP/clone-link"
+OVERRIDE="$XDG_CACHE_HOME/cholobots-devcontainer/$(override_key "$PHYS")"
+LOGICAL_OVERRIDE="$XDG_CACHE_HOME/cholobots-devcontainer/$(override_key "$TMP/clone-link")"
+mkdir -p "$OVERRIDE"
+touch "$OVERRIDE/devcontainer.json"
+D_EXIT=0
+"$TEARDOWN" "$TMP/clone-link" --keep-clone >"$TMP/d.out" 2>"$TMP/d.err" || D_EXIT=$?
+assert_true "(d) exits 0" "[ \"$D_EXIT\" -eq 0 ]"
+assert_true "(d) override dir keyed by the physical path is gone" "[ ! -e \"$OVERRIDE\" ]"
+assert_true "(d) container lookup uses the physical path" \
+  "grep -q 'label=devcontainer.local_folder=$PHYS\$' \"$TMP/log\" && ! grep -q 'clone-link' \"$TMP/log\""
+assert_true "(d) logical and physical override keys differ" "[ \"$OVERRIDE\" != \"$LOGICAL_OVERRIDE\" ]"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]
