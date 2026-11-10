@@ -193,7 +193,15 @@ def port_in_use(port: int) -> bool:
 
 
 DEFAULT_CLI = "npx --yes supabase@2.121.0"
-HOSTED_TOKENS = {"--linked", "--db-url", "--project-ref", "--local=false", "link", "login"}
+# Option names (matched with or without `=value`) that select a hosted project or database.
+HOSTED_FLAGS = {"--linked", "--db-url", "--project-ref", "--password", "-p"}
+HOSTED_WORDS = {"link", "login"}
+# Options that would point a command at another stack than the selected checkout's. This helper
+# supplies --workdir and --project-id itself.
+RETARGET_FLAGS = {"--workdir", "--project-id"}
+# Commands whose target is chosen by --local/--linked/--db-url: --local is always forced so a
+# hosted default can never apply. `migration new` only writes a file and has no target flag.
+FORCE_LOCAL = {("db", "reset"), ("db", "diff"), ("db", "lint"), ("migration", "list"), ("migration", "up"), ("test", "db")}
 # Handled here, against this checkout's stack.
 NATIVE_COMMANDS = {"start", "stop", "status", "env", "prune"}
 # The only CLI commands forwarded: each runs against the local stack when given --workdir and no
@@ -221,10 +229,20 @@ def _fail(message: str) -> None:
 
 def hosted_operation(argv: list[str]) -> str | None:
     for tok in argv:
-        if tok in HOSTED_TOKENS or tok.startswith("--db-url="):
+        name, _, value = tok.partition("=")
+        if tok in HOSTED_WORDS or name in HOSTED_FLAGS:
+            return tok
+        if name == "--local" and "=" in tok and value != "true":
             return tok
     if argv[:1] == ["db"] and "push" in argv:
         return "db push"
+    return None
+
+
+def retargeting_option(argv: list[str]) -> str | None:
+    for tok in argv:
+        if tok.partition("=")[0] in RETARGET_FLAGS:
+            return tok
     return None
 
 
@@ -394,6 +412,10 @@ def main(argv: list[str], environ: Mapping[str, str] = os.environ, run=subproces
     if hosted:
         _fail(f"refusing hosted operation {hosted}")
         return 2
+    retarget = retargeting_option(argv)
+    if retarget:
+        _fail(f"refusing option {retarget}: the checkout's own stack is selected by path, not by flag")
+        return 2
     if not allowed_command(argv):
         _fail(f"{' '.join(argv[:2])!r} is not an allowed local-only command; allowed: "
               + ", ".join(sorted(NATIVE_COMMANDS | {" ".join(c) for c in PASSTHROUGH_COMMANDS})))
@@ -412,8 +434,9 @@ def main(argv: list[str], environ: Mapping[str, str] = os.environ, run=subproces
         if sub == "env":
             return _print_env(cli, workdir, run)
         if sub == "status":
-            return run([*cli, "status", "--workdir", workdir, *rest]).returncode
-        return run([*cli, sub, *rest, "--workdir", workdir]).returncode
+            return run([*cli, "status", *rest, "--workdir", workdir]).returncode
+        local = ["--local"] if tuple(argv[:2]) in FORCE_LOCAL else []
+        return run([*cli, sub, *rest, *local, "--workdir", workdir]).returncode
     except LocalError as error:
         _fail(str(error))
         return error.code

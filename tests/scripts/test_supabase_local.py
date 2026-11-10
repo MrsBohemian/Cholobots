@@ -462,7 +462,7 @@ def test_status_passes_flags_through_with_workdir(stack_repo):
     assert rc == 0
     (status,) = stub.cli_calls()
     assert status == [
-        CLI, "status", "--workdir", str(stack_repo.resolve()), "-o", "env", "--override-name", "api.url=X",
+        CLI, "status", "-o", "env", "--override-name", "api.url=X", "--workdir", str(stack_repo.resolve()),
     ]
 
 
@@ -471,7 +471,7 @@ def test_passthrough_appends_workdir(stack_repo):
     rc = supabase_local.main(["db", "reset"], environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub)
     assert rc == 0
     (call,) = stub.cli_calls()
-    assert call == [CLI, "db", "reset", "--workdir", str(stack_repo.resolve())]
+    assert call == [CLI, "db", "reset", "--local", "--workdir", str(stack_repo.resolve())]
 
 
 def test_passthrough_in_unstarted_worktree_explains_itself(stack_repo, capsys):
@@ -580,7 +580,8 @@ def test_passthrough_allows_local_only_subcommands(stack_repo, argv):
     rc = supabase_local.main(argv, environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub)
     assert rc == 0
     (call,) = stub.cli_calls()
-    assert call == [CLI, *argv, "--workdir", str(stack_repo.resolve())]
+    local = [] if argv[0] == "migration" and argv[1] == "new" else ["--local"]
+    assert call == [CLI, *argv, *local, "--workdir", str(stack_repo.resolve())]
 
 
 @pytest.mark.parametrize(
@@ -610,7 +611,22 @@ def test_passthrough_rejects_everything_off_the_local_allowlist(stack_repo, caps
 
 
 @pytest.mark.parametrize(
-    "argv", [["db", "reset", "--project-ref", "abc"], ["migration", "list", "--local=false"]]
+    "argv",
+    [
+        ["db", "reset", "--project-ref", "abc"],
+        ["db", "reset", "--project-ref=abc"],
+        ["db", "reset", "--linked=true"],
+        ["db", "diff", "--linked"],
+        ["db", "lint", "--db-url=postgres://h/db"],
+        ["db", "lint", "--db-url", "postgres://h/db"],
+        ["migration", "list", "--local=false"],
+        ["migration", "list", "--linked"],
+        ["migration", "up", "--db-url=postgres://h/db"],
+        ["migration", "up", "--password", "pw"],
+        ["migration", "up", "-p", "pw"],
+        ["test", "db", "--linked"],
+        ["test", "db", "--local=false"],
+    ],
 )
 def test_refuses_flags_that_retarget_an_allowed_command_at_the_hosted_project(stack_repo, capsys, argv):
     stub = StubRunner()
@@ -618,6 +634,32 @@ def test_refuses_flags_that_retarget_an_allowed_command_at_the_hosted_project(st
     assert rc == 2
     assert "refusing hosted operation" in capsys.readouterr().err
     assert stub.cli_calls() == []
+
+
+@pytest.mark.parametrize("flag", [["--workdir", "/other"], ["--workdir=/other"], ["--project-id", "x"], ["--project-id=x"]])
+@pytest.mark.parametrize("cmd", [["status"], ["env"], ["db", "reset"], ["migration", "list"], ["stop"], ["start"]])
+def test_refuses_options_that_retarget_another_stack(stack_repo, capsys, cmd, flag):
+    stub = StubRunner()
+    rc = supabase_local.main([*cmd, *flag], environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub)
+    assert rc == 2
+    assert "refusing option" in capsys.readouterr().err
+    assert stub.cli_calls() == []
+
+
+def test_status_keeps_its_own_workdir_last(stack_repo):
+    stub = StubRunner()
+    supabase_local.main(["status", "-o", "json"], environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub)
+    (call,) = stub.cli_calls()
+    assert call[-2:] == ["--workdir", str(stack_repo.resolve())]
+    assert call.count("--workdir") == 1
+
+
+def test_forced_local_accepts_an_explicit_local_true(stack_repo):
+    stub = StubRunner()
+    rc = supabase_local.main(["db", "diff", "--local=true"], environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub)
+    assert rc == 0
+    (call,) = stub.cli_calls()
+    assert "--local" in call and "--local=false" not in call
 
 
 def test_db_reset_with_a_checkout_path_acts_on_that_checkout(stack_repo):
@@ -630,7 +672,7 @@ def test_db_reset_with_a_checkout_path_acts_on_that_checkout(stack_repo):
     )
     assert rc == 0
     (call,) = stub.cli_calls()
-    assert call == [CLI, "db", "reset", "--workdir", str(Path(wt.resolve()) / ".supabase-local")]
+    assert call == [CLI, "db", "reset", "--local", "--workdir", str(Path(wt.resolve()) / ".supabase-local")]
 
 
 # --- the shell launcher --------------------------------------------------------------
