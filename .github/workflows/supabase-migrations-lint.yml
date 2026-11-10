@@ -28,7 +28,22 @@ jobs:
         run: git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
         env:
           BASE_REF: ${{ github.base_ref }}
+      # The linter is read from the base ref, not the PR checkout, so a PR cannot
+      # weaken the append-only check by editing scripts/supabase_migrations.py in
+      # the same change as a migration edit. Bootstrap: when the base has no
+      # linter yet (the PR that introduces it), the PR's own copy is used, since
+      # there is nothing trusted to run. That fallback ends once the script is on
+      # the base. The workflow file itself is the PR's copy; protect it with
+      # CODEOWNERS or required review (see docs/database-migrations.md).
       - name: Lint migrations against the base
-        run: python3 scripts/supabase_migrations.py lint --base "origin/${BASE_REF}"
+        run: |
+          trusted="${RUNNER_TEMP}/supabase_migrations_base.py"
+          if git show "origin/${BASE_REF}:scripts/supabase_migrations.py" > "$trusted" 2>/dev/null; then
+            echo "Using the linter from origin/${BASE_REF}"
+          else
+            echo "::warning::origin/${BASE_REF} has no scripts/supabase_migrations.py (bootstrap); using the PR copy"
+            cp scripts/supabase_migrations.py "$trusted"
+          fi
+          python3 "$trusted" lint --base "origin/${BASE_REF}"
         env:
           BASE_REF: ${{ github.base_ref }}

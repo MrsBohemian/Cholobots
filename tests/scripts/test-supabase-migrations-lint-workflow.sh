@@ -52,7 +52,12 @@ check "no continue-on-error" lacks '^[[:space:]]*continue-on-error:'
 check "full history checked out for the merge base" has 'fetch-depth: 0'
 check "fetches the PR base ref" has 'git fetch .*\$\{BASE_REF\}'
 check "base ref comes from github.base_ref" has 'BASE_REF: \$\{\{ github\.base_ref \}\}'
-check "lints against the PR base" has 'supabase_migrations\.py lint --base "origin/\$\{BASE_REF\}"'
+check "lints against the PR base" has 'lint --base "origin/\$\{BASE_REF\}"'
+# The PR checkout's linter must never be what runs when the base has one.
+check "reads the linter from the base ref" has 'git show "origin/\$\{BASE_REF\}:scripts/supabase_migrations\.py"'
+check "runs the extracted base copy" has 'python3 "\$trusted" lint'
+check "bootstrap fallback to the PR copy is explicit" has 'cp scripts/supabase_migrations\.py "\$trusted"'
+check "does not run the checkout's script directly" lacks 'python3 scripts/supabase_migrations\.py'
 
 if [ "$FAILURES" -gt 0 ]; then
     echo -e "${RED}$FAILURES check(s) failed${NC}"
