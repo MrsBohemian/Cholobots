@@ -37,6 +37,34 @@ Required variables: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE
 
 **Without make.** The raw commands work too: `python3.14 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt -r requirements-dev.txt && pre-commit install`, `npx --yes supabase@2.121.0 start` / `db reset` / `status -o env` / `stop`, and the static checks `python -m py_compile cholobots.py config.py db/database.py bots/*.py` and `ruff check .`. `python cholobots.py` skips the local-stack check that `make run` does, so double-check `.env` first.
 
+### Devcontainer
+
+`.devcontainer/` builds one container with Python 3.14, the Supabase CLI 2.121.0, `gh`, Node 22, `psql`, Chrome (amd64 only) and its own Docker daemon (Docker-in-Docker). Each container runs a private Supabase stack on the default ports, so containers on one machine do not collide with each other or with a stack on the host.
+
+Prerequisites: Docker, and either the pinned CLI or VS Code with the Dev Containers extension ("Reopen in Container"):
+
+```bash
+npx --yes @devcontainers/cli@0.89.0 up --workspace-folder .
+npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . python -m pytest tests/unit tests/scripts -q
+```
+
+Host environment it reads (all optional for starting the container; the bot needs the first two):
+
+- `CHOLOBOTS_TEST_DISCORD_TOKEN`: the **test** application token from [docs/test-discord-server.md](docs/test-discord-server.md). It becomes `DISCORD_TOKEN` inside the container. Never use the production token.
+- `OPENAI_API_KEY`, `TAIGA_API_URL`, `TAIGA_USERNAME`, `TAIGA_PASSWORD`, `GH_TOKEN`.
+
+What happens:
+
+- **Create (once).** `post-create.sh` builds `.venv`, a Docker volume separate from any `.venv` on the host, and installs `requirements.txt` and `requirements-dev.txt`.
+- **Every start.** `post-start.sh` waits for the Docker daemon, runs `supabase start`, then **`supabase db reset`: fresh migrations and seed data on every container start, so stop the bot first and expect local edits to the data to be gone.** It then runs `scripts/devcontainer/write_env.py`, which sets `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to the in-container stack and `DISCORD_TOKEN` and `OPENAI_API_KEY` to the passed values, and leaves every other `.env` line alone. `.env` is the same file as in the host checkout. The script never starts the bot.
+- **Slow or odd hosts.** On a host kernel with nftables only, `post-start.sh` switches `iptables` and `ip6tables` to the nft backend and restarts `dockerd`. After a container restart the stack needs a moment to become healthy, so `supabase start` and `db reset` are retried. Tunables, set on the host or in the container: `DOCKER_WAIT_LIMIT` (seconds to wait for dockerd, default 60), `SUPABASE_RETRY_ATTEMPTS` (default 30) and `SUPABASE_RETRY_DELAY` (seconds, default 2).
+- **Ports.** VS Code forwards 54321 (API) and 54323 (Studio); the headless CLI forwards nothing.
+- **Memory.** About 1 GB per container for the Supabase stack. `post-start.sh` skips `imgproxy`, `logflare`, `vector` and `mailpit`; set `SUPABASE_START_EXCLUDE=studio,imgproxy,...` to trim more, or `SUPABASE_START_EXCLUDE=` (empty) to start everything.
+- **Registry mirror.** `/etc/docker/daemon.json` points at `host.docker.internal:6000`; without a mirror running, Docker pulls from Docker Hub (the mirror script comes with story #73).
+- **Headless commands.** Inside the container the `make` targets use the installed CLI (`SUPABASE=supabase` is set).
+
+Safety: nothing in the container talks to the hosted Supabase project. Never put hosted credentials or the production Discord token in the container's environment or in `.env`. As in the Quickstart, test accounts are not in `DISCORD_USER_TO_PERSON`, so they read and write Heaven's `daily_tasks` key in the local database (harmless locally; story #40).
+
 ### Seed data
 
 `supabase/seed.sql` loads one obviously fictitious contracting business, and `supabase db reset` runs it after the migrations (`[db.seed]` in `supabase/config.toml`). The reset is one command against the local Docker stack only, never with `--linked`:
