@@ -4,9 +4,9 @@ The target test pyramid for Cholobots: which tests belong at each level, what ea
 the rules that keep levels from duplicating each other. `docs/testing-conventions.md` covers naming,
 fixtures and fakes; `docs/testing-workflow.md` covers when to run what.
 
-Most of this pyramid does not exist yet. Stories #34 (unit tests), #47 (local Supabase stack),
-#48 (seed fixtures), #51 (integration harness) and #36 (manual scripts) build it. Until a level
-exists, the rules in "Before the tests exist" apply.
+Most of this pyramid is built: unit (#34), the local Supabase stack (#47), seed data (#48) and the
+integration harness (#51) exist; manual scripts (#36) are still to come. Until a level exists, the
+rules in "Before the tests exist" apply.
 
 ## Pyramid
 
@@ -39,7 +39,9 @@ Heaven's `daily_tasks` (#4); a receipt `yes` from another flow must not save the
 
 **Out of scope:** exhaustive input variants (unit level owns them); gateway behaviour.
 
-**Data:** only the local Supabase stack. Never the production project.
+**Data:** only the local Supabase stack, reset to migrations + seed before every test
+(`docs/testing-conventions.md` § Integration). Never the production project. Open bugs are
+strict xfails that the fix PR un-marks.
 
 ### Scripts (`tests/scripts/`)
 

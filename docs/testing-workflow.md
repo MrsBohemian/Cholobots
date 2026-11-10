@@ -16,7 +16,7 @@ each lands, its row below stops being conditional.
 |---|---|---|---|
 | Compile | `python -m py_compile cholobots.py config.py db/database.py bots/*.py` | `make compile` | Always. The floor for every change |
 | Unit | `python -m pytest tests/unit -q` | (in `make test`) | Once `tests/unit/` exists (#34); before that record "no test suite yet (#34)" |
-| Integration | `python -m pytest tests/integration -q -m integration` | `make test-integration` | Once the local Supabase stack (#47) and harness (#51) exist; needs `make db-up` |
+| Integration | `python -m pytest tests/integration -q -m integration` | `make test-integration` (the raw pytest command needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` exported) | When a change touches a command, listener or query; needs `make db-up`; local stack only |
 | Script tests | `python -m pytest tests/scripts -q` and `bash tests/scripts/test-<name>.sh` | (in `make test`, which stops at the first failing `.sh`) | Exist today |
 | Lint | `ruff check .` (also the pre-commit hook) | `make lint` | Always. Config and exceptions in `ruff.toml` |
 | Unit + script tests | `python -m pytest -q tests/unit tests/scripts`, then `for t in tests/scripts/test-*.sh; do bash "$t" || exit 1; done` | `make test` | |
