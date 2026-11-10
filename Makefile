@@ -42,8 +42,9 @@ compile: ## Byte-compile the bot modules
 lint: ## Run ruff
 	$(VENV_PY) -m ruff check .
 
-test: ## Run the unit and script tests
+test: ## Run the unit tests, the script pytest tests and every tests/scripts/test-*.sh
 	$(VENV_PY) -m pytest -q tests/unit tests/scripts
+	for t in tests/scripts/test-*.sh; do echo "== $$t"; bash "$$t" || exit 1; done
 
 test-integration: ## Run the integration tests against the local stack
 	@if [ -d tests/integration ]; then $(VENV_PY) -m pytest -q -m integration tests/integration; else echo "No integration tests yet (#51)."; fi

@@ -17,9 +17,9 @@ each lands, its row below stops being conditional.
 | Compile | `python -m py_compile cholobots.py config.py db/database.py bots/*.py` | `make compile` | Always. The floor for every change |
 | Unit | `python -m pytest tests/unit -q` | (in `make test`) | Once `tests/unit/` exists (#34); before that record "no test suite yet (#34)" |
 | Integration | `python -m pytest tests/integration -q -m integration` | `make test-integration` (prints "No integration tests yet (#51)." until then) | Once the local Supabase stack (#47) and harness (#51) exist; needs `make db-up` |
-| Script tests | `python -m pytest tests/scripts -q` and `bash tests/scripts/test-<name>.sh` | (pytest part in `make test`) | Exist today |
+| Script tests | `python -m pytest tests/scripts -q` and `bash tests/scripts/test-<name>.sh` | (both in `make test`: pytest, then every `tests/scripts/test-*.sh`, stopping at the first failure) | Exist today |
 | Lint | `ruff check .` (also the pre-commit hook) | `make lint` | Always. Config and exceptions in `ruff.toml` |
-| Unit + script tests | `python -m pytest -q tests/unit tests/scripts` | `make test` | Same scope as CI (#35) |
+| Unit + script tests | `python -m pytest -q tests/unit tests/scripts`, then `for t in tests/scripts/test-*.sh; do bash "$t" || exit 1; done` | `make test` | Same scope CI (#35) should run |
 | Compile, lint, test | | `make check` | Before every push |
 | Whole suite | `python -m pytest -q` | | Once #34 lands |
 

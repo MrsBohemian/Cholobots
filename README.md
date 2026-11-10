@@ -29,7 +29,7 @@ From a fresh clone to the bot answering in your own test Discord server. Everyth
 5. **Discord.** Create your own test application, bot and server as [docs/test-discord-server.md](docs/test-discord-server.md) describes, so nobody has to invite you. Turn on the bot's **Message Content Intent** (without it no `!` command is seen) and put its token in `DISCORD_TOKEN`. Never the production token.
 6. **OpenAI.** Any non-empty `OPENAI_API_KEY` lets the bot start; receipt scanning and Chismebot summaries need a real key.
 7. **Run.** `make run`. It first checks `.env` and refuses to start, listing each problem, when `SUPABASE_URL` is not the local stack, a required secret is empty, or `TRANSPORTATION_CHANNEL_ID` is not a whole number. The console then shows `✅ Logged in as <your test bot>`. In the test server, `!cholobots` answers with the persona overview, and `!cshow <a seeded contact>` shows a contact card once the seed has landed.
-8. **Day to day.** `make check` (compile, `ruff`, unit and script tests) before you push, `make test-integration` once story #51 adds those tests, and `make db-down` when you are done.
+8. **Day to day.** `make check` (compile, `ruff`, unit tests, script pytest tests and the `test-*.sh` shell tests) before you push, `make test-integration` once story #51 adds those tests, and `make db-down` when you are done.
 
 Two local quirks: your test accounts are not in the bot's hardcoded user map, so Metichebot files them under Heaven's daily tasks (harmless locally; story #40 replaces the map), and once `!mtoday` is set up in a channel, any message there that does not start with `!` becomes a time block.
 

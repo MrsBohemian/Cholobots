@@ -13,7 +13,7 @@ Work is tracked in Taiga project `cholo-bots` (id 39) on https://backlog.growthg
 ```bash
 make setup      # .venv (Python pinned in .python-version), == pins from requirements*.txt, pre-commit hook, .env from .env.example
 make db-up      # local Supabase stack; make db-reset rebuilds it, make db-env prints the two .env lines, make db-down stops it
-make check      # compile, lint (ruff), test (tests/unit + tests/scripts); make test-integration skips until #51
+make check      # compile, lint (ruff), test (tests/unit + tests/scripts pytest, then every tests/scripts/test-*.sh); make test-integration skips until #51
 make run        # scripts/check_local_env.py, then python cholobots.py; production runs python cholobots.py via the Procfile
 ```
 

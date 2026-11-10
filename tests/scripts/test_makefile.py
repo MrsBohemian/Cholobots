@@ -108,6 +108,13 @@ def test_test_target_matches_ci_scope():
     assert ".venv/bin/python -m pytest -q tests/unit tests/scripts" in dry_run("test")
 
 
+def test_test_target_runs_every_shell_test_and_fails_on_the_first_failure():
+    out = dry_run("test")
+    assert "for t in tests/scripts/test-*.sh;" in out
+    assert 'bash "$t" || exit 1' in out
+    assert out.index("-m pytest -q") < out.index("tests/scripts/test-*.sh")
+
+
 def test_check_runs_compile_lint_and_test():
     out = dry_run("check")
     compile_at = out.index("-m py_compile cholobots.py config.py db/database.py bots/*.py")
