@@ -87,3 +87,27 @@ def test_integration_settings_defaults_db_url_to_local_cli_port():
     assert settings.url == LOCAL_API
     assert settings.service_key == "key"
     assert settings.db_url == DEFAULT_DB_URL == "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+
+
+def test_integration_settings_requires_db_url_off_default_api_port():
+    settings, reason = integration_settings(
+        {"SUPABASE_URL": "http://127.0.0.1:54351", "SUPABASE_SERVICE_ROLE_KEY": "key"}
+    )
+
+    assert settings is None
+    assert "scripts/supabase-local.sh env" in reason
+
+
+def test_integration_settings_accepts_worktree_coordinates():
+    db_url = "postgresql://postgres:postgres@127.0.0.1:54352/postgres"
+    settings, reason = integration_settings(
+        {
+            "SUPABASE_URL": "http://127.0.0.1:54351",
+            "SUPABASE_SERVICE_ROLE_KEY": "key",
+            "SUPABASE_DB_URL": db_url,
+        }
+    )
+
+    assert reason == ""
+    assert settings is not None
+    assert settings.db_url == db_url
