@@ -1,0 +1,64 @@
+# ABOUTME: Applies merged supabase/migrations/* files to the hosted Supabase project with `supabase db push` on merge to main.
+# ABOUTME: Ships gated closed: nothing reaches production until SUPABASE_DB_PUSH_ENABLED is 'true' and the supabase-production environment approves.
+#
+# Secrets (environment secrets of the protected `supabase-production`
+# environment that Heaven creates, never repository-wide):
+#   SUPABASE_ACCESS_TOKEN  personal access token for the Supabase CLI
+#   SUPABASE_PROJECT_REF   the hosted project's reference id
+#   SUPABASE_DB_PASSWORD   optional, the database password for `supabase link`
+#
+# Gate: the db-push job runs only when the repository variable
+# SUPABASE_DB_PUSH_ENABLED is 'true' (it does not exist until Jon allows
+# production writes) and a required reviewer approves the environment run.
+# Otherwise gate-closed records a notice. See the go-live checklist in
+# docs/database-migrations.md.
+#
+# Security: the repo is public and this job holds production credentials, so it
+# must never gain a pull_request or pull_request_target trigger.
+name: supabase-db-push
+
+on:
+  push:
+    branches: [main]
+    paths: ['supabase/migrations/**']
+  workflow_dispatch:
+
+# Two merges queue; a push in flight is never cancelled half-way.
+concurrency:
+  group: supabase-db-push
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gate-closed:
+    if: vars.SUPABASE_DB_PUSH_ENABLED != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "::notice::Production push is switched off (SUPABASE_DB_PUSH_ENABLED is not 'true'). Merged migrations are queued; see docs/database-migrations.md."
+
+  db-push:
+    if: vars.SUPABASE_DB_PUSH_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: supabase-production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.121.0
+      - name: Lint migrations
+        run: python3 scripts/supabase_migrations.py lint
+      - name: Link hosted project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Plan push
+        shell: bash
+        run: |
+          supabase db push --dry-run 2>&1 | tee "$RUNNER_TEMP/push-plan.txt"
+          python3 scripts/supabase_migrations.py check-push-plan "$RUNNER_TEMP/push-plan.txt"
+      - name: Push migrations
+        run: supabase db push
