@@ -1,4 +1,4 @@
-# ABOUTME: Lints supabase/migrations/* on every PR that touches them, against the PR base, so merged migrations stay append-only.
+# ABOUTME: Lints supabase/migrations/* on every PR, against the PR base, so merged migrations stay append-only.
 # ABOUTME: Holds no secrets and no environment; it only reads the repository and never talks to Supabase.
 #
 # Why this is a separate workflow: supabase-db-push.yml holds production
@@ -9,8 +9,10 @@
 name: supabase-migrations-lint
 
 on:
+  # No path filter: a path-filtered workflow never reports on other PRs, which
+  # would leave a required check pending forever. With no migration changes the
+  # lint still passes, so this is cheap on every PR.
   pull_request:
-    paths: ['supabase/migrations/**']
 
 permissions:
   contents: read

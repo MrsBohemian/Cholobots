@@ -161,6 +161,34 @@ def test_cli_base_older_added_fails(tmp_path):
     assert result.returncode == 1
 
 
+def test_cli_base_type_change_to_symlink_fails(tmp_path):
+    host = _repo_with_migrations(tmp_path)
+    target = host / "supabase" / "migrations" / BASELINE
+    target.unlink()
+    target.symlink_to("/etc/hostname")
+    _git("add", "-A", cwd=host)
+    _git("commit", "--quiet", "-m", "symlink", cwd=host)
+    result = run("lint", "--base", "main", cwd=host)
+    assert result.returncode == 1
+    assert "type-changed" in result.stdout
+    assert "regular file" in result.stdout
+
+
+def test_added_symlink_migration_fails(tmp_path):
+    host = _repo_with_migrations(tmp_path)
+    (host / "supabase" / "migrations" / "20261108000000_new.sql").symlink_to("/etc/hostname")
+    _git("add", "-A", cwd=host)
+    _git("commit", "--quiet", "-m", "link", cwd=host)
+    result = run("lint", "--base", "main", cwd=host)
+    assert result.returncode == 1
+    assert "regular file" in result.stdout
+
+
+def test_type_change_status_is_rejected():
+    errors = sm.lint_against_base([("T", f"supabase/migrations/{BASELINE}")], [BASELINE])
+    assert errors and "type-changed" in errors[0]
+
+
 def test_cli_unknown_base_exits_2(tmp_path):
     host = _repo_with_migrations(tmp_path)
     result = run("lint", "--base", "no-such-ref", cwd=host)

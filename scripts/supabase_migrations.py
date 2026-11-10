@@ -4,6 +4,7 @@
 import argparse
 import os
 import re
+import stat
 import subprocess
 import sys
 
@@ -59,11 +60,13 @@ def lint_against_base(changes, base_names):
     newest = max(base_stamps) if base_stamps else None
     for change in changes:
         status, paths = change[0], change[1:]
-        if status[0] in ("M", "D", "R"):
+        if status[0] not in ("A", "C"):
+            # M, D, R, T (type change, e.g. file -> symlink) and anything unknown.
             errors.append(
-                f"{paths[0]}: merged migrations are never edited, renamed or deleted; add a new migration"
+                f"{paths[0]}: merged migrations are never edited, renamed, deleted or type-changed "
+                f"(git status {status[0]}); add a new migration"
             )
-        elif status[0] in ("A", "C"):
+        else:
             path = paths[-1]
             ts = _timestamp(path)
             if ts and newest and ts <= newest:
@@ -72,6 +75,18 @@ def lint_against_base(changes, base_names):
                     "it would be skipped by db push (regenerate with supabase migration new)"
                 )
     return errors
+
+
+def lint_modes(entries):
+    """Errors for tracked migration entries that are not regular files.
+
+    `entries` are (mode, name) pairs; any mode other than a regular file's is an error.
+    """
+    return [
+        f"{name}: must be a regular file (mode {mode}), not a symlink, directory or submodule"
+        for mode, name in entries
+        if name not in IGNORED_NAMES and mode not in ("100644", "100755")
+    ]
 
 
 def pending_from_plan(text):
@@ -113,6 +128,13 @@ def cmd_lint(args):
             return _fail_git(diff, "git diff failed")
         changes = [tuple(line.split("\t")) for line in diff.stdout.splitlines() if line.strip()]
         errors += lint_against_base(changes, base_names)
+
+    # Migration entries must be regular files, not symlinks, directories or submodules.
+    entries = []
+    for name in os.listdir(args.dir):
+        mode = os.lstat(os.path.join(args.dir, name)).st_mode
+        entries.append(("100644" if stat.S_ISREG(mode) else f"{mode:o}", name))
+    errors += lint_modes(entries)
 
     for error in errors:
         print(error)

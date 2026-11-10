@@ -37,7 +37,8 @@ has() { grep -qE -- "$1" <<< "$BODY"; }
 lacks() { ! grep -qE -- "$1" <<< "$BODY"; }
 
 check "triggers on pull_request" has '^[[:space:]]+pull_request:'
-check "pull_request limited to supabase/migrations/**" has "'supabase/migrations/\*\*'"
+# A path filter would leave a required check pending on PRs that skip migrations.
+check "pull_request has no path filter" lacks '^[[:space:]]+paths(-ignore)?:'
 # pull_request_target would run with secrets and write access on fork code.
 check "no pull_request_target trigger" lacks 'pull_request_target'
 check "no push or workflow_dispatch trigger" lacks '^[[:space:]]+(push|workflow_dispatch):'

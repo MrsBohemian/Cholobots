@@ -105,6 +105,14 @@ else
     fail "dry-run and check-push-plan come before Push migrations"
 fi
 
+# Fresh runner: link must get the password explicitly and fail fast without it.
+check_link() { grep -qE 'supabase link .*--password "\$SUPABASE_DB_PASSWORD"' <<< "$BODY" && grep -qE '\[ -z "\$SUPABASE_DB_PASSWORD" \]' <<< "$BODY"; }
+if check_link; then
+    pass "supabase link gets the password explicitly and fails fast when it is missing"
+else
+    fail "supabase link gets the password explicitly and fails fast when it is missing"
+fi
+
 # Credentials only via the secrets context; never a literal.
 BAD_SECRET=0
 while IFS= read -r l; do
