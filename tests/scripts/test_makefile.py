@@ -84,7 +84,9 @@ def test_supabase_targets_use_the_per_checkout_script(target, command):
 def test_makefile_exports_the_pinned_cli_for_the_script():
     text = MAKEFILE.read_text(encoding="utf-8")
     version = re.search(r"^SUPABASE_CLI_VERSION := (\S+)$", text, re.M).group(1)
-    assert version == "2.121.0"
+    # The script's own default (used outside make) must pin the same CLI as the Makefile.
+    script = (ROOT / "scripts" / "supabase_local.py").read_text(encoding="utf-8")
+    assert f'DEFAULT_CLI = "npx --yes supabase@{version}"' in script
     assert re.search(r"^SUPABASE_CLI \?= npx --yes supabase@\$\(SUPABASE_CLI_VERSION\)$", text, re.M)
     assert re.search(r"^export SUPABASE_CLI$", text, re.M)
 

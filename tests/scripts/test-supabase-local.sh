@@ -2,8 +2,10 @@
 # ABOUTME: Two-worktree isolation test for scripts/supabase-local.sh: two stacks run side by side,
 # ABOUTME: each sees only its own data, and stopping one leaves the other (and the main stack) alone.
 #
-# Needs Docker and npx (it starts real local Supabase stacks from HEAD; several minutes).
-# Skips with exit 0 when Docker, npx, supabase/config.toml or tests/integration is missing.
+# Needs Docker and npx (it starts real local Supabase stacks from HEAD; several minutes), so it is
+# opt-in: SUPABASE_LOCAL_LIVE=1 bash tests/scripts/test-supabase-local.sh. Without that, and when
+# Docker, npx, supabase/config.toml or tests/integration is missing, it skips with exit 0, which
+# keeps `make test` and CI's Script tests step free of real stacks.
 # Never touches the hosted project and never starts, stops or resets the main checkout's stack.
 set -uo pipefail
 
@@ -26,6 +28,14 @@ WT_A=""
 WT_B=""
 MARKER="Isolation Marker (Test)"
 
+if [ "${SUPABASE_LOCAL_LIVE:-}" != "1" ]; then
+    echo "SKIP: live two-stack test is opt-in (SUPABASE_LOCAL_LIVE=1)"
+    exit 0
+fi
+# Inherited values would redirect the script: CHOLOBOTS_DEVCONTAINER=1 maps both scratch worktrees
+# to the main "cholobots" stack (and the cleanup would stop it), CHOLOBOTS_CHECKOUT points every
+# call at one checkout, SUPABASE_LOCAL_EXCLUDE changes which services start.
+unset CHOLOBOTS_DEVCONTAINER CHOLOBOTS_CHECKOUT SUPABASE_LOCAL_EXCLUDE
 if ! docker info >/dev/null 2>&1; then
     echo "SKIP: docker unavailable"
     exit 0

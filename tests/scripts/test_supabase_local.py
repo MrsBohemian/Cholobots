@@ -190,17 +190,19 @@ def test_mirror_entries_skip_config_and_cli_state(tmp_path):
     assert sorted(supabase_local.mirror_entries(str(src))) == ["migrations", "seed.sql"]
 
 
-def test_default_excludes_worktree_vs_main_and_env_override(repo):
-    main = supabase_local.checkout_identity(str(repo), {})
-    wt = supabase_local.checkout_identity(str(add_worktree(repo, "w1")), {})
-    assert supabase_local.default_excludes(main, {}) == []
-    assert supabase_local.default_excludes(wt, {}) == [
-        "studio", "mailpit", "imgproxy", "logflare", "vector", "edge-runtime",
-    ]
-    assert supabase_local.default_excludes(wt, {"SUPABASE_LOCAL_EXCLUDE": ""}) == []
-    assert supabase_local.default_excludes(main, {"SUPABASE_LOCAL_EXCLUDE": "studio, vector"}) == [
-        "studio", "vector",
-    ]
+@pytest.mark.parametrize(
+    ("is_main", "environ", "expected"),
+    [
+        (True, {}, []),
+        (False, {}, ["studio", "mailpit", "imgproxy", "logflare", "vector", "edge-runtime"]),
+        (False, {"SUPABASE_LOCAL_EXCLUDE": ""}, []),
+        (True, {"SUPABASE_LOCAL_EXCLUDE": "studio, vector"}, ["studio", "vector"]),
+    ],
+    ids=["main", "worktree", "env-empty-excludes-nothing", "env-overrides-main"],
+)
+def test_default_excludes_worktree_vs_main_and_env_override(is_main, environ, expected):
+    ident = supabase_local.Identity("/co", "/co/.git", "co", "cholobots", is_main)
+    assert supabase_local.default_excludes(ident, environ) == expected
 
 
 STATUS = """\
@@ -229,16 +231,22 @@ def test_env_lines_map_to_bot_variable_names():
         supabase_local.env_lines({"API_URL": "x", "SERVICE_ROLE_KEY": "y"})
 
 
-def test_split_args_checkout_path_vs_cli_flags(tmp_path):
+def test_split_args_takes_an_existing_directory_as_the_checkout(tmp_path):
     d = str(tmp_path)
     assert supabase_local.split_args(["start", d], {}, "/cwd") == ("start", d, [])
-    assert supabase_local.split_args(["status", "-o", "env"], {}, "/cwd") == (
-        "status", "/cwd", ["-o", "env"],
-    )
-    assert supabase_local.split_args(["env"], {"CHOLOBOTS_CHECKOUT": "/co"}, "/cwd") == (
-        "env", "/co", [],
-    )
-    assert supabase_local.split_args(["db", "reset"], {}, "/cwd") == ("db", "/cwd", ["reset"])
+
+
+@pytest.mark.parametrize(
+    ("argv", "environ", "expected"),
+    [
+        (["status", "-o", "env"], {}, ("status", "/cwd", ["-o", "env"])),
+        (["env"], {"CHOLOBOTS_CHECKOUT": "/co"}, ("env", "/co", [])),
+        (["db", "reset"], {}, ("db", "/cwd", ["reset"])),
+    ],
+    ids=["flags-stay-args", "checkout-env", "non-directory-stays-arg"],
+)
+def test_split_args_falls_back_to_env_then_cwd(argv, environ, expected):
+    assert supabase_local.split_args(argv, environ, "/cwd") == expected
 
 
 def test_port_in_use_detects_a_bound_port():
@@ -303,7 +311,10 @@ def commit_supabase(repo):
 
 
 @pytest.fixture
-def stack_repo(repo):
+def stack_repo(repo, monkeypatch):
+    # main() probes the slot's ports before `start`; a developer's own stacks (the main one on
+    # 54321, a worktree on 54331...) must not decide these tests. Tests about the probe override it.
+    monkeypatch.setattr(supabase_local, "port_in_use", lambda port: False)
     commit_supabase(repo)
     return repo
 

@@ -38,7 +38,7 @@ Never run `python cholobots.py` or `make run` from an automated run.
 | A command handler or listener with no automated test possible yet | Compile; write manual verification steps on the Taiga item and in the PR |
 | `scripts/**` | `python -m pytest tests/scripts -q` plus the matching `bash tests/scripts/test-*.sh` |
 | `tests/**` | The tests you changed |
-| `scripts/supabase_local.py`, `scripts/supabase-local.sh` | `python -m pytest tests/scripts -q` plus `bash tests/scripts/test-supabase-local.sh` (two-worktree isolation test; it skips when Docker is unavailable, and its data-isolation and concurrent-suite steps need a host where the stack's API routes correctly) |
+| `scripts/supabase_local.py`, `scripts/supabase-local.sh` | `python -m pytest tests/scripts -q` plus `SUPABASE_LOCAL_LIVE=1 bash tests/scripts/test-supabase-local.sh` (two-worktree isolation test; opt-in, so `make test` and CI skip it; it also skips when Docker is unavailable, and its data-isolation and concurrent-suite steps need a host where the stack's API routes correctly) |
 | `.devcontainer/**`, `scripts/devcontainer/**` | `python -m pytest tests/scripts -q -k devcontainer` and `bash tests/scripts/test-devcontainer-lifecycle.sh`; a `devcontainer up` smoke when the Dockerfile or lifecycle scripts change |
 | `.claude/**`, `docs/**` | Nothing to run |
 | `requirements.txt`, `requirements-dev.txt`, `.python-version` | Fresh venv, compile, `ruff check .`, script tests, whole suite once it exists |
