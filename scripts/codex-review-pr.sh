@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-if [[ -n "${XT_DIR:-}" ]]; then exec 9>>"$XT_DIR/xt.$$.log"; BASH_XTRACEFD=9; PS4='+ $(date +%s.%N) [$$] ${LINENO}: '; set -x; fi # TMPDIAG
 # ABOUTME: Runs a Codex CLI code review against a GitHub PR and posts the
 # ABOUTME: findings as a review with inline comments, capped at N passes per PR.
 #
