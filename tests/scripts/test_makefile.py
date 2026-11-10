@@ -85,7 +85,7 @@ def test_makefile_exports_the_pinned_cli_for_the_script():
     text = MAKEFILE.read_text(encoding="utf-8")
     version = re.search(r"^SUPABASE_CLI_VERSION := (\S+)$", text, re.M).group(1)
     assert version == "2.121.0"
-    assert re.search(rf"^SUPABASE_CLI \?= npx --yes supabase@\$\(SUPABASE_CLI_VERSION\)$", text, re.M)
+    assert re.search(r"^SUPABASE_CLI \?= npx --yes supabase@\$\(SUPABASE_CLI_VERSION\)$", text, re.M)
     assert re.search(r"^export SUPABASE_CLI$", text, re.M)
 
 
