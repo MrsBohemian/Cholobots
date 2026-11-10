@@ -1,0 +1,32 @@
+# ABOUTME: Lints supabase/migrations/* on every PR that touches them, against the PR base, so merged migrations stay append-only.
+# ABOUTME: Holds no secrets and no environment; it only reads the repository and never talks to Supabase.
+#
+# Why this is a separate workflow: supabase-db-push.yml holds production
+# credentials and must never have a pull_request trigger. This one is safe to
+# run on pull_request (not pull_request_target) because it has no secrets,
+# no environment and read-only permissions. Fork PRs run with a read-only
+# token, which is all it needs.
+name: supabase-migrations-lint
+
+on:
+  pull_request:
+    paths: ['supabase/migrations/**']
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Fetch the PR base
+        run: git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+      - name: Lint migrations against the base
+        run: python3 scripts/supabase_migrations.py lint --base "origin/${BASE_REF}"
+        env:
+          BASE_REF: ${{ github.base_ref }}
