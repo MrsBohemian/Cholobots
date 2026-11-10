@@ -1182,6 +1182,7 @@ cleanup; MOCK_DIR=""; REPO_DIR=""
 info "Test: concurrent invocations race for one job, not two"
 setup_repo
 setup_mock_gh
+export XT_DIR=$(mktemp -d); # TMPDIAG
 echo 2 > "$MOCK_DIR/codex_sleep"
 (cd "$REPO_DIR" && PATH="$MOCK_DIR:$PATH" MOCK_DIR="$MOCK_DIR" CODEX_REVIEW_STATE_DIR="$MOCK_DIR/state" \
     CODEX_REVIEW_WAIT_SECONDS="$RACE_JOIN_WAIT" timeout "$INVOCATION_TIMEOUT" bash "$SCRIPT" 42 > "$MOCK_DIR/race_out1" 2>&1) &
@@ -1230,6 +1231,7 @@ else
     fail "Expected exactly 1 POST, got: $post_count"
 fi
 
+if [[ "$FAILURES" -gt 0 ]]; then for f in "$XT_DIR"/xt.*.log; do echo "=== TRACE $f"; cat "$f"; done; ps -eo pid,ppid,pgid,sid,lstart,args | head -80; fi; unset XT_DIR # TMPDIAG
 # A REVIEW_PENDING outcome above leaves the job dir/worktree for the worker
 # itself to clean up once it finishes, same as the "worker posts without a
 # re-invoke" test — poll rather than asserting these are gone immediately.
