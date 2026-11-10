@@ -14,6 +14,7 @@ mkdir -p "$TMP/bin" "$TMP/my-ws"
 cat >"$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 if [ "$1" = ps ]; then
+    printf '%s\n' "$@" >"${STUB_PS_ARGS:-/dev/null}"
     [ -n "${STUB_IDS:-}" ] && printf '%s\n' $STUB_IDS
     exit 0
 fi
@@ -68,6 +69,14 @@ RC=0
 STUB_IDS="abc123" "$SCRIPT" "$TMP/my-ws" >"$OUT" 2>&1 || RC=$?
 assert_true "no command exits 1" "[ $RC -eq 1 ]"
 assert_true "no command prints Usage" "grep -q 'Usage' '$OUT'"
+
+# 5. A symlinked workspace path is resolved to the physical path, as launch.sh labels it.
+ln -s "$TMP/my-ws" "$TMP/link-ws"
+PS_ARGS="$TMP/ps-args"
+STUB_PS_ARGS="$PS_ARGS" STUB_IDS="abc123" "$SCRIPT" "$TMP/link-ws" 'true' >/dev/null 2>&1
+REAL_WS="$(cd "$TMP/my-ws" && pwd -P)"
+assert_true "symlinked path filters on the physical path" "grep -Fxq 'label=devcontainer.local_folder=$REAL_WS' '$PS_ARGS'"
+assert_true "symlinked path still maps to /workspaces/my-ws" "grep -Fxq /workspaces/my-ws '$TMP/args'"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

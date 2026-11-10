@@ -11,7 +11,8 @@ if [ "$#" -eq 0 ]; then
     exit 1
 fi
 
-ABS_PATH=$(cd "$WORKTREE_PATH" && pwd)
+# Physical path (pwd -P), the same resolution as launch.sh's realpath, so the label matches.
+ABS_PATH=$(cd "$WORKTREE_PATH" && pwd -P)
 mapfile -t CONTAINER_IDS < <(docker ps -q --filter "label=devcontainer.local_folder=$ABS_PATH")
 if [ "${#CONTAINER_IDS[@]}" -eq 0 ]; then
     echo "Error: no running container found for $ABS_PATH" >&2

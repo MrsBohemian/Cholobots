@@ -21,6 +21,7 @@ SKILL
 cat > "$BIN/docker" <<'STUB'
 #!/usr/bin/env bash
 if [ "$1" = ps ]; then
+    printf '%s\n' "$@" > "${FAKE_DOCKER_PS_ARGS:-/dev/null}"
     echo fake-container
     exit 0
 fi
@@ -94,3 +95,13 @@ fi
 assert_contains "$FIXTURE/missing" '.claude/skills/missing/SKILL.md'
 
 echo 'PASS: Claude default, Codex dispatch, venv prefix'
+
+# A symlinked clone path is resolved to the physical path used for the container label.
+ln -s "$CLONE" "$FIXTURE/consumer-link"
+export FAKE_DOCKER_PS_ARGS="$FIXTURE/ps-args"
+"$SCRIPT" "$FIXTURE/consumer-link" sample 'bug 43' --log "$FIXTURE/link.log"
+if ! grep -Fxq -- "label=devcontainer.local_folder=$(cd "$CLONE" && pwd -P)" "$FAKE_DOCKER_PS_ARGS"; then
+    echo 'FAIL: symlinked clone path was not resolved to the physical path' >&2
+    exit 1
+fi
+echo 'PASS: symlinked clone path resolved'

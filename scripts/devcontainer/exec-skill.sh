@@ -57,7 +57,8 @@ if [ ! -d "$CLONE_PATH" ]; then
     echo "Error: clone path does not exist: $CLONE_PATH" >&2
     exit 1
 fi
-ABS_PATH=$(cd "$CLONE_PATH" && pwd)
+# Physical path (pwd -P), the same resolution as launch.sh's realpath, so the label matches.
+ABS_PATH=$(cd "$CLONE_PATH" && pwd -P)
 
 # --- Find container ID via Docker label ---
 mapfile -t CONTAINER_IDS < <(docker ps -q --filter "label=devcontainer.local_folder=$ABS_PATH")
