@@ -87,7 +87,8 @@ The client is synchronous and every call is a builder chain ending in `.execute(
   being swallowed. Each module also has one non-xfail contract test so a broken harness cannot
   hide behind xfails.
 - Helpers live in `tests/integration/fakes.py` (`FakeUser`, `FakeChannel`, `FakeGuild`,
-  `FakeAttachment`, `FakeMessage`, `FakeContext`, `make_bot`, `script_replies`, `get_listener`).
+  `FakeAttachment`, `FakeMessage`, `FakeContext`, `make_bot`, `script_replies`, `TIMEOUT`,
+  `UnscriptedPrompt`, `get_listener`).
 
 ## Driving a discord.py command without a gateway
 
@@ -101,7 +102,11 @@ The client is synchronous and every call is a builder chain ending in `.execute(
 - Prompts that call `bot.wait_for("message", check=...)`: `script_replies(bot, ctx, ["done", "7"])`
   replaces `bot.wait_for` with an async function that pops scripted replies (fake messages with `content`, `author`, `channel`,
   `attachments=[]`) and applies the `check` to each, so a reply from the wrong user or channel is
-  rejected as it would be live.
+  rejected as it would be live. It returns the queue: assert it is empty in contract tests to prove
+  the flow used every reply. A prompt with no reply left raises `UnscriptedPrompt`, never
+  `TimeoutError` (Vueltabot's `ask_user` catches that and ends the flow quietly) and never
+  `AssertionError` (a strict xfail would swallow it). Script `fakes.TIMEOUT` to test a timeout
+  path; it is refused for a `wait_for` with no timeout, because the live bot would wait forever.
 - Listeners (`on_message`) are tested by calling the registered listener coroutine (found with
   `get_listener(bot, "<function name>")`) with a fake message. Overlap between listeners stays a manual-test concern until story #23.
 

@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from .fakes import FakeMessage, FakeUser
+from .fakes import TIMEOUT, FakeMessage, FakeUser, UnscriptedPrompt, make_bot
 from .local_guard import is_local_url
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -28,15 +28,49 @@ async def test_reset_restores_seed_rows(db, reset_database):
     assert "Harness Smoke Contact" not in [r["name"] for r in rows]
 
 
-async def test_scripted_wait_for_rejects_reply_from_other_user(crudo_bot, make_ctx, script_replies):
-    ctx = make_ctx(author_id=900000000000000001, channel_id=910000000000000001)
-    other = FakeMessage("intruder", FakeUser(900000000000000002), ctx.channel, ctx.guild)
-    script_replies(crudo_bot, ctx, [other, "mine"])
-
+def _own_messages(ctx):
     def check(m):
         return m.author.id == ctx.author.id
 
-    got = await crudo_bot.wait_for("message", check=check, timeout=5)
+    return check
+
+
+async def test_scripted_wait_for_rejects_reply_from_other_user(make_ctx, script_replies):
+    bot = make_bot()
+    ctx = make_ctx(author_id=900000000000000001, channel_id=910000000000000001)
+    other = FakeMessage("intruder", FakeUser(900000000000000002), ctx.channel, ctx.guild)
+    queue = script_replies(bot, ctx, [other, "mine"])
+
+    got = await bot.wait_for("message", check=_own_messages(ctx), timeout=5)
+
     assert got.content == "mine"
+    assert queue == []
+
+
+@pytest.mark.parametrize("timeout", [None, 120])
+async def test_scripted_wait_for_fails_loudly_when_replies_run_out(make_ctx, script_replies, timeout):
+    # Not TimeoutError: Vueltabot's ask_user catches that and returns quietly, hiding a missing reply.
+    bot = make_bot()
+    ctx = make_ctx(author_id=900000000000000001, channel_id=910000000000000001)
+    script_replies(bot, ctx, [])
+
+    with pytest.raises(UnscriptedPrompt, match="ran out of scripted replies"):
+        await bot.wait_for("message", check=_own_messages(ctx), timeout=timeout)
+
+
+async def test_scripted_timeout_raises_timeout_error_when_caller_set_a_timeout(make_ctx, script_replies):
+    bot = make_bot()
+    ctx = make_ctx(author_id=900000000000000001, channel_id=910000000000000001)
+    script_replies(bot, ctx, [TIMEOUT])
+
     with pytest.raises(asyncio.TimeoutError):
-        await crudo_bot.wait_for("message", check=check, timeout=5)
+        await bot.wait_for("message", check=_own_messages(ctx), timeout=120)
+
+
+async def test_scripted_timeout_is_refused_when_caller_waits_forever(make_ctx, script_replies):
+    bot = make_bot()
+    ctx = make_ctx(author_id=900000000000000001, channel_id=910000000000000001)
+    script_replies(bot, ctx, [TIMEOUT])
+
+    with pytest.raises(UnscriptedPrompt, match="wait forever"):
+        await bot.wait_for("message", check=_own_messages(ctx))

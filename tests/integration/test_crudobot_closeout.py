@@ -15,9 +15,9 @@ def _project_row(db, project):
 async def _run_crudoclose(crudo_bot, make_ctx, script_replies, name):
     ctx = make_ctx(author_id=AUTHOR_ID, channel_id=CHANNEL_ID)
     # "done" leaves the existing task times alone, "7" exits the closeout menu.
-    script_replies(crudo_bot, ctx, ["done", "7"])
+    queue = script_replies(crudo_bot, ctx, ["done", "7"])
     await crudo_bot.get_command("crudoclose").callback(ctx, project_query=name)
-    return ctx
+    return queue
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError,
@@ -38,8 +38,9 @@ async def test_crudoclose_marks_finished_project_ready(crudo_bot, make_ctx, scri
         name="Test Deck Rail 51", status="active", tasks_completed=2, actual_minutes=30,
     )
 
-    await _run_crudoclose(crudo_bot, make_ctx, script_replies, "Test Deck Rail 51")
+    unused = await _run_crudoclose(crudo_bot, make_ctx, script_replies, "Test Deck Rail 51")
 
+    assert unused == []
     row = _project_row(db, project)
     assert row["status"] == "closeout"
     assert row["closeout_status"] == "ready"

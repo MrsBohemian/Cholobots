@@ -102,7 +102,10 @@ def db(settings, integration_env):
     from supabase import create_client
 
     assert is_local_url(settings.url)
-    return create_client(settings.url, settings.service_key)
+    client = create_client(settings.url, settings.service_key)
+    yield client
+    # Close the pooled HTTP connection so the run ends without an unclosed-socket warning.
+    client.postgrest.session.close()
 
 
 @pytest.fixture(scope="session")
@@ -230,9 +233,9 @@ class Factories:
             })
         return project
 
-    def daily_tasks(self, calendar_key, date, tasks):
+    def daily_tasks(self, calendar_key, date, tasks, completed=False):
         rows = [{"user_id": calendar_key, "calendar_key": calendar_key, "date": date,
-                 "task": t, "completed": False} for t in tasks]
+                 "task": t, "completed": completed} for t in tasks]
         return self.db.table("daily_tasks").insert(rows).execute().data
 
     def vuelta_item(self, title, status="available", seller_discord_id="100000000000000009",

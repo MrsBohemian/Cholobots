@@ -1,5 +1,5 @@
 # ABOUTME: Minimal Discord stand-ins (user, channel, message, context) for driving bot callbacks without a token.
-# ABOUTME: Also scripts bot.wait_for replies and finds on_message listeners registered with @bot.listen.
+# ABOUTME: Also scripts bot.wait_for replies (failing loudly when they run out) and finds @bot.listen listeners.
 import asyncio
 
 import discord
@@ -83,23 +83,48 @@ def make_bot():
     return commands.Bot(command_prefix="!", intents=discord.Intents.default())
 
 
+TIMEOUT = object()
+"""Script this in place of a reply to make that wait_for time out, as a real timeout would."""
+
+
+class UnscriptedPrompt(RuntimeError):
+    """The bot prompted for a reply the test did not script.
+
+    Deliberately not TimeoutError (bot code catches that and carries on quietly) and not
+    AssertionError (a strict xfail with raises=AssertionError would swallow it).
+    """
+
+
 def script_replies(bot, ctx, replies):
-    """Replace bot.wait_for with a queue of scripted messages.
+    """Replace bot.wait_for with a queue of scripted messages and return the queue.
 
     A str reply is sent by ctx's author in ctx's channel. Messages that fail the caller's
-    check are skipped; an empty queue raises asyncio.TimeoutError like a real timeout.
+    check are skipped. TIMEOUT raises asyncio.TimeoutError, but only when the caller passed
+    a timeout: without one the real bot would wait forever. An empty queue raises
+    UnscriptedPrompt. Assert the returned queue is empty to prove the flow used every reply.
     """
     queue = [
-        r if isinstance(r, FakeMessage) else FakeMessage(r, ctx.author, ctx.channel, ctx.guild)
+        r if isinstance(r, FakeMessage) or r is TIMEOUT
+        else FakeMessage(r, ctx.author, ctx.channel, ctx.guild)
         for r in replies
     ]
 
     async def wait_for(event, *, check=None, timeout=None):
         while queue:
             message = queue.pop(0)
+            if message is TIMEOUT:
+                if timeout is None:
+                    raise UnscriptedPrompt(
+                        f"TIMEOUT scripted for wait_for({event!r}) with no timeout; "
+                        "the real bot would wait forever"
+                    )
+                raise asyncio.TimeoutError()
             if check is None or check(message):
                 return message
-        raise asyncio.TimeoutError()
+        raise UnscriptedPrompt(
+            f"bot.wait_for({event!r}) ran out of scripted replies; "
+            f"last bot message: {ctx.sent[-1] if ctx.sent else None!r}"
+        )
 
     bot.wait_for = wait_for
     return queue

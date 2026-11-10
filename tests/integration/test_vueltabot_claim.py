@@ -74,9 +74,11 @@ async def test_claim_marks_available_item_claimed(vuelta_bot, make_ctx, factorie
     item = factories.vuelta_item(title="Test Ladder 51", status="available",
                                  seller_discord_id=SELLER_ID, asking_price=None)
     ctx = make_ctx(author_id=int(CLAIMANT_ID), channel_id=910000000000000011)
-    script_replies(bot, ctx, ["no"])
+    unused = script_replies(bot, ctx, ["no"])
 
     await bot.get_command("claim").callback(cog, ctx, item["id"])
+
+    assert unused == []
 
     row = db.table("vuelta_items").select("status").eq("id", item["id"]).execute().data[0]
     assert row["status"] == "claimed"

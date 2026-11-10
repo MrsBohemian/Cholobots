@@ -2,7 +2,7 @@
 # ABOUTME: Drives !crudoreceipt through its callback, then feeds replies to the confirmation listener.
 import pytest
 
-from .fakes import FakeAttachment, FakeMessage, get_listener as find_listener
+from .fakes import FakeAttachment, FakeChannel, FakeMessage, get_listener as find_listener
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -54,7 +54,7 @@ async def test_receipt_yes_from_other_channel_does_not_save(
 ):
     ctx = await _parse_receipt(crudo_bot, bot_modules, make_ctx, factories, monkeypatch)
     listener = find_listener(crudo_bot, "handle_crudobot_receipt_confirmation")
-    other_channel = type(ctx.channel)(CHANNEL_B)
+    other_channel = FakeChannel(CHANNEL_B)
 
     await listener(_reply(ctx, "yes", other_channel))
 
