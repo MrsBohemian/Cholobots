@@ -2,6 +2,8 @@
 
 Static review of `Cholobots` (main @ f4d4859) and `Cholobots-Mobile` (main @ 0b4002d) against `Cholobots_48_Hour_Development_Plan.md`, plus the state of Taiga project `cholo-bots` (#39). Nothing was run against Discord, Supabase or OpenAI; every finding cites code. Line numbers refer to the current `main`.
 
+> Note 2026-11-07 (story #64): `Cholobots-Mobile` now lives in `mobile/` of this repo with its history; unprefixed `*.html:N` citations below mean `mobile/*.html`, and `0b4002d` is reachable here.
+
 ## Verdict
 
 The code does what the `!queso` text promises only for the happy path of a single business with four known people. Three structural facts drive nearly every defect below:

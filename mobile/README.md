@@ -1,6 +1,6 @@
-# Cholobots-Mobile
+# Cholobots dashboards (`mobile/`)
 
-Static, phone-first dashboards for the [Cholobots](https://github.com/MrsBohemian/Cholobots) Discord bot. Each page is a single self-contained HTML file that reads the same Supabase project the bot writes to.
+Static, phone-first dashboards for the [Cholobots](https://github.com/MrsBohemian/Cholobots) Discord bot. Each page is a single self-contained HTML file that reads the same Supabase project the bot writes to. Published at https://mrsbohemian.github.io/Cholobots/.
 
 | Page | Title | Reads |
 |---|---|---|
@@ -16,10 +16,10 @@ There is no build step, framework or package manager. The only dependency is `@s
 
 ## Running locally
 
-Any static file server works. From the checkout:
+Any static file server works. From the repo root:
 
 ```bash
-python -m http.server 8000
+python -m http.server 8000 --directory mobile
 # open http://localhost:8000/
 ```
 
@@ -29,19 +29,7 @@ Every page declares its own `SUPABASE_URL` and `SUPABASE_ANON_KEY` constants nea
 
 ## Development environment
 
-**Secrets stay out of the repo.** The publishable key in these pages is public by design, but nothing more sensitive belongs here. If a page ever needs a service-role key or any other secret, it has to move behind a server; do not commit it. For local tooling, Growth Garage collaborators use [direnv](https://direnv.net/) with a project `.envrc` that exports variables from an encrypted SOPS/age vault (`scripts/envtool export project/<name>`). `.env`, `.envrc` and `.envrc.local` are git-ignored.
-
-**Work tracking.** Issues, stories and epics for both repos live in the Taiga project `cholo-bots` on <https://backlog.growthgarage.org>. The mobile dashboards are covered by the `deep-dive-mobile` wiki page there, and by epic #2 (the 2026-11-06 codebase assessment), epic #46 (developer experience) and epic #3 (multi-business isolation).
-
-**Claude Code.** To let Claude read and update Taiga from this checkout, register the Taiga MCP server at project scope so it targets the Growth Garage instance rather than any personal default:
-
-```bash
-claude mcp add -s local taiga-py -- <path-to-taiga-mcp-launcher> workflow project/taiga-growthgarage-slave1-codex
-```
-
-The launcher reads `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` from the encrypted store; nothing is stored in the repo. Verify with a read-only `list_projects` call before filing anything.
-
-**Contributing.** Direct pushes to `MrsBohemian/Cholobots-Mobile` are restricted. Fork, branch, and open a pull request; keep each change in its own commit. The access model and licensing are being settled under Taiga story #58.
+See the repo's [README](../README.md).
 
 ## Layout
 
