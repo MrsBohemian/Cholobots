@@ -1,5 +1,8 @@
 # Dev-only: pytest (tests/scripts), ruff and pre-commit. The scripts are stdlib-only;
-# the bot's runtime deps are in requirements.txt.
+# the bot's runtime deps are in requirements.txt. pytest-asyncio and psycopg are for
+# tests/integration.
 pytest==9.2.0
 ruff==0.17.4
 pre-commit==4.7.0
+pytest-asyncio==1.4.1
+psycopg[binary]==3.3.6
