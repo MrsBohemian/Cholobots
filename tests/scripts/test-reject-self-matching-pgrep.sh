@@ -79,6 +79,15 @@ info "Test 4c: an exempt pgrep elsewhere in the command does not shield a self-m
 expect_blocked 'pgrep -f foo | grep -v "^$$\$"; pkill -f x' 'exempt pgrep then pkill -f'
 expect_blocked 'pgrep -f foo | grep -v "^$$\$" && pkill -9 -f y' 'exempt pgrep && pkill -9 -f'
 
+info "Test 4d: an exempt pgrep piped on into a later pkill/pgrep -f is blocked"
+expect_blocked 'pgrep -f foo | grep -v "^$$\$" | pkill -f x' 'exempt pgrep | pkill -f'
+expect_blocked 'pgrep -f foo | grep -v "^$$\$" | xargs pkill -9 -f x' 'exempt pgrep | xargs pkill -9 -f'
+expect_blocked 'pgrep -f foo | grep -v "^$$\$" | pgrep -f bar' 'exempt pgrep | second pgrep -f'
+expect_blocked 'pgrep -f foo | grep -v "^$$\$" | head -1 | pkill -f x' 'exempt pgrep | head | pkill -f'
+expect_blocked 'pgrep -f foo | grep -v foo | pkill -f x' 'non-exempt filter | pkill -f'
+expect_blocked 'pgrep -f foo $(pkill -f x) | grep -v "^$$\$"' 'pkill -f nested inside the exempt stage'
+expect_allowed 'pgrep -f foo | grep -v "^$$\$" | head -1' 'exempt pgrep followed by a harmless filter'
+
 info "Test 5: pgrep -x exact-name match and ordinary commands are allowed"
 expect_allowed 'pgrep -x python' 'pgrep -x python'
 expect_allowed 'ls' 'ls'

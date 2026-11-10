@@ -219,6 +219,47 @@ launch "$TMP/wt1" feature/one --worktree main || true
 assert_true "8: published image is the override image" \
     "[ \"\$(jq -r .image \"$OVERRIDE\")\" = ghcr.io/mrsbohemian/cholobots/devcontainer:latest ]"
 
+# 9. The host's shared git config is never written, in any mode. The identity
+# lives only in a global config file here, so a write into the sandbox's
+# .git/config (shared with every worktree) would be an observable mutation.
+HOSTCFG="$TMP/host-identity.gitconfig"
+printf '[user]\n\tname = Host Person\n\temail = host@example.com\n' >"$HOSTCFG"
+sandbox_cfg_sum() { sha256sum "$SANDBOX/.git/config" | cut -d' ' -f1; }
+launch_with_identity() { GIT_CONFIG_GLOBAL="$HOSTCFG" launch "$@" || true; }
+
+reset_logs
+launch_with_identity "$TMP/wt9" feature/nine --worktree main
+assert_true "9: new worktree launch leaves identity out of the shared config" \
+    "! git -C \"$SANDBOX\" config --local --get user.name && ! git -C \"$SANDBOX\" config --local --get user.email"
+assert_true "9: new worktree launch is a worktree (.git is a file)" "[ -f \"$TMP/wt9/.git\" ]"
+assert_true "9: worktree identity reaches the container's global config instead" \
+    "grep -qF 'git config --global user.name Host Person' \"\$STUB_LOG_DIR/docker.log\""
+
+AFTER_FIRST9="$(sandbox_cfg_sum)"
+reset_logs
+launch_with_identity "$TMP/wt9" feature/nine --worktree main
+assert_true "9: relaunch with --worktree leaves the shared config byte-identical" \
+    "[ \"\$(sandbox_cfg_sum)\" = \"$AFTER_FIRST9\" ]"
+
+# The mode-mismatch case: an existing worktree launched WITHOUT --worktree must
+# be detected from its .git file, not trusted to the flag.
+reset_logs
+launch_with_identity "$TMP/wt9"
+assert_true "9: relaunch of an existing worktree without --worktree leaves the shared config byte-identical" \
+    "[ \"\$(sandbox_cfg_sum)\" = \"$AFTER_FIRST9\" ]"
+assert_true "9: ... and no identity landed in the shared config" \
+    "! git -C \"$SANDBOX\" config --local --get user.name && ! git -C \"$SANDBOX\" config --local --get user.email"
+assert_true "9: ... and the identity went to the container's global config" \
+    "grep -qF 'git config --global user.name Host Person' \"\$STUB_LOG_DIR/docker.log\""
+
+# Clone mode writes only to the clone's own config.
+reset_logs
+launch_with_identity "$TMP/clone9" main
+assert_true "9: clone launch leaves the source repo's config free of identity" \
+    "! git -C \"$SANDBOX\" config --local --get user.name"
+assert_true "9: clone launch writes the identity into the clone's own config" \
+    "[ \"\$(git -C \"$TMP/clone9\" config --local --get user.name)\" = 'Host Person' ]"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

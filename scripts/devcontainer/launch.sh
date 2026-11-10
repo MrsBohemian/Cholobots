@@ -174,6 +174,13 @@ if [ -d "$WS/.git" ] && [ ! -f "$WS/.git/cholobots-managed-clone" ]; then
     exit 1
 fi
 
+# The checkout type is a property of the path, not of the flags: an existing
+# worktree relaunched without --worktree must still be treated as one, because
+# its .git/config is the main checkout's. Trust the .git file, never the flag.
+if [ -f "$WS/.git" ]; then
+    WORKTREE_MODE=1
+fi
+
 # Propagate host git identity into the clone for headless (non-VS Code) usage.
 # VS Code's devcontainer extension forwards git config automatically, but
 # headless `devcontainer up` does not. In clone mode this writes straight
