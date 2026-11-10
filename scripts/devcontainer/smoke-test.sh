@@ -78,19 +78,31 @@ check_tool "psql" "psql --version"
 check_tool "jq" "jq --version"
 check_tool "git" "git --version"
 
-# Expected versions come from the Dockerfile.
-EXPECTED_SUPABASE_VERSION=$(sed -n 's/^ARG SUPABASE_CLI_VERSION=//p' "$REPO_ROOT/.devcontainer/Dockerfile")
-EXPECTED_NODE_MAJOR=$(sed -n 's#.*deb\.nodesource\.com/setup_\([0-9]*\)\.x.*#\1#p' "$REPO_ROOT/.devcontainer/Dockerfile")
+# Version assertions. The expected values come from pins.sh (which parses the Dockerfiles and the
+# pytaiga-mcp installer), so the test cannot drift from the pins.
+PINS_OUT=""
+PINS_OK=1
+PINS_OUT=$("$SCRIPT_DIR/pins.sh" "$REPO_ROOT" 2>&1) || PINS_OK=0
 EXPECTED_PYTHON="/workspaces/$(basename "$WORKTREE_PATH")/.venv/bin/python"
 
 echo ""
-echo "Checking versions and paths match the Dockerfile and venv:"
-ACTUAL_SUPABASE_VERSION=$("$SCRIPT_DIR/exec.sh" "$WORKTREE_PATH" "supabase --version" 2>/dev/null | tr -d '[:space:]' || true)
-ACTUAL_NODE_MAJOR=$("$SCRIPT_DIR/exec.sh" "$WORKTREE_PATH" "node --version" 2>/dev/null | sed 's/^v\([0-9]*\).*/\1/' || true)
-ACTUAL_PYTHON=$("$SCRIPT_DIR/exec.sh" "$WORKTREE_PATH" "command -v python" 2>/dev/null || true)
-check_version "supabase" "$EXPECTED_SUPABASE_VERSION" "$ACTUAL_SUPABASE_VERSION"
-check_version "node major" "$EXPECTED_NODE_MAJOR" "$ACTUAL_NODE_MAJOR"
-check_version "python (workspace venv)" "$EXPECTED_PYTHON" "$ACTUAL_PYTHON"
+echo "Checking versions and paths match the pins and venv:"
+if [ "$PINS_OK" -eq 1 ]; then
+    eval "$PINS_OUT"
+    in_container() { "$SCRIPT_DIR/exec.sh" "$WORKTREE_PATH" "$1" 2>/dev/null || true; }
+    check_version "supabase" "$SUPABASE_CLI_VERSION" "$(in_container 'supabase --version' | tr -d '[:space:]')"
+    check_version "node major" "$NODE_MAJOR" "$(in_container 'node --version' | sed 's/^v\([0-9]*\).*/\1/')"
+    check_version "claude" "$CLAUDE_CODE_VERSION" "$(in_container 'claude --version' | awk '{print $1}')"
+    check_version "codex" "$CODEX_VERSION" "$(in_container 'codex --version' | awk '{print $2}')"
+    check_version "chrome-devtools-mcp" "$CHROME_DEVTOOLS_MCP_VERSION" \
+        "$(in_container 'npm ls -g chrome-devtools-mcp --json | jq -r ".dependencies[\"chrome-devtools-mcp\"].version"')"
+    check_version "uv" "$UV_VERSION" "$(in_container 'uv --version' | awk '{print $2}')"
+    check_version "pytaiga-mcp marker" "$PYTAIGA_MCP_MARKER" "$(in_container 'cat "${PYTAIGA_MCP_HOME:-/opt/pytaiga-mcp}/.installed"')"
+else
+    echo "  FAIL: pins.sh could not read the pins: $PINS_OUT"
+    ((FAILURES++)) || true
+fi
+check_version "python (workspace venv)" "$EXPECTED_PYTHON" "$("$SCRIPT_DIR/exec.sh" "$WORKTREE_PATH" "command -v python" 2>/dev/null || true)"
 
 echo ""
 echo "Checking the in-container Supabase stack:"
