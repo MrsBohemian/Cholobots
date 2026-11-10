@@ -7,7 +7,7 @@
 #
 # Security: no pull_request_target and no secrets beyond GITHUB_TOKEN. The PR job
 # holds contents: read only and never logs in to GHCR. The publish job is the only
-# one with packages: write and is skipped for pull requests and for any ref but main.
+# one with packages: write and runs only for a push to main.
 name: build-devcontainer
 
 on:
@@ -27,7 +27,8 @@ on:
       - '.dockerignore'
       - '.github/workflows/build-devcontainer.yml'
   schedule:
-    # Weekly rebuild to pick up base image updates (Sundays at 04:00 UTC)
+    # Weekly build-only run (Sundays at 04:00 UTC) that catches base image or pin
+    # breakage early; it never publishes.
     - cron: '0 4 * * 0'
   workflow_dispatch:
 
@@ -123,8 +124,9 @@ jobs:
   publish:
     name: publish
     needs: build-devcontainer
-    # Never from a pull request, and never from a branch other than main.
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # Only a push to main publishes. Pull requests, the weekly schedule and manual
+    # dispatch run the build job alone.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
