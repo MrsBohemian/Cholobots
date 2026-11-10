@@ -1,0 +1,12 @@
+# Build context is the repo root; keep secrets and local junk out of it.
+.git
+.env
+.env.*
+!.env.example
+.envrc
+.venv
+.claude/worktrees
+**/__pycache__
+.pytest_cache
+*.db
+supabase/.temp
