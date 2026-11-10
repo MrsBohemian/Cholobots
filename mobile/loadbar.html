@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Task Progress</title>
+
+<style>
+:root{
+  --bg:#070504;--wood:#7a421f;--wood-dark:#3b1c0d;--steel:#9d9688;
+  --orange:#ff8a00;--yellow:#ffd36a;--cyan:#68e7ff;--pink:#ff66c4;
+  --text:#f4eadc;--muted:#b9a98d
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Arial,Helvetica,sans-serif}
+.app{
+  min-height:100vh;
+  background:
+    linear-gradient(90deg,rgba(0,0,0,.35),transparent 18%,transparent 82%,rgba(0,0,0,.35)),
+    repeating-linear-gradient(0deg,var(--wood) 0,var(--wood) 18px,var(--wood-dark) 19px,var(--wood-dark) 22px);
+  padding:14px 10px 28px
+}
+.header{
+  text-align:center;background:#1a1008;border:4px solid #2b1609;
+  box-shadow:0 0 0 3px #000;padding:14px 8px;margin-bottom:14px
+}
+.header h1{margin:0;font-size:26px;letter-spacing:.08em;color:var(--yellow);text-shadow:3px 3px #000}
+.header p{margin:5px 0 0;font-size:12px;color:var(--muted)}
+.status{
+  display:none;margin:0 0 14px;padding:10px 12px;background:#1a0909;
+  border:3px solid #5b1f1f;color:#ffd2d2;box-shadow:3px 3px #000;
+  font-size:13px;white-space:pre-wrap
+}
+.load-section{
+  background:rgba(8,8,8,.88);border:4px solid #241409;
+  box-shadow:0 0 0 3px #000;padding:12px;margin-bottom:18px
+}
+.load-card{
+  position:relative;overflow:hidden;background:linear-gradient(180deg,#171a20,#0b0d11);
+  border:3px solid #343942;box-shadow:inset 0 0 0 2px #000,0 0 18px rgba(0,0,0,.65);
+  padding:13px;margin-bottom:12px
+}
+.load-card:last-child{margin-bottom:0}
+.load-card.today{border-color:#315f6a}
+.load-card.hot{border-color:#6b3b5c}
+.stovetop-list{display:grid;gap:9px;margin-top:10px}
+.stovetop-customer{
+  background:#0d0b0a;border:2px solid #493126;box-shadow:inset 0 0 0 1px #000;
+  padding:10px
+}
+.stovetop-row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.stovetop-name{font-weight:900;font-size:15px;color:#fff;line-height:1.2}
+.stovetop-temp{font-weight:900;color:var(--yellow);white-space:nowrap}
+.stovetop-stage{
+  margin-top:5px;font-weight:900;color:var(--pink);text-transform:uppercase;
+  letter-spacing:.05em;font-size:13px
+}
+.stovetop-next{margin-top:4px;color:var(--muted);font-size:12px}
+.stovetop-empty{color:var(--muted);padding:10px 2px 2px;text-align:center}
+.load-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:7px}
+.load-title{font-weight:900;font-size:18px;letter-spacing:.08em;color:#fff;text-shadow:2px 2px #000}
+.load-count{font-size:24px;font-weight:900;color:var(--yellow);white-space:nowrap;text-shadow:2px 2px #000}
+.load-sub{color:var(--muted);font-size:13px;margin-bottom:9px}
+.dashboard-bar{
+  height:24px;background:#020304;border:3px solid #414650;
+  box-shadow:inset 0 0 0 2px #000,inset 0 0 10px rgba(0,0,0,.9);
+  overflow:hidden;position:relative
+}
+.dashboard-bar::after{
+  content:"";position:absolute;inset:0;
+  background:repeating-linear-gradient(90deg,transparent 0 18px,rgba(0,0,0,.48) 18px 21px);
+  pointer-events:none
+}
+.dashboard-fill{height:100%;width:0;transition:width .4s ease}
+.today .dashboard-fill{background:linear-gradient(90deg,#16a8c7,#73efff,#a8fff1);box-shadow:0 0 18px rgba(104,231,255,.85)}
+.hot .dashboard-fill{
+  background:repeating-linear-gradient(135deg,#e7439f 0 10px,#ff7fd0 10px 20px);
+  box-shadow:0 0 18px rgba(255,102,196,.85)
+}
+.percent-line{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:6px}
+.stove-wrap{
+  margin-top:20px;background:linear-gradient(135deg,var(--wood),var(--wood-dark));
+  border:5px solid #2b1609;box-shadow:0 0 0 4px #000;padding:12px
+}
+.cabinet-top{
+  height:52px;background:repeating-linear-gradient(0deg,#8c4b22 0 10px,#653116 11px 14px);
+  border:4px solid #33190b;display:flex;align-items:center;justify-content:center;margin-bottom:12px
+}
+.drawer-pull{width:90px;height:12px;background:#d6b15b;border:3px solid #5c3d13;box-shadow:3px 3px #000}
+.range{background:var(--steel);border:5px solid #4c4943;box-shadow:inset 0 0 0 3px #d6d0c4;padding:10px}
+.stove-back{background:#050505;border:4px solid #333;padding:12px;text-align:center;margin-bottom:10px}
+.time{color:#72dfff;font-family:monospace;font-size:22px;font-weight:900}
+.label{color:var(--muted);font-size:11px;letter-spacing:.18em}
+.knobs{display:flex;justify-content:space-around;background:#c6beb0;border:4px solid #6f6b64;padding:8px;margin-bottom:10px}
+.knob{width:28px;height:28px;background:#e8dec7;border:5px solid #4a463d;border-radius:50%;box-shadow:2px 2px #000}
+.cooktop{background:#050505;border:5px solid #222;padding:14px}
+.cooktop h2{margin:0 0 12px;text-align:center;color:var(--orange);letter-spacing:.14em;text-shadow:2px 2px #000}
+.job{margin:14px 0;padding:10px;background:linear-gradient(180deg,#15100d,#090706);border:2px solid #3e2b1e;box-shadow:inset 0 0 0 2px #000}
+.job-row{display:flex;justify-content:space-between;gap:8px;font-weight:900;margin-bottom:5px}
+.job-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.percent{color:var(--yellow);white-space:nowrap}
+.task-count{color:var(--muted);font-size:12px;margin-bottom:8px}
+.heat-track{
+  height:24px;background:#120504;border:4px solid #4a1d12;
+  box-shadow:inset 0 0 0 2px #000,inset 0 0 14px rgba(0,0,0,.9);
+  overflow:hidden;position:relative
+}
+.heat-track::after{
+  content:"";position:absolute;inset:0;
+  background:repeating-linear-gradient(90deg,transparent 0 13px,rgba(0,0,0,.72) 13px 17px);
+  pointer-events:none
+}
+.heat-fill{
+  height:100%;width:0;
+  background:linear-gradient(180deg,#ffe0a3 0,#ff9d2f 28%,#ff4d00 58%,#a80f00 100%);
+  box-shadow:0 0 8px #ff6a00,0 0 18px rgba(255,74,0,.9),inset 0 2px 3px rgba(255,255,255,.65);
+  transition:width .45s ease
+}
+.empty-oven{color:var(--muted);text-align:center;padding:20px 10px;border:2px dashed #4b3424}
+.oven-door{height:120px;background:#050505;border:6px solid #67635b;margin-top:12px;position:relative}
+.handle{position:absolute;top:-18px;left:10%;right:10%;height:18px;background:#d8d0c2;border:3px solid #4c4943}
+.towel{
+  position:absolute;top:-8px;left:50%;transform:translateX(-50%);
+  width:70px;height:80px;
+  background:repeating-linear-gradient(90deg,#9e211a 0 10px,#c63a2c 10px 20px);
+  border:3px solid #4a0905
+}
+.note{text-align:center;color:var(--muted);font-size:12px;margin:12px 0 0}
+.footer{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+button{background:#111;color:var(--text);border:4px solid #333;padding:12px;font-weight:900;box-shadow:3px 3px #000}
+</style>
+</head>
+
+<body>
+  <div id="userPicker" style="
+  display:none;
+  position:fixed;
+  inset:0;
+  z-index:9999;
+  background:#070504;
+  color:#f4eadc;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+">
+  <div style="
+    width:min(420px,100%);
+    background:#1a1008;
+    border:4px solid #7a421f;
+    box-shadow:0 0 0 4px #000;
+    padding:24px;
+    text-align:center;
+  ">
+    <h1 style="color:#ffd36a;margin-top:0;">WHO IS USING CHOLOBOTS?</h1>
+
+    <p style="color:#b9a98d;">
+      Choose the person whose daily tasks should appear on this phone.
+    </p>
+
+    <button onclick="chooseUser('heaven')" style="width:100%;margin:8px 0;">
+      HEAVEN
+    </button>
+
+    <button onclick="chooseUser('daniel')" style="width:100%;margin:8px 0;">
+      DANIEL
+    </button>
+
+    <button onclick="chooseUser('jesse')" style="width:100%;margin:8px 0;">
+      JESSE
+    </button>
+
+    <button onclick="chooseUser('samuel')" style="width:100%;margin:8px 0;">
+      SAMUEL
+    </button>
+  </div>
+    
+</div>
+<div class="app">
+  <header class="header">
+    <h1>TASK PROGRESS</h1>
+    <p>Handley Man Cholobots</p>
+  </header>
+
+  <div id="status" class="status"></div>
+
+  <section class="load-section">
+    <div class="load-card today" id="todayCard">
+      <div class="load-top">
+        <div class="load-title">TODAY'S WORK</div>
+        <div class="load-count">— / —</div>
+      </div>
+      <div class="load-sub" id="todayOwnerLabel">Completed tasks from the current user's !mtoday list</div>
+      <div class="dashboard-bar"><div class="dashboard-fill"></div></div>
+      <div class="percent-line"><span>Loading…</span><span>daily_tasks</span></div>
+    </div>
+
+    <div class="load-card hot" id="stovetopCard">
+      <div class="load-top">
+        <div class="load-title">🔥 STOVETOP</div>
+        <div class="load-count" id="stovetopCount">—</div>
+      </div>
+      <div class="load-sub">Warm customers and where they are in the sales process</div>
+      <div id="stovetopCustomers" class="stovetop-list">
+        <div class="stovetop-empty">Loading warm customers…</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="stove-wrap">
+    <div class="cabinet-top"><div class="drawer-pull"></div></div>
+    <div class="range">
+      <div class="stove-back">
+        <div class="time" id="clock">--:--</div>
+        <div class="label">CHOLOBOTS RANGE</div>
+      </div>
+
+      <div class="knobs">
+        <div class="knob"></div><div class="knob"></div><div class="knob"></div><div class="knob"></div>
+      </div>
+
+      <div class="cooktop" id="cooktop">
+        <h2>🔥 OVEN 🔥</h2>
+        <div class="empty-oven">Loading active projects…</div>
+      </div>
+
+      <div class="oven-door">
+        <div class="handle"></div>
+        <div class="towel"></div>
+      </div>
+    </div>
+
+    <p class="note" id="note">Active project punch lists feed the oven heat strips.</p>
+  </section>
+
+  <div class="footer">
+    <button onclick="history.back()">← BACK</button>
+    <button onclick="loadProgress()">↻ REFRESH</button>
+    <button onclick="changeUser()" style="grid-column:1 / -1;">
+      👤 CHANGE USER
+    </button>
+  </div>
+</div>
+
+<script>
+(function startClock(){
+  const clock = document.getElementById("clock");
+  function tick(){
+    clock.textContent = new Date().toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+  }
+  tick();
+  setInterval(tick,1000);
+})();
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script>
+const SUPABASE_URL = "https://pjquistiolcoqvcfmqjn.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_SrGvJETp3Bpm9i9n1wGheQ_3Ni7FdIv";
+
+const USER_DIRECTORY = {
+  heaven:"Heaven",
+  daniel:"Daniel",
+  jesse:"Jesse",
+  samuel:"Samuel",
+  handley_man:"Handley Man"
+};
+
+function normalizeUserKey(value){
+  return String(value || "").trim().toLowerCase().replaceAll(" ","_");
+}
+  
+function resolveCurrentUser(){
+  const params = new URLSearchParams(location.search);
+
+  const candidates = [
+    params.get("user"),
+    params.get("calendar_key"),
+    localStorage.getItem("cholobots_user"),
+    localStorage.getItem("current_user"),
+    localStorage.getItem("currentUser")
+  ];
+
+  for(const candidate of candidates){
+    const key = normalizeUserKey(candidate);
+
+    if(USER_DIRECTORY[key]){
+      localStorage.setItem("cholobots_user", key);
+      return key;
+    }
+  }
+
+  return null;
+}
+
+let DAILY_CALENDAR_KEY = resolveCurrentUser();
+let DAILY_USER_NAME = DAILY_CALENDAR_KEY
+  ? USER_DIRECTORY[DAILY_CALENDAR_KEY]
+  : "";
+
+function chooseUser(userKey){
+  const normalizedKey = normalizeUserKey(userKey);
+
+  if(!USER_DIRECTORY[normalizedKey]){
+    alert("That Cholobots user is not recognized.");
+    return;
+  }
+
+  localStorage.setItem("cholobots_user", normalizedKey);
+  location.reload();
+}
+
+function showUserPicker(){
+  const picker = document.getElementById("userPicker");
+  picker.style.display = "flex";
+}
+
+function changeUser(){
+  localStorage.removeItem("cholobots_user");
+  localStorage.removeItem("current_user");
+  localStorage.removeItem("currentUser");
+  location.reload();
+}
+  
+function todayLocal(){
+  const d = new Date();
+  return [
+    d.getFullYear(),
+    String(d.getMonth()+1).padStart(2,"0"),
+    String(d.getDate()).padStart(2,"0")
+  ].join("-");
+}
+
+function pct(done,total){
+  return total ? Math.min(100,Math.round((done/total)*100)) : 0;
+}
+
+function esc(value){
+  return String(value ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+
+function showError(message){
+  const box = document.getElementById("status");
+  box.style.display = "block";
+  box.textContent = message;
+}
+
+function clearError(){
+  const box = document.getElementById("status");
+  box.style.display = "none";
+  box.textContent = "";
+}
+
+function setDashboardCard(cardId,done,total,leftText,rightText){
+  const card = document.getElementById(cardId);
+  const percent = pct(done,total);
+  card.querySelector(".load-count").textContent = `${done} / ${total}`;
+  card.querySelector(".dashboard-fill").style.width = `${percent}%`;
+  const labels = card.querySelectorAll(".percent-line span");
+  labels[0].textContent = leftText;
+  labels[1].textContent = rightText;
+}
+
+function renderStovetopCustomers(customers){
+  const container = document.getElementById("stovetopCustomers");
+  const count = document.getElementById("stovetopCount");
+
+  const sorted = [...customers].sort(
+    (a,b)=>Number(b.hotlist_temperature || 0)-Number(a.hotlist_temperature || 0)
+  );
+
+  count.textContent = sorted.length;
+
+  if(!sorted.length){
+    container.innerHTML = `<div class="stovetop-empty">No warm customers are on the stovetop right now.</div>`;
+    return;
+  }
+
+  container.innerHTML = sorted.map(customer=>{
+    const temp = Number(customer.hotlist_temperature || 50);
+    const stage = customer.pipeline_stage || "Warm lead";
+    const next = customer.next_action || "";
+
+    return `
+      <div class="stovetop-customer">
+        <div class="stovetop-row">
+          <div class="stovetop-name">🍲 ${esc(customer.name || "Unknown customer")}</div>
+          <div class="stovetop-temp">${temp}°</div>
+        </div>
+        <div class="stovetop-stage">${esc(stage)}</div>
+        ${next ? `<div class="stovetop-next">Next: ${esc(next)}</div>` : ""}
+      </div>
+    `;
+  }).join("");
+}
+
+function groupByContact(tasks){
+  const grouped = {};
+  for(const task of tasks){
+    if(!grouped[task.contact_id]) grouped[task.contact_id] = [];
+    grouped[task.contact_id].push(task);
+  }
+  return grouped;
+}
+
+function renderOven(activeRows,contactsById,projectTasks){
+  const cooktop = document.getElementById("cooktop");
+  const tasksByContact = groupByContact(projectTasks);
+
+  if(!activeRows.length){
+    cooktop.innerHTML = `<h2>🔥 OVEN 🔥</h2><div class="empty-oven">No active projects are in the oven.</div>`;
+    document.getElementById("note").textContent = "No active projects are currently in the oven.";
+    return;
+  }
+
+  const jobs = [...activeRows]
+    .sort((a,b)=>Number(a.burner_position||99)-Number(b.burner_position||99))
+    .map(row=>{
+      const contact = contactsById[row.contact_id] || {};
+      const tasks = tasksByContact[row.contact_id] || [];
+      const done = tasks.filter(t=>Boolean(t.completed)).length;
+      const total = tasks.length;
+      const percent = pct(done,total);
+
+      return `
+        <div class="job">
+          <div class="job-row">
+            <span class="job-name">${esc(contact.name || "Unknown customer")}</span>
+            <span class="percent">${percent}%</span>
+          </div>
+          <div class="task-count">${done} / ${total} punch-list tasks complete</div>
+          <div class="heat-track"><div class="heat-fill" style="width:${percent}%"></div></div>
+        </div>
+      `;
+    }).join("");
+
+  cooktop.innerHTML = `<h2>🔥 OVEN 🔥</h2>${jobs}`;
+  const completed = projectTasks.filter(t=>Boolean(t.completed)).length;
+  document.getElementById("note").textContent =
+    `Live oven progress: ${completed}/${projectTasks.length} punch-list tasks complete.`;
+}
+
+async function loadProgress(){
+  clearError();
+
+  try{
+    if(!window.supabase){
+      throw new Error("Supabase library did not load.");
+    }
+
+    const sb = window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+    const today = todayLocal();
+
+    document.getElementById("todayOwnerLabel").textContent =
+      `Completed tasks from ${DAILY_USER_NAME}'s current !mtoday list`;
+
+    const dailyRes = await sb
+      .from("daily_tasks")
+      .select("id,task,completed,date,calendar_key,created_at")
+      .eq("date",today)
+      .eq("calendar_key",DAILY_CALENDAR_KEY)
+      .order("created_at");
+
+    if(dailyRes.error) throw new Error(`Today's Work: ${dailyRes.error.message}`);
+
+    const dailyTasks = dailyRes.data || [];
+    const dailyDone = dailyTasks.filter(t=>Boolean(t.completed)).length;
+
+    setDashboardCard(
+      "todayCard",
+      dailyDone,
+      dailyTasks.length,
+      `${pct(dailyDone,dailyTasks.length)}% complete`,
+      dailyTasks.length ? `${dailyTasks.length-dailyDone} remaining` : "No tasks visible"
+    );
+
+    const activeRes = await sb
+      .from("chisme_active")
+      .select("id,contact_id,burner_position,active_reason")
+      .order("burner_position");
+
+    if(activeRes.error) throw new Error(`Oven: ${activeRes.error.message}`);
+
+    const activeRows = activeRes.data || [];
+    const activeIds = new Set(activeRows.map(r=>r.contact_id).filter(Boolean));
+
+    let contactsById = {};
+    const activeContactIds = [...activeIds];
+
+    if(activeContactIds.length){
+      const contactRes = await sb
+        .from("chisme_dashboard_contacts")
+        .select("id,name")
+        .in("id",activeContactIds);
+
+      if(contactRes.error) throw new Error(`Oven contacts: ${contactRes.error.message}`);
+
+      for(const contact of contactRes.data || []){
+        contactsById[contact.id] = contact;
+      }
+    }
+
+    const hotRes = await sb
+      .from("chisme_dashboard_contacts")
+      .select("id,name,hotlist_temperature,pipeline_stage,next_action")
+      .gte("hotlist_temperature",51)
+      .lt("hotlist_temperature",100);
+
+    if(hotRes.error) throw new Error(`Stovetop: ${hotRes.error.message}`);
+
+    const stovetopCustomers = (hotRes.data || []).filter(c=>!activeIds.has(c.id));
+    renderStovetopCustomers(stovetopCustomers);
+
+    let projectTasks = [];
+
+    if(activeContactIds.length){
+      const taskRes = await sb
+      .from("metiche_project_tasks")
+      .select(`
+        id,
+        contact_id,
+        project_name,
+        task_text,
+        completed,
+        sort_order
+      `)
+      .in("contact_id", activeContactIds)
+      .order("sort_order");
+    
+    if (taskRes.error) {
+      throw new Error(`Project tasks: ${taskRes.error.message}`);
+    }
+    
+    projectTasks = taskRes.data || [];
+    }
+
+    renderOven(activeRows,contactsById,projectTasks);
+
+  }catch(error){
+    console.error("Loadbar failed:",error);
+    showError(`Live data could not be loaded.\n\n${error?.message || String(error)}`);
+  }
+}
+
+if(!DAILY_CALENDAR_KEY){
+  showUserPicker();
+}else{
+  loadProgress();
+  setInterval(loadProgress,60000);
+}
+</script>
+</body>
+</html>

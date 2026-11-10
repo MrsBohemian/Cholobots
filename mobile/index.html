@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Handley Man Cholobots</title>
+
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #000;
+      color: white;
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 200px 20px 20px;
+    }
+
+    .menu {
+      width: 100%;
+      max-width: 420px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 22px;
+      justify-items: center;
+    }
+
+    .menu-item {
+      text-decoration: none;
+      color: white;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+    }
+
+    .menu-item img {
+      width: 130px;
+      height: 130px;
+      object-fit: contain;
+      display: block;
+      margin-bottom: 10px;
+    }
+
+    .menu-item span {
+      display: block;
+      font-size: 0.95rem;
+      font-weight: bold;
+      letter-spacing: 1px;
+    }
+
+    .blue   { color: #18a8ff; }
+    .purple { color: #9b6bff; }
+    .green  { color: #7ed957; }
+    .orange { color: #ff9d2f; }
+    .gold   { color: #ffd54a; }
+    .silver { color: #b8c4ce; }
+
+    .menu-item:active {
+      transform: scale(0.97);
+    }
+  </style>
+</head>
+
+<body>
+
+  <main class="menu">
+
+    <a class="menu-item" href="time.html">
+      <img src="assets/time-clock.png" alt="Time Management">
+      <span class="blue">Time Management</span>
+    </a>
+
+    <a class="menu-item" href="customers.html">
+      <img src="assets/customer-phone.png" alt="Customer Communication">
+      <span class="purple">Customer Communication</span>
+    </a>
+
+    <a class="menu-item" href="money.html">
+      <img src="assets/check_engine.png" alt="Financial Engine">
+      <span class="green">Financial Engine</span>
+    </a>
+
+    <a class="menu-item" href="loadbar.html">
+      <img src="assets/load-bar.png" alt="Task Progress">
+      <span class="orange">Task Progress</span>
+    </a>
+
+    <a class="menu-item" href="jobcost.html">
+      <img src="assets/beer-stein.png" alt="Job Costing">
+      <span class="gold">Job Costing</span>
+    </a>
+
+    <a class="menu-item" href="inventory.html">
+      <img src="assets/Lock.png" alt="Materials & Inventory">
+      <span class="silver">Materials &amp; Inventory</span>
+    </a>
+
+  </main>
+
+</body>
+</html>

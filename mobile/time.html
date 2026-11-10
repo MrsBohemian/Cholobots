@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Time</title>
+
+<style>
+body {
+  margin: 0;
+  background: #000;
+  color: #eee;
+  font-family: Arial, sans-serif;
+}
+
+.back-link {
+  position: fixed;
+  top: 10px;
+  left: 14px;
+  font-size: 30px;
+  font-weight: bold;
+  color: #18a8ff;
+  text-decoration: none;
+  opacity: 0.9;
+  z-index: 9999;
+}
+
+.status {
+  position: fixed;
+  top: 18px;
+  right: 14px;
+  font-size: .7rem;
+  color: #777;
+  z-index: 9999;
+}
+
+.page {
+  padding: 56px 12px 24px;
+}
+
+.person-block {
+  margin-bottom: 22px;
+}
+
+.person-title {
+  font-size: 1.15rem;
+  font-weight: 900;
+  letter-spacing: 2px;
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #333;
+}
+
+.heaven { color: #18a8ff; }
+.daniel { color: #9b6bff; }
+
+.day-card {
+  background: #101010;
+  border: 1px solid #333;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.day {
+  font-size: 1.4rem;
+  font-weight: 900;
+  margin-bottom: 8px;
+}
+
+ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+li {
+  margin-bottom: 6px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  color: #666;
+  list-style: none;
+  margin-left: -18px;
+}
+
+.error { color: #ff7777; }
+</style>
+</head>
+
+<body>
+<a class="back-link" href="index.html">←</a>
+<div class="status" id="status">Loading…</div>
+
+<main class="page">
+  <section class="person-block">
+    <h2 class="person-title heaven">HEAVEN</h2>
+    <div id="heaven-row"></div>
+  </section>
+
+  <section class="person-block">
+    <h2 class="person-title daniel">DANIEL</h2>
+    <div id="daniel-row"></div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script>
+const SUPABASE_URL = "https://pjquistiolcoqvcfmqjn.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_SrGvJETp3Bpm9i9n1wGheQ_3Ni7FdIv";
+
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+function getNextFourDates() {
+  const dates = [];
+  const today = new Date();
+
+  for (let i = 0; i < 4; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+
+  return dates;
+}
+
+function formatDayLabel(dateString) {
+  const date = new Date(dateString + "T12:00:00");
+  return date.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric"
+  });
+}
+
+function normalizeTask(task) {
+  if (typeof task === "string") return task;
+  if (task && typeof task === "object") {
+    return task.text || task.task || task.title || "";
+  }
+  return "";
+}
+
+function renderRow(rowId, personSchedule, colorClass) {
+  const row = document.getElementById(rowId);
+  row.innerHTML = "";
+
+  const dates = getNextFourDates();
+
+  dates.forEach(dateKey => {
+    const card = document.createElement("div");
+    card.className = "day-card";
+
+    const day = document.createElement("div");
+    day.className = `day ${colorClass}`;
+    day.textContent = formatDayLabel(dateKey);
+
+    const ul = document.createElement("ul");
+    const tasks = personSchedule?.[dateKey] || [];
+
+    if (tasks.length === 0) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "Open";
+      ul.appendChild(li);
+    } else {
+      tasks.forEach(task => {
+        const text = normalizeTask(task);
+        if (!text) return;
+
+        const li = document.createElement("li");
+        li.textContent = text;
+        ul.appendChild(li);
+      });
+    }
+
+    card.appendChild(day);
+    card.appendChild(ul);
+    row.appendChild(card);
+  });
+}
+
+async function loadSchedule() {
+  const status = document.getElementById("status");
+
+  try {
+    const { data, error } = await supabaseClient
+      .from("metiche_weekly")
+      .select("calendar_json, created_at")
+      .order("id", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error) throw error;
+
+    const calendar = data?.calendar_json || {};
+
+    renderRow("heaven-row", calendar.Heaven || {}, "heaven");
+    renderRow("daniel-row", calendar.Daniel || {}, "daniel");
+
+    status.textContent = "Live";
+    status.className = "status";
+  } catch (err) {
+    console.error("Schedule load failed:", err);
+    status.textContent = "Load failed";
+    status.className = "status error";
+  }
+}
+
+loadSchedule();
+setInterval(loadSchedule, 60000);
+</script>
+</body>
+</html>

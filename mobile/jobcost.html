@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Crudobot Job Costing</title>
+  <style>
+    :root{
+      --bg:#050403;
+      --panel:#17110d;
+      --panel2:#211812;
+      --line:#5f3c24;
+      --text:#f6eadc;
+      --muted:#bda48d;
+      --orange:#ff7a18;
+      --amber:#ffc247;
+      --green:#74dc78;
+      --red:#ff6868;
+      --steel:#b8c4c8;
+      --ink:#160b05;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      min-height:100dvh;
+      background:
+        linear-gradient(rgba(255,122,24,.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,122,24,.035) 1px, transparent 1px),
+        var(--bg);
+      background-size:18px 18px;
+      color:var(--text);
+      font-family:"Courier New", monospace;
+    }
+    button,select{font:inherit}
+    .app{width:min(760px,100%);margin:auto;padding:16px 12px 40px}
+    .topbar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+    .back{color:var(--text);text-decoration:none;font-size:28px;line-height:1}
+    .title-wrap{flex:1}
+    .eyebrow{color:var(--orange);font-size:11px;font-weight:900;letter-spacing:.16em}
+    h1{font-size:22px;margin:2px 0 0;line-height:1}
+    .refresh{
+      border:2px solid var(--line);background:var(--panel);color:var(--amber);
+      padding:9px 10px;font-weight:900;box-shadow:3px 3px 0 #000;
+    }
+    .robot-head{
+      border:4px solid #090503;background:var(--steel);color:var(--ink);
+      padding:8px;box-shadow:0 0 0 3px var(--line),6px 6px 0 #000;margin-bottom:14px
+    }
+    .face{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center}
+    .eye{height:22px;background:#1a0c05;border:4px solid #6e7678;position:relative}
+    .eye:after{content:"";position:absolute;inset:4px;background:var(--orange)}
+    .mouth{background:#1a0c05;color:var(--amber);padding:7px 10px;font-weight:900;text-align:center}
+    .controls{
+      display:grid;grid-template-columns:1fr auto;gap:8px;
+      padding:10px;background:var(--panel);border:2px solid var(--line);margin-bottom:12px
+    }
+    select{
+      min-width:0;background:#090705;color:var(--text);border:2px solid var(--line);
+      padding:10px;font-weight:900
+    }
+    .status{color:var(--muted);font-size:12px;margin:4px 0 12px;min-height:15px}
+    .report{display:grid;gap:12px}
+    .card{
+      background:var(--panel);border:2px solid var(--line);
+      box-shadow:4px 4px 0 #000;overflow:hidden
+    }
+    .card-title{
+      background:var(--panel2);border-bottom:2px solid var(--line);
+      padding:8px 10px;color:var(--orange);font-size:12px;font-weight:900;letter-spacing:.12em
+    }
+    .card-body{padding:10px}
+    .hero{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .metric{background:#0c0907;border:1px solid #3c2a1e;padding:10px}
+    .metric-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
+    .metric-value{font-size:22px;font-weight:900;margin-top:4px}
+    .profit{color:var(--green)}
+    .loss{color:var(--red)}
+    .row{
+      display:grid;grid-template-columns:1fr auto;gap:12px;
+      padding:8px 0;border-bottom:1px dashed #5d4635;align-items:start
+    }
+    .row:last-child{border-bottom:0}
+    .row .label{color:var(--muted)}
+    .row .value{text-align:right;font-weight:900}
+    .total{font-size:17px;color:var(--amber);border-top:2px solid var(--line);margin-top:5px;padding-top:10px}
+    .warning{
+      padding:9px;border:2px solid #8e5b1c;background:#2b1a09;color:#ffd98c;
+      font-size:12px;line-height:1.45;margin-top:10px
+    }
+    .note{white-space:pre-wrap;line-height:1.45;color:#ead8c6}
+    .details{margin-top:8px}
+    summary{cursor:pointer;color:var(--amber);font-weight:900;padding:4px 0}
+    .small-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+    .small-table th,.small-table td{padding:7px 5px;border-bottom:1px solid #3d2b20;text-align:left;vertical-align:top}
+    .small-table th{color:var(--muted)}
+    .small-table td:last-child,.small-table th:last-child{text-align:right}
+    .empty{color:var(--muted);padding:8px 0}
+    .foot{margin-top:14px;text-align:center;color:#7e6959;font-size:10px;letter-spacing:.12em}
+
+    .status-pill{display:inline-block;padding:6px 9px;border:2px solid var(--line);background:#2b1a09;color:var(--amber);font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}
+    .big-number{font-size:28px;font-weight:900;margin-top:4px}
+    .checkline{display:grid;grid-template-columns:24px 1fr;gap:8px;padding:8px 0;border-bottom:1px dashed #5d4635;align-items:start}
+    .checkline:last-child{border-bottom:0}
+    .check{font-size:17px}
+    .subtle{color:var(--muted);font-size:11px;line-height:1.4;margin-top:4px}
+    @media(max-width:520px){
+      .app{padding:12px 9px 34px}
+      .hero{grid-template-columns:1fr 1fr}
+      .metric-value{font-size:18px}
+      h1{font-size:18px}
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <a class="back" href="index.html">←</a>
+    <div class="title-wrap">
+      <div class="eyebrow">CHOLOBOTS FINANCIAL INTELLIGENCE</div>
+      <h1>CRUDOBOT JOB REALITY</h1>
+    </div>
+    <button class="refresh" onclick="loadReport()">↻</button>
+  </div>
+
+  <div class="robot-head">
+    <div class="face">
+      <div class="eye"></div>
+      <div class="mouth" id="robotMessage">SHOW ME THE NUMBERS</div>
+      <div class="eye"></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <select id="projectSelect" onchange="loadReport()"></select>
+    <button class="refresh" onclick="loadReport()">LOAD</button>
+  </div>
+  <div id="status" class="status">Connecting to Supabase…</div>
+
+  <div id="report" class="report"></div>
+  <div class="foot">MONEY · WORK · CLOSEOUT</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL = "https://pjquistiolcoqvcfmqjn.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_SrGvJETp3Bpm9i9n1wGheQ_3Ni7FdIv";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const $ = id => document.getElementById(id);
+const esc = value => String(value ?? "")
+  .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+  .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+const money = n => new Intl.NumberFormat("en-US",{style:"currency",currency:"USD"}).format(Number(n||0));
+const minutesLabel = mins => {
+  const total = Number(mins || 0);
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  if (hours && minutes) return `${hours}h ${minutes}m`;
+  if (hours) return `${hours}h`;
+  return `${minutes}m`;
+};
+const signedTransaction = row => {
+  const total = Math.abs(Number(row.total || 0));
+  return String(row.transaction_type || "").toLowerCase() === "return" ? -total : total;
+};
+const payoutValue = row => row.paid_amount == null
+  ? Number(row.accepted_price || 0)
+  : Number(row.paid_amount || 0);
+
+let projectCache = [];
+
+async function loadProjects(){
+  const [projectResult, contactResult] = await Promise.all([
+    sb.from("crudo_projects")
+      .select("id,contact_id,project_name,status,created_at")
+      .order("project_name"),
+    sb.from("chisme_contacts")
+      .select("id,name,first_name,last_name,company")
+  ]);
+
+  if(projectResult.error){
+    $("status").textContent = "Crudobot projects could not load: " + projectResult.error.message;
+    return;
+  }
+
+  const contacts = new Map();
+  (contactResult.data || []).forEach(c => {
+    const person = c.name || [c.first_name,c.last_name].filter(Boolean).join(" ") || c.company || "Unknown customer";
+    contacts.set(c.id, person);
+  });
+
+  projectCache = (projectResult.data || []).map(p => ({
+    ...p,
+    customer_name: contacts.get(p.contact_id) || "Unknown customer"
+  })).sort((a,b) =>
+    `${a.customer_name} ${a.project_name}`.localeCompare(`${b.customer_name} ${b.project_name}`)
+  );
+
+  const select = $("projectSelect");
+  const requested = new URLSearchParams(location.search).get("project");
+  select.innerHTML = projectCache.map(row =>
+    `<option value="${esc(row.id)}">${esc(row.customer_name)} — ${esc(row.project_name)}</option>`
+  ).join("");
+
+  if(requested && [...select.options].some(o => o.value === requested)) select.value = requested;
+  if(!select.value && projectCache.length) select.value = projectCache[0].id;
+
+  if(contactResult.error){
+    $("status").textContent = "Projects loaded; customer names could not load: " + contactResult.error.message;
+  }
+}
+
+async function loadReport(){
+  const projectId = $("projectSelect").value;
+  if(!projectId){
+    $("report").innerHTML = `<div class="card"><div class="card-body empty">No Crudobot projects saved yet.</div></div>`;
+    $("status").textContent = "No project selected.";
+    return;
+  }
+
+  $("status").textContent = "Loading job reality…";
+  $("robotMessage").textContent = "COUNTING THE JOB";
+
+  const projectResult = await sb.from("crudo_projects").select("*").eq("id",projectId).single();
+  if(projectResult.error){
+    $("status").textContent = "Project failed: " + projectResult.error.message;
+    return;
+  }
+  const project = projectResult.data;
+
+  // Resolve this project's customer directly instead of depending only on the selector cache.
+  let customerName = projectCache.find(p => p.id === projectId)?.customer_name || "";
+  if(!customerName || customerName === "Unknown customer"){
+    const contactResult = await sb.from("chisme_contacts")
+      .select("id,name,first_name,last_name,company,next_action,next_followup_date,chisme_summary")
+      .eq("id",project.contact_id).maybeSingle();
+    if(!contactResult.error && contactResult.data){
+      const c = contactResult.data;
+      customerName = c.name || [c.first_name,c.last_name].filter(Boolean).join(" ") || c.company || "Customer";
+    }
+  }
+  if(!customerName || customerName === "Unknown customer") customerName = "Customer";
+
+  const [txResult, laborResult, taskResult] = await Promise.all([
+    sb.from("crudo_material_transactions").select("*").eq("project_id",projectId).order("transaction_date"),
+    // Raw Metiche observations stay available in SHOW THE GUTS, but they are
+    // no longer the authoritative source for finalized project labor time.
+    sb.from("crudo_labor_entries").select("*").eq("project_id",projectId).order("created_at"),
+    sb.from("crudo_project_tasks").select("*").eq("project_id",projectId).order("task_order").order("created_at")
+  ]);
+
+  const transactions = txResult.data || [];
+  const labor = laborResult.data || [];
+  const tasks = taskResult.data || [];
+  const sourceErrors = [txResult.error,laborResult.error,taskResult.error].filter(Boolean);
+
+  let questLabor = [];
+  const questResult = await sb.from("obijuan_quest_assignments")
+    .select("*").eq("quest_id",projectId).order("accepted_at");
+  if(!questResult.error) questLabor = questResult.data || [];
+
+  const purchases = transactions
+    .filter(r => String(r.transaction_type||"").toLowerCase() === "purchase")
+    .reduce((sum,r) => sum + Math.abs(Number(r.total || 0)), 0);
+  const returns = transactions
+    .filter(r => String(r.transaction_type||"").toLowerCase() === "return")
+    .reduce((sum,r) => sum + Math.abs(Number(r.total || 0)), 0);
+  const materials = purchases - returns;
+  const subcontractors = questLabor.reduce((sum,r) => sum + payoutValue(r), 0);
+  const directCost = materials + subcontractors;
+
+  const contract = Number(project.contract_amount || 0);
+  const invoice = project.invoice_amount == null ? 0 : Number(project.invoice_amount || 0);
+  const received = Number(project.amount_collected || 0);
+  const amountExpected = invoice || contract;
+  const owed = amountExpected > 0 ? Math.max(0, amountExpected - received) : 0;
+  const cashRemaining = received - directCost;
+
+  // Crudobot's finalized task times are the job-costing source of truth.
+  // Metiche labor entries remain raw observations/history only.
+  const totalMinutes = tasks.reduce((sum,t) => sum + Number(t.actual_minutes || 0), 0);
+  const timedTaskCount = tasks.filter(t => t.actual_minutes != null).length;
+
+  const taskLabel = t => t.task_name || "Punch-list item";
+
+  const taskDone = t => String(t.status || "").toLowerCase() === "completed";
+  const doneCount = tasks.filter(taskDone).length;
+  const workComplete = tasks.length > 0 && doneCount === tasks.length;
+
+  const invoiceSent = !!project.invoice_sent_at;
+  const paymentComplete = amountExpected > 0 ? received >= amountExpected : received > 0;
+  const customerFollowup = !!project.customer_followup_at;
+
+  let displayStatus = "ACTIVE";
+  if(String(project.status||"").toLowerCase() === "completed") displayStatus = "CLOSED";
+  else if(project.closeout_status && project.closeout_status !== "open")
+    displayStatus = String(project.closeout_status).replaceAll("_"," ").toUpperCase();
+  else if(workComplete) displayStatus = "READY FOR CLOSEOUT";
+
+  // Only show contract/invoice boxes when they actually add information.
+  const extraMoney = [];
+  if(contract > 0) extraMoney.push(`<div class="row"><div class="label">Agreed price</div><div class="value">${money(contract)}</div></div>`);
+  if(invoice > 0) extraMoney.push(`<div class="row"><div class="label">Invoiced</div><div class="value">${money(invoice)}</div></div>`);
+  if(owed > 0) extraMoney.push(`<div class="row"><div class="label">Still owed</div><div class="value loss">${money(owed)}</div></div>`);
+
+  const missing = [];
+  if(materials === 0) missing.push("No material purchases/returns are recorded for this project.");
+  if(totalMinutes === 0) missing.push("No finalized task time is recorded for this project.");
+  else if(timedTaskCount < tasks.length) missing.push(`${tasks.length - timedTaskCount} punch-list item(s) still need a finalized time.`);
+  if(received > 0 && amountExpected === 0) missing.push("Money was received, but no agreed price or invoice amount is saved.");
+
+  $("status").textContent = sourceErrors.length
+    ? "Some project data could not load: " + sourceErrors.map(e=>e.message).join(" | ")
+    : "Live project closeout loaded.";
+
+  $("robotMessage").textContent = "JOB REALITY";
+  $("report").innerHTML = `
+    <section class="card">
+      <div class="card-title">${esc(customerName)} — ${esc(project.project_name)}</div>
+      <div class="card-body">
+        <div class="status-pill">${esc(displayStatus)}</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">MONEY</div>
+      <div class="card-body">
+        <div class="hero">
+          <div class="metric">
+            <div class="metric-label">Received</div>
+            <div class="big-number ${received > 0 ? "profit":""}">${money(received)}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Direct cash cost</div>
+            <div class="big-number">${money(directCost)}</div>
+          </div>
+        </div>
+        <div class="row total"><div>Remaining after direct job costs</div><div class="value ${cashRemaining >= 0 ? "profit":"loss"}">${money(cashRemaining)}</div></div>
+        ${extraMoney.join("")}
+        <div class="subtle">This is the job itself: money received minus purchased materials, returns, and linked subcontractor payouts. Owner labor is shown separately as actual time.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">WHAT THIS JOB PRODUCED</div>
+      <div class="card-body">
+        <div class="row"><div class="label">Money in</div><div class="value">${money(received)}</div></div>
+        <div class="row"><div class="label">Money spent directly on this job</div><div class="value">-${money(directCost)}</div></div>
+        <div class="row total"><div>Left to pay for our time + help support the business</div><div class="value ${cashRemaining >= 0 ? "profit":"loss"}">${money(cashRemaining)}</div></div>
+        <div class="subtle">Crudobot stops here. The company-level financial view can later compare results like this across all jobs against Handley Man's overhead.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">WORK BREAKDOWN — ${minutesLabel(totalMinutes)} TOTAL</div>
+      <div class="card-body">
+        ${tasks.length ? tasks.map(t => {
+          const hasTime = t.actual_minutes != null;
+          const mins = Number(t.actual_minutes || 0);
+          return `<div class="row">
+            <div>
+              <div>${taskDone(t) ? "✅" : "⬜"} ${esc(taskLabel(t))}</div>
+            </div>
+            <div class="value">${hasTime ? minutesLabel(mins) : "—"}</div>
+          </div>`;
+        }).join("") : `<div class="empty">No punch-list items saved for this project.</div>`}
+        <div class="row total"><div>Total actual task time</div><div class="value">${minutesLabel(totalMinutes)}</div></div>
+      </div>
+    </section>
+
+
+
+    <section class="card">
+      <div class="card-title">CLOSEOUT</div>
+      <div class="card-body">
+        <div class="checkline"><div class="check">${workComplete ? "✅":"⬜"}</div><div>Work complete<div class="subtle">${doneCount}/${tasks.length} punch-list items complete</div></div></div>
+        <div class="checkline"><div class="check">${invoiceSent ? "✅":"⬜"}</div><div>Invoice sent</div></div>
+        <div class="checkline"><div class="check">${paymentComplete ? "✅":"⬜"}</div><div>Payment collected<div class="subtle">${money(received)} received${owed > 0 ? ` · ${money(owed)} still owed` : ""}</div></div></div>
+        <div class="checkline"><div class="check">${customerFollowup ? "✅":"⬜"}</div><div>Customer follow-up${project.customer_followup_notes ? `<div class="subtle">${esc(project.customer_followup_notes)}</div>`:""}</div></div>
+      </div>
+    </section>
+
+    ${missing.length ? `
+    <section class="card">
+      <div class="card-title">MISSING FROM THIS JOB</div>
+      <div class="card-body">
+        ${missing.map(x => `<div class="checkline"><div class="check">⚠️</div><div>${esc(x)}</div></div>`).join("")}
+      </div>
+    </section>` : ""}
+
+    ${(project.customer_followup_notes || project.closeout_notes) ? `
+    <section class="card">
+      <div class="card-title">WHAT'S NEXT</div>
+      <div class="card-body note">
+        ${project.customer_followup_notes ? `<div>${esc(project.customer_followup_notes)}</div>`:""}
+        ${project.closeout_notes ? `<div class="subtle" style="margin-top:8px">${esc(project.closeout_notes)}</div>`:""}
+      </div>
+    </section>` : ""}
+
+    <details class="card details">
+      <summary class="card-title">SHOW THE GUTS</summary>
+      <div class="card-body">
+        <div class="row"><div class="label">Gross material purchases</div><div class="value">${money(purchases)}</div></div>
+        <div class="row"><div class="label">Returns / credits</div><div class="value">${money(-returns)}</div></div>
+        <div class="row"><div class="label">Material transactions</div><div class="value">${transactions.length}</div></div>
+        <div class="row"><div class="label">Tasks with finalized time</div><div class="value">${timedTaskCount}/${tasks.length}</div></div>
+        <div class="row"><div class="label">Raw Metiche observations</div><div class="value">${labor.length}</div></div>
+        <div class="row"><div class="label">ObiJuan payouts</div><div class="value">${questLabor.length}</div></div>
+        ${labor.length ? `
+          <details class="details">
+            <summary>Raw Metiche labor observations</summary>
+            ${labor.map(r => `<div class="row">
+              <div><div>${esc(r.worker || "Unknown")}</div><div class="subtle">${esc(r.notes || r.source || "")}</div></div>
+              <div class="value">${minutesLabel(r.actual_minutes)}</div>
+            </div>`).join("")}
+          </details>` : ""}
+        ${transactions.length ? `
+          <details class="details">
+            <summary>Raw material transactions</summary>
+            ${transactions.map(r => `<div class="row">
+              <div><div>${esc(r.vendor || "Manual / unknown")}</div><div class="subtle">${esc(r.transaction_date || "")} · ${esc(r.transaction_type || "")}</div></div>
+              <div class="value">${money(signedTransaction(r))}</div>
+            </div>`).join("")}
+          </details>` : ""}
+      </div>
+    </details>
+  `;
+}
+
+(async function init(){
+  await loadProjects();
+  await loadReport();
+})();
+</script>
+</body>
+</html>
