@@ -39,6 +39,7 @@ Never run `python cholobots.py` or `make run` from an automated run.
 | `scripts/**` | `python -m pytest tests/scripts -q` plus the matching `bash tests/scripts/test-*.sh` |
 | `tests/**` | The tests you changed |
 | `scripts/supabase_local.py`, `scripts/supabase-local.sh` | `python -m pytest tests/scripts -q` plus `SUPABASE_LOCAL_LIVE=1 bash tests/scripts/test-supabase-local.sh` (two-worktree isolation test; opt-in, so `make test` and CI skip it, and it skips without Docker; its data-isolation and concurrent-suite steps need a host where the stack's API routes correctly) |
+| `scripts/devcontainer/*.sh` | `bash tests/scripts/test-devcontainer-*.sh`, `test-launch-*.sh`, `test-prepare-clone.sh` and `test-worktree-add.sh` (stub `docker`, no daemon needed); `bash scripts/devcontainer/smoke-test.sh` only when a Docker daemon is available |
 | `.devcontainer/**`, `scripts/devcontainer/**` | `python -m pytest tests/scripts -q -k devcontainer` and `bash tests/scripts/test-devcontainer-lifecycle.sh`; a `devcontainer up` smoke when the Dockerfile or lifecycle scripts change |
 | `.claude/**`, `docs/**` | Nothing to run |
 | `requirements.txt`, `requirements-dev.txt`, `.python-version` | Fresh venv, compile, `ruff check .`, script tests, whole suite once it exists |
