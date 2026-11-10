@@ -18,6 +18,10 @@ if [ "$1" = ps ]; then
     [ -n "${STUB_IDS:-}" ] && printf '%s\n' $STUB_IDS
     exit 0
 fi
+if [ "$1" = inspect ]; then
+    printf '%s' "${STUB_MOUNTS:-[]}"
+    exit 0
+fi
 printf '%s\n' "$@" >"$STUB_ARGS"
 STUB
 chmod +x "$TMP/bin/docker"
@@ -77,6 +81,12 @@ STUB_PS_ARGS="$PS_ARGS" STUB_IDS="abc123" "$SCRIPT" "$TMP/link-ws" 'true' >/dev/
 REAL_WS="$(cd "$TMP/my-ws" && pwd -P)"
 assert_true "symlinked path filters on the physical path" "grep -Fxq 'label=devcontainer.local_folder=$REAL_WS' '$PS_ARGS'"
 assert_true "symlinked path still maps to /workspaces/my-ws" "grep -Fxq /workspaces/my-ws '$TMP/args'"
+
+# 6. A worktree is mounted at its path relative to the main checkout, not at /workspaces/<basename>:
+# the workspace comes from the container's mount whose source is this path.
+STUB_MOUNTS="[{\"Source\":\"/elsewhere\",\"Destination\":\"/x\"},{\"Source\":\"$REAL_WS\",\"Destination\":\"/workspaces/.claude/worktrees/my-ws\"}]" \
+    STUB_IDS="abc123" "$SCRIPT" "$TMP/my-ws" 'true' >/dev/null 2>&1
+assert_true "worktree mount destination is the -w directory" "grep -Fxq /workspaces/.claude/worktrees/my-ws '$TMP/args'"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

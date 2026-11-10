@@ -334,4 +334,5 @@ if [ "$WORKTREE_MODE" -eq 1 ]; then
     fi
 fi
 
+echo "Devcontainer ready" >&2
 echo "CONTAINER_ID=$CONTAINER_ID"

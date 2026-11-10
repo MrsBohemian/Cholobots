@@ -115,9 +115,12 @@ fi
 # shellcheck disable=SC2016 # expands inside the container, not here
 VENV_PREFIX='if [ -x .venv/bin/python ]; then PATH="$PWD/.venv/bin:$PATH"; export PATH; fi; '
 
-# --- Determine workspace path ---
+# Determine the workspace path inside the container. A worktree is mounted at its path relative to
+# the main checkout, a clone at /workspaces/<name>, so read the mount whose source is this path.
 REPO_NAME=$(basename "$ABS_PATH")
-WORKSPACE="/workspaces/$REPO_NAME"
+WORKSPACE=$(docker inspect --format '{{json .Mounts}}' "$CONTAINER_ID" 2>/dev/null \
+    | jq -r --arg p "$ABS_PATH" '[.[] | select(.Source == $p) | .Destination][0] // empty' 2>/dev/null) || WORKSPACE=""
+[ -n "$WORKSPACE" ] || WORKSPACE="/workspaces/$REPO_NAME"
 
 # --- Default log file if not provided ---
 if [ -z "$LOG_FILE" ]; then

@@ -25,6 +25,10 @@ if [ "$1" = ps ]; then
     echo fake-container
     exit 0
 fi
+if [ "$1" = inspect ]; then
+    printf '%s' "${FAKE_DOCKER_MOUNTS:-[]}"
+    exit 0
+fi
 printf '%s\n' "$@" > "$FAKE_DOCKER_ARGS"
 cat > "$FAKE_DOCKER_STDIN"
 echo '{"type":"fake.event"}'
@@ -58,6 +62,13 @@ assert_contains "$FAKE_DOCKER_ARGS" 'claude --dangerously-skip-permissions -p - 
 assert_contains "$FAKE_DOCKER_ARGS" '.venv/bin'
 assert_contains "$FAKE_DOCKER_STDIN" 'Body: bug 42'
 assert_absent "$FAKE_DOCKER_STDIN" 'name: sample'
+assert_contains "$FAKE_DOCKER_ARGS" "/workspaces/$(basename "$CLONE")"
+
+# A worktree's workspace is the container mount whose source is the checkout path.
+REAL_CLONE="$(cd "$CLONE" && pwd -P)"
+FAKE_DOCKER_MOUNTS="[{\"Source\":\"$REAL_CLONE\",\"Destination\":\"/workspaces/.claude/worktrees/wt\"}]" \
+    "$SCRIPT" "$CLONE" sample 'bug 42' --log "$FIXTURE/mount.log"
+assert_contains "$FAKE_DOCKER_ARGS" '/workspaces/.claude/worktrees/wt'
 assert_contains "$FIXTURE/claude.log" 'fake.event'
 
 # Codex reads the same .claude/skills file and gets an explicit instruction prefix.

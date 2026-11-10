@@ -23,9 +23,12 @@ elif [ "${#CONTAINER_IDS[@]}" -gt 1 ]; then
 fi
 CONTAINER_ID="${CONTAINER_IDS[0]}"
 
-# Determine the workspace path inside the container
+# Determine the workspace path inside the container. A worktree is mounted at its path relative to
+# the main checkout, a clone at /workspaces/<name>, so read the mount whose source is this path.
 REPO_NAME=$(basename "$ABS_PATH")
-WORKSPACE="/workspaces/$REPO_NAME"
+WORKSPACE=$(docker inspect --format '{{json .Mounts}}' "$CONTAINER_ID" 2>/dev/null \
+    | jq -r --arg p "$ABS_PATH" '[.[] | select(.Source == $p) | .Destination][0] // empty' 2>/dev/null) || WORKSPACE=""
+[ -n "$WORKSPACE" ] || WORKSPACE="/workspaces/$REPO_NAME"
 
 # docker exec does not apply remoteEnv, so put the workspace venv first on PATH here.
 # The user command travels as $1 to the inner bash so quotes and ';' in it survive.
