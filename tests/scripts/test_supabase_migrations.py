@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from conftest import _GIT_IDENTITY, make_host_repo
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -37,10 +38,10 @@ def test_valid_directory_passes(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_bad_filename_fails():
-    for bad in ["2026_add.sql", "20261108000000-Add.sql", "20261108000000_add.txt"]:
-        errors = sm.lint_names([BASELINE, bad])
-        assert any(bad in e for e in errors), bad
+@pytest.mark.parametrize("bad", ["2026_add.sql", "20261108000000-Add.sql", "20261108000000_add.txt"])
+def test_bad_filename_fails(bad):
+    errors = sm.lint_names([BASELINE, bad])
+    assert any(bad in e for e in errors)
 
 
 def test_gitkeep_is_allowed():
@@ -70,6 +71,12 @@ def test_baseline_not_earliest_fails():
 def test_missing_dir_exits_2(tmp_path):
     result = run("lint", "--dir", str(tmp_path / "nope"))
     assert result.returncode == 2
+    assert "migrations directory not found" in result.stderr
+
+
+def test_repo_migrations_directory_lints_clean():
+    result = run("lint", "--dir", str(REPO_ROOT / "supabase" / "migrations"))
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 # --- lint_against_base ----------------------------------------------------
@@ -79,12 +86,13 @@ def test_modified_merged_migration_fails():
     assert errors and "new migration" in errors[0]
 
 
-def test_deleted_and_renamed_merged_migration_fail():
-    base = [BASELINE]
-    assert sm.lint_against_base([("D", f"supabase/migrations/{BASELINE}")], base)
-    assert sm.lint_against_base(
-        [("R100", f"supabase/migrations/{BASELINE}", "supabase/migrations/20261110000000_x.sql")], base
-    )
+@pytest.mark.parametrize("change", [
+    ("D", f"supabase/migrations/{BASELINE}"),
+    ("R100", f"supabase/migrations/{BASELINE}", "supabase/migrations/20261110000000_x.sql"),
+], ids=["deleted", "renamed"])
+def test_deleted_or_renamed_merged_migration_fails(change):
+    errors = sm.lint_against_base([change], [BASELINE])
+    assert errors and BASELINE in errors[0]
 
 
 def test_added_migration_older_than_base_newest_fails():
@@ -157,6 +165,7 @@ def test_cli_unknown_base_exits_2(tmp_path):
     host = _repo_with_migrations(tmp_path)
     result = run("lint", "--base", "no-such-ref", cwd=host)
     assert result.returncode == 2
+    assert "cannot resolve merge base" in result.stderr
 
 
 # --- check-push-plan ------------------------------------------------------
@@ -182,7 +191,15 @@ def test_push_plan_up_to_date_passes():
 
 
 def test_empty_push_plan_exits_2():
-    assert run("check-push-plan", "-", stdin="").returncode == 2
+    result = run("check-push-plan", "-", stdin="")
+    assert result.returncode == 2
+    assert "empty push plan" in result.stderr
+
+
+def test_unreadable_push_plan_exits_2():
+    result = run("check-push-plan", "-", stdin="Error: failed to connect to postgres\n")
+    assert result.returncode == 2
+    assert "could not read a push plan" in result.stderr
 
 
 def test_push_plan_reads_file(tmp_path):
