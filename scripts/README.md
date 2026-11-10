@@ -2,7 +2,8 @@
 
 Helpers the `.claude/skills` pipeline calls for Taiga (project 39, `cholo-bots`, on
 https://backlog.growthgarage.org) and GitHub (`MrsBohemian/Cholobots`). They are stdlib-only
-Python 3.14 and bash (`curl`, `jq`, `git`, `gh`; `codex` for reviews). None of them runs the bot.
+Python 3.14 and bash (`curl`, `jq`, `git`, `gh`; `codex` for reviews), except
+`check_local_env.py` (see [Local development](#local-development)). None of them runs the bot.
 
 ## Environment
 
@@ -83,6 +84,12 @@ for a scope that does not exist.
 | `lib/dependency_satisfaction.py [--base B] <ref>...` | `/implement-epic` Step 2a-bis: classifies out-of-run dependencies as satisfied when Done, or when a merged PR into the base (default `$BASE_BRANCH` or `main`) claims the ref, no open PR does (claims per `taiga_closing_refs.py`) and every open task has a `## Gate` section; Archived, an open non-gated task, or a failed Taiga/gh/task lookup is never satisfied. Prints `satisfied_refs` plus per-ref reason, PRs, gated tasks and open agent tasks |
 | `lib/` | Shared Taiga client, dependency-diagram parser (`parse_roadmap.py --default-namespace cholobots`), base-branch selector, integration-branch names, stability parser, 0600 JSON writer for state files |
 
+## Local development
+
+| Script | Purpose |
+|---|---|
+| `check_local_env.py [--env-file F]` | Preflight `make run` calls before `cholobots.py`. Resolves `.env` over the shell the way `config.py` does (`override=True`) and exits 1, one line per problem on stderr, unless `SUPABASE_URL` is on `127.0.0.1`, `localhost` or `::1` and `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY` are non-empty and `TRANSPORTATION_CHANNEL_ID` (when set) is an integer. No override: production runs through the `Procfile`, not `make`. Unlike the pipeline scripts it needs python-dotenv, so it runs with the bot venv (`.venv/bin/python`) |
+
 ## Tests
 
 ```bash
@@ -91,4 +98,4 @@ python -m pytest tests/scripts -q
 for t in tests/scripts/test-*.sh; do bash "$t" || echo "FAILED: $t"; done
 ```
 
-The tests mock `curl`, `gh` and `codex`; none of them needs network access or credentials.
+The tests mock `curl`, `gh` and `codex`; none of them needs network access or credentials. The `.env`-file cases in `test_check_local_env.py` skip unless python-dotenv is installed (`requirements.txt`).
