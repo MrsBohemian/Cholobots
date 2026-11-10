@@ -101,6 +101,9 @@ VOL_LINE="$(grep -nE '^volume rm' "$TMP/log" | head -1 | cut -d: -f1 || true)"
 assert_true "(a) container rm precedes the first volume rm" \
   "[ -n \"$RM_LINE\" ] && [ -n \"$VOL_LINE\" ] && [ \"$RM_LINE\" -lt \"$VOL_LINE\" ]"
 assert_true "(a) override dir is gone" "[ ! -e \"$OVERRIDE\" ]"
+KEY_A="$(override_key "$ABS")"
+assert_true "(a) removes this workspace's fallback images" \
+  "grep -qx 'rmi cholobots-devcontainer:local-$KEY_A cholobots-devcontainer-base:local-$KEY_A' \"$TMP/log\""
 assert_true "(a) clone is gone" "[ ! -d \"$TMP/clone\" ]"
 
 # (b) Container removal fails.
@@ -168,6 +171,7 @@ STUB_PS_FAIL=1 "$TEARDOWN" "$TMP/clone" >"$TMP/f.out" 2>"$TMP/f.err" || F_EXIT=$
 assert_true "(f) exits 1" "[ \"$F_EXIT\" -eq 1 ]"
 assert_true "(f) stderr says Teardown incomplete" "grep -q 'Teardown incomplete' \"$TMP/f.err\""
 assert_true "(f) no volume rm" "! grep -q '^volume rm' \"$TMP/log\""
+assert_true "(f) no image rm" "! grep -q '^rmi' \"$TMP/log\""
 assert_true "(f) clone still exists" "[ -d \"$TMP/clone\" ]"
 assert_true "(f) override dir still exists" "[ -d \"$OVERRIDE\" ]"
 

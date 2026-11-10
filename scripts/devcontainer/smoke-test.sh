@@ -14,11 +14,25 @@ WORKTREE_PATH="$(mktemp -d "${TMPDIR:-/tmp}/devcontainer-smoke-test-XXXXXX")"
 rmdir "$WORKTREE_PATH"
 FAILURES=0
 
+# launch.sh clones --branch <name>, which a detached HEAD (`rev-parse
+# --abbrev-ref` prints the literal "HEAD") cannot satisfy. On a detached
+# checkout, pin a temporary local branch at HEAD for the clone and drop it on exit.
+SMOKE_BRANCH="$(git -C "$REPO_ROOT" symbolic-ref --short -q HEAD || true)"
+TEMP_BRANCH=""
+if [ -z "$SMOKE_BRANCH" ]; then
+    TEMP_BRANCH="smoke-test-$$"
+    git -C "$REPO_ROOT" branch "$TEMP_BRANCH" HEAD
+    SMOKE_BRANCH="$TEMP_BRANCH"
+fi
+
 # shellcheck disable=SC2329 # invoked through the EXIT trap
 cleanup() {
     echo ""
     echo "Cleaning up..."
     "$SCRIPT_DIR/teardown.sh" "$WORKTREE_PATH" 2>/dev/null || true
+    if [ -n "$TEMP_BRANCH" ]; then
+        git -C "$REPO_ROOT" branch -D "$TEMP_BRANCH" >/dev/null 2>&1 || true
+    fi
 }
 trap cleanup EXIT
 
@@ -28,7 +42,7 @@ echo ""
 # Launch in clone mode (the branch must exist locally). It may return non-zero if
 # post-start fails, but the container can still be usable.
 echo "Launching devcontainer..."
-"$SCRIPT_DIR/launch.sh" "$WORKTREE_PATH" "$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)" || true
+"$SCRIPT_DIR/launch.sh" "$WORKTREE_PATH" "$SMOKE_BRANCH" || true
 echo ""
 
 check_tool() {

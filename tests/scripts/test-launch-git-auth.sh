@@ -183,23 +183,35 @@ launch "$TMP/wt1" feature/one --worktree main || true
 assert_true "6: a second launch reuses the same path" "grep -qF -- \"--config $OVERRIDE\" \"\$STUB_LOG_DIR/up.log\""
 assert_true "6: the override is kept after launch" "[ -f \"$OVERRIDE\" ]"
 
-# 7. A failed pull builds locally and uses the local tag.
+# 7. A failed pull builds locally and uses a per-workspace local tag (concurrent
+# launches must not share a tag, or one build retags the other's image).
 reset_logs
 STUB_PULL_EXIT=1 launch "$TMP/wt7" feature/seven --worktree main || true
-assert_true "7: base image is built from the Dockerfile with the devcontainer.json context" \
-    "grep -qE 'docker build -f .*/\.devcontainer/Dockerfile -t cholobots-devcontainer-base:local $TMP/wt7( |<)' \"\$STUB_LOG_DIR/docker.log\""
-assert_true "7: base is tagged as the final image when there is no prebuild stage" \
-    "grep -qF 'docker tag cholobots-devcontainer-base:local cholobots-devcontainer:local' \"\$STUB_LOG_DIR/docker.log\""
 OVERRIDE7="$(grep -o -- "--config [^ ]*" "$STUB_LOG_DIR/up.log" | head -1 | cut -d' ' -f2)"
-assert_true "7: override image is the local tag" "[ \"\$(jq -r .image \"$OVERRIDE7\")\" = cholobots-devcontainer:local ]"
+KEY7="$(basename "$(dirname "$OVERRIDE7")")"
+BASE7="cholobots-devcontainer-base:local-$KEY7"
+IMG7="cholobots-devcontainer:local-$KEY7"
+assert_true "7: base image is built from the Dockerfile with the devcontainer.json context" \
+    "grep -qE 'docker build -f .*/\.devcontainer/Dockerfile -t $BASE7 $TMP/wt7( |<)' \"\$STUB_LOG_DIR/docker.log\""
+assert_true "7: base is tagged as the final image when there is no prebuild stage" \
+    "grep -qF 'docker tag $BASE7 $IMG7' \"\$STUB_LOG_DIR/docker.log\""
+assert_true "7: override image is the per-workspace local tag" "[ \"\$(jq -r .image \"$OVERRIDE7\")\" = $IMG7 ]"
+assert_true "7: no unsuffixed shared local tag is used" "! grep -qE ':local( |\$)' \"\$STUB_LOG_DIR/docker.log\""
 assert_true "7: no second build without Dockerfile.prebuild" "[ \"\$(grep -c 'docker build' \"\$STUB_LOG_DIR/docker.log\")\" -eq 1 ]"
 
 reset_logs
 echo 'ARG BASE_IMAGE' >"$TMP/wt7/.devcontainer/Dockerfile.prebuild"
 STUB_PULL_EXIT=1 launch "$TMP/wt7" feature/seven --worktree main || true
 assert_true "7: prebuild stage gets BASE_IMAGE of the local base" \
-    "grep -qF -- '--build-arg BASE_IMAGE=cholobots-devcontainer-base:local -t cholobots-devcontainer:local' \"\$STUB_LOG_DIR/docker.log\""
+    "grep -qF -- '--build-arg BASE_IMAGE=$BASE7 -t $IMG7' \"\$STUB_LOG_DIR/docker.log\""
 assert_true "7: no tag step when the prebuild stage ran" "! grep -q 'docker tag' \"\$STUB_LOG_DIR/docker.log\""
+
+# 7b. A second workspace falling back gets different tags from the first.
+reset_logs
+STUB_PULL_EXIT=1 launch "$TMP/wt1" feature/one --worktree main || true
+OVERRIDE7B="$(grep -o -- "--config [^ ]*" "$STUB_LOG_DIR/up.log" | head -1 | cut -d' ' -f2)"
+assert_true "7b: a different workspace gets a different local image tag" \
+    "[ \"\$(jq -r .image \"$OVERRIDE7B\")\" != $IMG7 ] && jq -r .image \"$OVERRIDE7B\" | grep -q '^cholobots-devcontainer:local-'"
 
 # 8. A successful pull uses the published image name.
 reset_logs

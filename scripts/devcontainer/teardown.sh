@@ -3,15 +3,19 @@
 # ABOUTME: Used by orchestrating agents for cleanup after work completes.
 set -euo pipefail
 
-# Per-workspace override config directory. launch.sh computes the identical key.
-override_dir() {
-    local key
+# Per-workspace key: names the override config directory and the fallback
+# image tags. launch.sh computes the identical key.
+workspace_key() {
     if command -v sha256sum >/dev/null 2>&1; then
-        key=$(printf %s "$1" | sha256sum | cut -c1-16)
+        printf %s "$1" | sha256sum | cut -c1-16
     else
-        key=$(printf %s "$1" | shasum -a 256 | cut -c1-16)
+        printf %s "$1" | shasum -a 256 | cut -c1-16
     fi
-    echo "${XDG_CACHE_HOME:-$HOME/.cache}/cholobots-devcontainer/$key"
+}
+
+# Per-workspace override config directory.
+override_dir() {
+    echo "${XDG_CACHE_HOME:-$HOME/.cache}/cholobots-devcontainer/$(workspace_key "$1")"
 }
 
 WORKTREE_PATH="${1:?Usage: teardown.sh <path> [--keep-clone]}"
@@ -75,6 +79,9 @@ if [ "$FAILED" -eq 0 ]; then
         docker volume rm "$VOLUME" >/dev/null 2>&1 || echo "Warning: could not remove volume $VOLUME" >&2
     done
     rm -rf "$(override_dir "$ABS_PATH")"
+    # Fallback images built for this workspace (absent when the prebuilt pull worked).
+    WS_KEY="$(workspace_key "$ABS_PATH")"
+    docker rmi "cholobots-devcontainer:local-$WS_KEY" "cholobots-devcontainer-base:local-$WS_KEY" >/dev/null 2>&1 || true
 fi
 
 # Remove cloned directory with safety guards. Skipped when a container is still

@@ -107,15 +107,19 @@ to_https() {
     esac
 }
 
-# Per-workspace override config directory. teardown.sh computes the identical key.
-override_dir() {
-    local key
+# Per-workspace key: names the override config directory and the fallback
+# image tags. teardown.sh computes the identical key.
+workspace_key() {
     if command -v sha256sum >/dev/null 2>&1; then
-        key=$(printf %s "$1" | sha256sum | cut -c1-16)
+        printf %s "$1" | sha256sum | cut -c1-16
     else
-        key=$(printf %s "$1" | shasum -a 256 | cut -c1-16)
+        printf %s "$1" | shasum -a 256 | cut -c1-16
     fi
-    echo "${XDG_CACHE_HOME:-$HOME/.cache}/cholobots-devcontainer/$key"
+}
+
+# Per-workspace override config directory.
+override_dir() {
+    echo "${XDG_CACHE_HOME:-$HOME/.cache}/cholobots-devcontainer/$(workspace_key "$1")"
 }
 
 # Create the checkout if the path doesn't exist yet: a worktree of the local
@@ -226,6 +230,11 @@ else
     echo "Pre-built image not available — building locally (this will be slow)..." >&2
     # One build context for both stages: devcontainer.json's build.context,
     # resolved against .devcontainer/.
+    # Tags are per workspace: concurrent launches that both fall back must not
+    # share a tag, or one build would retag the image another is about to start.
+    WS_KEY="$(workspace_key "$WS")"
+    LOCAL_BASE="cholobots-devcontainer-base:local-$WS_KEY"
+    LOCAL_IMAGE="cholobots-devcontainer:local-$WS_KEY"
     CTX="$(jq -r '.build.context // "."' "$WS/.devcontainer/devcontainer.json")"
     case "$CTX" in
         /*) CTXDIR="$CTX" ;;
@@ -233,16 +242,16 @@ else
     esac
     # Stage 1: base image from Dockerfile
     docker build -f "$WS/.devcontainer/Dockerfile" \
-        -t cholobots-devcontainer-base:local "$CTXDIR" >&2
+        -t "$LOCAL_BASE" "$CTXDIR" >&2
     # Stage 2: prebuild on top of base, when the checkout has one.
     if [ -f "$WS/.devcontainer/Dockerfile.prebuild" ]; then
         docker build -f "$WS/.devcontainer/Dockerfile.prebuild" \
-            --build-arg BASE_IMAGE=cholobots-devcontainer-base:local \
-            -t cholobots-devcontainer:local "$CTXDIR" >&2
+            --build-arg BASE_IMAGE="$LOCAL_BASE" \
+            -t "$LOCAL_IMAGE" "$CTXDIR" >&2
     else
-        docker tag cholobots-devcontainer-base:local cholobots-devcontainer:local
+        docker tag "$LOCAL_BASE" "$LOCAL_IMAGE"
     fi
-    IMAGE=cholobots-devcontainer:local
+    IMAGE="$LOCAL_IMAGE"
     echo "Local image built and tagged as $IMAGE" >&2
 fi
 # In both cases, override devcontainer.json to use the image instead of building.
