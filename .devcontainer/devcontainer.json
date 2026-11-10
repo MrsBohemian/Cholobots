@@ -1,0 +1,32 @@
+{
+  "name": "Cholobots Dev",
+  "build": { "dockerfile": "Dockerfile", "context": ".." },
+  "features": { "ghcr.io/devcontainers/features/docker-in-docker:2.17.0": {} },
+  "initializeCommand": "bash -c 'mkdir -p \"${HOME}/.claude\" && mkdir -p \"${HOME}/.codex\" && touch \"${HOME}/.claude.json\"'",
+  "mounts": [
+    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind",
+    "source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json,type=bind",
+    "source=${localEnv:HOME}/.codex,target=/home/vscode/.codex,type=bind",
+    "source=cholobots-venv-${devcontainerId},target=${containerWorkspaceFolder}/.venv,type=volume"
+  ],
+  "containerEnv": {
+    "DISCORD_TOKEN": "${localEnv:CHOLOBOTS_TEST_DISCORD_TOKEN}",
+    "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}",
+    "TAIGA_API_URL": "${localEnv:TAIGA_API_URL}",
+    "TAIGA_USERNAME": "${localEnv:TAIGA_USERNAME}",
+    "TAIGA_PASSWORD": "${localEnv:TAIGA_PASSWORD}",
+    "GH_TOKEN": "${localEnv:GH_TOKEN}",
+    "CHOLOBOTS_DEVCONTAINER": "1",
+    "SUPABASE": "supabase"
+  },
+  "remoteEnv": { "PATH": "${containerWorkspaceFolder}/.venv/bin:${containerEnv:PATH}" },
+  "forwardPorts": [54321, 54323],
+  "portsAttributes": {
+    "54321": { "label": "Supabase API", "onAutoForward": "notify" },
+    "54322": { "label": "Supabase Postgres", "onAutoForward": "ignore" },
+    "54323": { "label": "Supabase Studio", "onAutoForward": "notify" }
+  },
+  "postCreateCommand": ".devcontainer/post-create.sh",
+  "postStartCommand": ".devcontainer/post-start.sh",
+  "customizations": { "vscode": { "extensions": ["ms-python.python", "charliermarsh.ruff", "editorconfig.editorconfig"] } }
+}
