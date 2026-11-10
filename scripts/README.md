@@ -77,7 +77,7 @@ for a scope that does not exist.
 
 | Script | Purpose |
 |---|---|
-| `monitor-pr-stability.sh <pr> <quiet-min> [--max-seconds N]` | One stdout line: `STABLE`, `NEEDS_REBASE`, `CHECKS_FAILING:..`, `COMMENTS_FOUND:N`, `PENDING`. A PR with no runs (a branch that predates `checks.yml`/`integration.yml`) counts as passed after the run-registration grace (`MONITOR_RUN_REGISTRATION_GRACE_SECONDS`, default 120). Only a repo with zero workflows gets `STABLE` at once plus a `NOTE: no CI checks configured ...` line on stderr |
+| `monitor-pr-stability.sh <pr> <quiet-min> [--max-seconds N]` | One stdout line: `STABLE`, `NEEDS_REBASE`, `CHECKS_FAILING:..`, `COMMENTS_FOUND:N`, `PENDING`. A PR with no runs (a branch that predates `checks.yml`/`integration.yml`) counts as passed after the run-registration grace (`MONITOR_RUN_REGISTRATION_GRACE_SECONDS`, default 120) when its base requires no checks; on a base that requires `checks`/`integration` (story #179), missing required runs stay `PENDING` until the branch is rebased onto a base that has the workflows. Only a repo with zero workflows gets `STABLE` at once plus a `NOTE: no CI checks configured ...` line on stderr |
 | `remediate_pr.py <pr> [--resume F]` | Exit-code driven remediation loop around the monitor; records the no-CI note in its state file |
 | `codex-review-pr.sh <pr> [--dry-run]` | Detached Codex review posted as PR review threads; worktrees go under `.claude/worktrees/` |
 | `merge_train.py <prs...\|epic:<ref>> [--resume F]` | Sequential rebase, check, merge. Post-rebase check is `python -m py_compile cholobots.py config.py db/database.py bots/*.py`, plus pytest once unit tests exist (story #34) |

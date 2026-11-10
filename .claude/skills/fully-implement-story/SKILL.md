@@ -183,7 +183,7 @@ Follow `.claude/skills/remediate-pr/SKILL.md` with arguments:
 <prNumber> --taiga-id <ref> --taiga-type story --max-failures 5
 ```
 
-It drives `python3 scripts/remediate_pr.py` (stability monitoring, failure counting, state) and spawns agents only for fixes and comment resolution. The script waits for the PR's `checks` and `integration` runs. A PR with no runs (its branch predates the workflows) counts as passed after the monitor's two-minute run-registration grace, never as a failure or an endless wait; a repo with no workflows at all gets STABLE with a "no CI checks configured" note. Record the CI result or the note for the Step 9 report.
+It drives `python3 scripts/remediate_pr.py` (stability monitoring, failure counting, state) and spawns agents only for fixes and comment resolution. The script waits for the PR's `checks` and `integration` runs. A PR with no runs (its branch predates the workflows) counts as passed after the monitor's two-minute run-registration grace when its base requires no checks; on a base that requires `checks`/`integration` (story #179), missing required runs stay `PENDING` until the branch is rebased onto a base that has the workflows, never as a failure or an endless wait; a repo with no workflows at all gets STABLE with a "no CI checks configured" note. Record the CI result or the note for the Step 9 report.
 
 - **`STABLE`**: proceed to Step 5.
 - **`ESCALATED`**: `escalate("5+ build failures")`.

@@ -33,7 +33,7 @@ You are spawned in the foreground and the orchestrator treats your return as "th
 - Do not return until every step of the skill you were told to follow has actually completed and been verified against the artifacts that skill defines. Your agent definition lists the completion evidence expected of you. A skill that intentionally leaves work uncommitted (a review thread resolved by disagreeing) does not require a commit, but it still requires its own completion evidence.
 - Your final message must state what was **verified**, not what was **started**.
 
-Canonical source: [shared/synchronous-worker-contract.md](../skills/shared/synchronous-worker-contract.md). Completion evidence for your skills: pushed commit SHA exists on `upstream/<branch>`, `py_compile` output clean, review threads resolved by id, PR check state observed (`checks` and `integration`; no runs at all, on a branch that predates the workflows, counts as passed).
+Canonical source: [shared/synchronous-worker-contract.md](../skills/shared/synchronous-worker-contract.md). Completion evidence for your skills: pushed commit SHA exists on `upstream/<branch>`, `py_compile` output clean, review threads resolved by id, PR check state observed (`checks` and `integration`; no runs at all, on a branch that predates the workflows, counts as passed when its base requires no checks (on a base that requires `checks`/`integration`, story #179, it stays `PENDING` until rebased onto a base that has the workflows)).
 
 ## How You Work
 

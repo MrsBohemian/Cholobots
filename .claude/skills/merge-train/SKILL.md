@@ -54,7 +54,7 @@ Check the exit code from Step 1:
 
 ### Exit 0 — Complete
 
-The script processed all PRs successfully (or `--dry-run` completed). Print the summary output from stdout and stop. A PR without runs (a branch that predates the `checks`/`integration` workflows) is treated as stable, not as a failure or a reason to wait.
+The script processed all PRs successfully (or `--dry-run` completed). Print the summary output from stdout and stop. A PR without runs (a branch that predates the `checks`/`integration` workflows) is treated as stable when its base requires no checks (on a base that requires `checks`/`integration`, story #179, it stays `PENDING` until rebased onto a base that has the workflows), not as a failure.
 
 ### Exit 10 — Conflicts need resolution
 
