@@ -23,12 +23,15 @@ def values(environ=None):
     return managed
 
 
-def test_parses_status_env_output():
+def test_parse_status_env_strips_quotes():
     parsed = write_env.parse_status_env(STATUS_TEXT)
     assert parsed["API_URL"] == LOCAL_URL
     assert parsed["SERVICE_ROLE_KEY"] == "eyJ.service"
-    unquoted = write_env.parse_status_env(f"API_URL={LOCAL_URL}\nSERVICE_ROLE_KEY=k\n\nnoise\n")
-    assert unquoted == {"API_URL": LOCAL_URL, "SERVICE_ROLE_KEY": "k"}
+
+
+def test_parse_status_env_accepts_unquoted_values_and_skips_noise():
+    parsed = write_env.parse_status_env(f"API_URL={LOCAL_URL}\nSERVICE_ROLE_KEY=k\n\nnoise\n")
+    assert parsed == {"API_URL": LOCAL_URL, "SERVICE_ROLE_KEY": "k"}
 
 
 @pytest.mark.parametrize("missing", ["API_URL", "SERVICE_ROLE_KEY"])
@@ -40,19 +43,11 @@ def test_missing_required_key_is_an_error(missing):
         write_env.parse_status_env(text)
 
 
-@pytest.mark.parametrize(
-    "url",
-    ["https://abc.supabase.co", "http://127.0.0.1.evil.example", "http://localhost.evil.example"],
-)
-def test_non_local_api_url_is_refused(url):
+# Contract check only: the full table of local and lookalike hosts is owned by
+# test_check_local_env.py (is_local_url). Every merge test below covers the accepted path.
+def test_non_local_api_url_is_refused():
     with pytest.raises(ValueError, match="local"):
-        write_env.managed_values({"API_URL": url, "SERVICE_ROLE_KEY": "k"}, {})
-
-
-@pytest.mark.parametrize("url", ["http://127.0.0.1:54321", "http://localhost:54321", "http://[::1]:54321"])
-def test_local_api_urls_are_accepted(url):
-    managed, _ = write_env.managed_values({"API_URL": url, "SERVICE_ROLE_KEY": "k"}, {})
-    assert managed["SUPABASE_URL"] == url
+        write_env.managed_values({"API_URL": "https://abc.supabase.co", "SERVICE_ROLE_KEY": "k"}, {})
 
 
 def test_merge_into_empty_env_writes_managed_keys():

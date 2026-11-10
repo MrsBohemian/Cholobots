@@ -22,6 +22,13 @@ POST_START="$REPO_ROOT/.devcontainer/post-start.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# The scripts read these from the environment, and README/Makefile tell developers to export them
+# (inside the devcontainer DISCORD_TOKEN and OPENAI_API_KEY are real secrets). An inherited
+# SUPABASE=/path/to/supabase would bypass the fake and reset a real local stack, so start clean.
+unset SUPABASE SUPABASE_START_EXCLUDE SUPABASE_RETRY_ATTEMPTS SUPABASE_RETRY_DELAY \
+    DOCKER_WAIT_LIMIT DOCKER_INIT DISCORD_TOKEN OPENAI_API_KEY \
+    FAKE_DOCKER_DOWN FAKE_DOCKER_DOWN_ONCE FAKE_STACK_STARTING FAKE_DB_RESET_FAILS FAKE_LEGACY_IPTABLES_BROKEN
+
 info "Testing $POST_CREATE and $POST_START"
 
 for script in "$POST_CREATE" "$POST_START"; do
@@ -119,6 +126,13 @@ $log_call
 if [ "\${1:-}" = "iptables" ] && [ -n "\${FAKE_LEGACY_IPTABLES_BROKEN:-}" ] && [ ! -f "\$STATE/nft" ]; then exit 3; fi
 if [ "\${1:-}" = "update-alternatives" ]; then touch "\$STATE/nft"; fi
 if [ "\${1:-}" = "/fake/docker-init.sh" ]; then touch "\$STATE/dockerd"; fi
+exit 0
+FAKE
+
+# sleep is logged, never real: the Docker wait and the retry loops finish instantly.
+cat > "$BIN/sleep" <<FAKE
+#!/usr/bin/env bash
+$log_call
 exit 0
 FAKE
 
@@ -233,6 +247,12 @@ set -e
 if [ "$DOWN_STATUS" -ne 0 ]; then pass "post-start.sh exits non-zero when Docker never starts"; else fail "post-start.sh exits non-zero when Docker never starts"; fi
 if grep -qF 'Docker daemon' "$TMP/down.err"; then pass "failure message names the Docker daemon"; else fail "failure message names the Docker daemon"; fi
 if grep -q '^supabase' "$CALLS"; then fail "no supabase call when Docker is down"; else pass "no supabase call when Docker is down"; fi
+if [ "$(grep -cxF 'sleep 1' "$CALLS")" = "2" ]; then
+    pass "Docker wait gives up after DOCKER_WAIT_LIMIT one-second sleeps"
+else
+    fail "Docker wait gives up after DOCKER_WAIT_LIMIT one-second sleeps"
+    cat "$CALLS"
+fi
 
 # After a container restart dockerd brings the stack's containers back while its db container is still
 # starting: status, start and db reset all fail for a while. post-start retries each of them.

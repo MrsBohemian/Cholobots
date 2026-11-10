@@ -67,17 +67,15 @@ def test_chrome_install_is_behind_the_amd64_guard(dockerfile):
     assert '"$CHROME_PATH" --version' in body
 
 
-def test_supabase_cli_pin_matches_the_rest_of_the_repo(dockerfile):
-    match = re.search(r"^ARG SUPABASE_CLI_VERSION=(\S+)$", dockerfile, re.M)
-    assert match and match.group(1) == "2.121.0"
-    version = match.group(1)
+def test_supabase_cli_pin_matches_the_makefile(dockerfile):
+    # The Makefile is the source of truth; test_makefile.py already pins the README to it.
+    makefile = re.search(r"^SUPABASE_CLI_VERSION := (\S+)$", (ROOT / "Makefile").read_text(), re.M)
+    assert makefile, "Makefile must define SUPABASE_CLI_VERSION"
+    assert re.search(rf"^ARG SUPABASE_CLI_VERSION={re.escape(makefile.group(1))}$", dockerfile, re.M)
+
+
+def test_supabase_cli_deb_is_checksum_verified(dockerfile):
     assert "sha256sum -c" in dockerfile and "checksums.txt" in dockerfile
-    readme = (ROOT / "README.md").read_text()
-    assert f"supabase@{version}" in readme
-    makefile = ROOT / "Makefile"
-    if not makefile.exists():
-        pytest.skip("Makefile (#50) not present")
-    assert re.search(rf"^SUPABASE_CLI_VERSION\s*:?=\s*{re.escape(version)}$", makefile.read_text(), re.M)
 
 
 def test_docker_in_docker_feature_enabled_and_locked(config, lock):
@@ -113,9 +111,8 @@ def test_container_env_is_exactly_the_pass_through_set(config):
 
 def test_forwards_api_and_studio_only(config):
     assert config["forwardPorts"] == [54321, 54323]
-    postgres = config.get("portsAttributes", {}).get("54322")
-    if postgres is not None:
-        assert postgres["onAutoForward"] == "ignore"
+    # Without this, VS Code auto-forwards the Postgres port once the stack listens on it.
+    assert config["portsAttributes"]["54322"]["onAutoForward"] == "ignore"
 
 
 def test_venv_is_a_named_volume_on_the_path(config):
