@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file guides coding agents (Claude Code and Codex) and human contributors working in this repository. `AGENTS.md` is a symlink to this file so Codex reads the same notes; edit `CLAUDE.md`, never `AGENTS.md`.
 
 ## What this is
 
@@ -61,5 +61,5 @@ Prerequisites: `python3 scripts/taiga_project_setup.py --check` must exit 0. If 
 ## Conventions
 
 - Command names are mostly prefixed per bot (`m*`, `c*`, `g*`, `crudo*`, `o*`), but plenty of unprefixed names exist: Obi Juan (`note`, `update`, `accept`, `materials`, `labor`, `payout`, `paid`, `questcreate`...), Vueltabot (`tengo`, `busco`, `vuelta`, `claim`, `tripclaim`), Chismebot (`lead`, `leads`, `chisme`, `hotlist`, `cancel`, aliases `stove`/`oven`/`stovetop`), and `report`/`close` as subcommands of the `!crudo` group. Check for collisions before adding a command.
-- Persona voice is Spanglish and in-character; help text is hand-written per bot and is already out of sync with real command names in several places. When you add or rename a command, update that bot's `!<name>` help and the `!queso` text in `cholobots.py`.
+- Persona voice is Spanglish and in-character; help text is hand-written per bot and is already out of sync with real command names in several places. When you add or rename a command, update that bot's `!<name>` help and the `!cholobots` text in `cholobots.py`.
 - Customer/project lookups are `ilike %text%` substring matches with small limits; a new lookup should follow the existing helper in that module rather than add another variant.
