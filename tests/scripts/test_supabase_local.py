@@ -247,3 +247,224 @@ def test_port_in_use_detects_a_bound_port():
         port = s.getsockname()[1]
         assert supabase_local.port_in_use(port) is True
     assert supabase_local.port_in_use(port) is False
+
+
+# --- main() with a stub CLI runner -------------------------------------------------
+
+STATUS_ENV = 'API_URL="http://127.0.0.1:54331"\nDB_URL="postgresql://postgres:postgres@127.0.0.1:54332/postgres"\nSERVICE_ROLE_KEY="svc-key"\n'
+CLI = "fakecli"
+ENV = {"SUPABASE_CLI": CLI}
+
+
+class StubRunner:
+    def __init__(self, status_rc=0, docker_out=""):
+        self.calls = []
+        self.status_rc = status_rc
+        self.docker_out = docker_out
+
+    def __call__(self, cmd, **kwargs):
+        self.calls.append(list(cmd))
+        if cmd[0] == "docker":
+            return subprocess.CompletedProcess(cmd, 0, stdout=self.docker_out, stderr="")
+        if cmd[0] == "git":
+            return subprocess.run(cmd, **kwargs)
+        if "status" in cmd:
+            err = "supabase start is not running." if self.status_rc else ""
+            return subprocess.CompletedProcess(cmd, self.status_rc, stdout=STATUS_ENV, stderr=err)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    def cli_calls(self):
+        return [c for c in self.calls if c[0] == CLI]
+
+
+def commit_supabase(repo):
+    sdir = repo / "supabase"
+    (sdir / "migrations").mkdir(parents=True)
+    (sdir / "migrations" / "001_init.sql").write_text("select 1;\n")
+    (sdir / "seed.sql").write_text("select 2;\n")
+    (sdir / "config.toml").write_text(CONFIG_TEXT)
+    git("add", "supabase", cwd=repo)
+    git("commit", "--quiet", "-m", "supabase", cwd=repo)
+
+
+@pytest.fixture
+def stack_repo(repo):
+    commit_supabase(repo)
+    return repo
+
+
+def test_start_runs_cli_with_workdir_and_excludes(stack_repo, capsys):
+    wt = add_worktree(stack_repo, "story-72")
+    stub = StubRunner()
+    rc = supabase_local.main(["start", str(wt)], environ=ENV, run=stub)
+    assert rc == 0
+    workdir = Path(wt.resolve()) / ".supabase-local"
+    (start,) = [c for c in stub.cli_calls() if "start" in c]
+    assert start[:4] == [CLI, "start", "--workdir", str(workdir)]
+    assert start[4:] == ["-x", "studio,mailpit,imgproxy,logflare,vector,edge-runtime"]
+    rendered = tomllib.loads((workdir / "supabase" / "config.toml").read_text())
+    assert rendered["project_id"] == "cholobots-story-72"
+    assert rendered["api"]["port"] == 54331
+    assert (workdir / "supabase" / "migrations").is_symlink()
+    assert (workdir / "supabase" / "migrations" / "001_init.sql").read_text() == "select 1;\n"
+    assert (workdir / "supabase" / "seed.sql").read_text() == "select 2;\n"
+    out = capsys.readouterr().out.splitlines()
+    assert out == [
+        "SUPABASE_URL=http://127.0.0.1:54331",
+        "SUPABASE_SERVICE_ROLE_KEY=svc-key",
+        "SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54332/postgres",
+    ]
+
+
+def test_start_in_main_checkout_uses_repo_workdir_and_no_excludes(stack_repo):
+    stub = StubRunner()
+    assert supabase_local.main(["start", str(stack_repo)], environ=ENV, run=stub) == 0
+    (start,) = [c for c in stub.cli_calls() if "start" in c]
+    assert start == [CLI, "start", "--workdir", str(stack_repo.resolve())]
+    assert not (stack_repo / ".supabase-local").exists()
+
+
+def test_start_without_supabase_dir_is_a_noop(repo, capsys):
+    stub = StubRunner()
+    assert supabase_local.main(["start", str(repo)], environ=ENV, run=stub) == 0
+    assert stub.cli_calls() == []
+    assert "no supabase/config.toml" in capsys.readouterr().err
+
+
+def test_start_refuses_a_port_in_use(stack_repo, monkeypatch, capsys):
+    wt = add_worktree(stack_repo, "story-72")
+    monkeypatch.setattr(supabase_local, "port_in_use", lambda port: port == 54332)
+    stub = StubRunner()
+    rc = supabase_local.main(["start", str(wt)], environ=ENV, run=stub)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "port 54332 (slot 1) is in use" in err
+    assert [c for c in stub.cli_calls() if "start" in c] == []
+
+
+def test_start_skips_port_probe_when_this_stack_is_already_running(stack_repo, monkeypatch):
+    wt = add_worktree(stack_repo, "story-72")
+    monkeypatch.setattr(supabase_local, "port_in_use", lambda port: True)
+    stub = StubRunner(docker_out="supabase_db_cholobots-story-72\n")
+    assert supabase_local.main(["start", str(wt)], environ=ENV, run=stub) == 0
+    assert [c for c in stub.cli_calls() if "start" in c]
+
+
+def test_start_probes_only_services_that_are_not_excluded(stack_repo, monkeypatch):
+    wt = add_worktree(stack_repo, "story-72")
+    probed = []
+    monkeypatch.setattr(supabase_local, "port_in_use", lambda port: probed.append(port) or False)
+    supabase_local.main(["start", str(wt)], environ=ENV, run=StubRunner())
+    # api, db, shadow only: pooler disabled in config, studio/smtp/analytics/inspector excluded
+    assert sorted(probed) == [54330, 54331, 54332]
+    probed.clear()
+    supabase_local.main(
+        ["start", str(wt)], environ={**ENV, "SUPABASE_LOCAL_EXCLUDE": ""}, run=StubRunner()
+    )
+    assert {54333, 54334, 54337, 8084} <= set(probed)
+    assert 54339 not in probed
+
+
+def test_stop_removes_only_this_project_with_no_backup_and_releases_slot(stack_repo):
+    wt = add_worktree(stack_repo, "story-72")
+    stub = StubRunner()
+    supabase_local.main(["start", str(wt)], environ=ENV, run=stub)
+    ident = supabase_local.checkout_identity(str(wt), {})
+    reg = supabase_local.registry_path(ident)
+    assert supabase_local.registered_slots(reg) == {"story-72": 1}
+    stub = StubRunner()
+    assert supabase_local.main(["stop", str(wt)], environ=ENV, run=stub) == 0
+    (stop,) = stub.cli_calls()
+    workdir = str(Path(wt.resolve()) / ".supabase-local")
+    assert stop == [CLI, "stop", "--workdir", workdir, "--project-id", "cholobots-story-72", "--no-backup"]
+    assert supabase_local.registered_slots(reg) == {}
+    assert not os.path.exists(workdir)
+
+
+def test_stop_in_main_checkout_targets_cholobots_project(stack_repo):
+    stub = StubRunner()
+    assert supabase_local.main(["stop", str(stack_repo)], environ=ENV, run=stub) == 0
+    (stop,) = stub.cli_calls()
+    assert stop == [
+        CLI, "stop", "--workdir", str(stack_repo.resolve()), "--project-id", "cholobots", "--no-backup",
+    ]
+
+
+def test_status_passes_flags_through_with_workdir(stack_repo):
+    stub = StubRunner()
+    rc = supabase_local.main(
+        ["status", str(stack_repo), "-o", "env", "--override-name", "api.url=X"], environ=ENV, run=stub
+    )
+    assert rc == 0
+    (status,) = stub.cli_calls()
+    assert status == [
+        CLI, "status", "--workdir", str(stack_repo.resolve()), "-o", "env", "--override-name", "api.url=X",
+    ]
+
+
+def test_passthrough_appends_workdir(stack_repo):
+    stub = StubRunner()
+    rc = supabase_local.main(["db", "reset"], environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub)
+    assert rc == 0
+    (call,) = stub.cli_calls()
+    assert call == [CLI, "db", "reset", "--workdir", str(stack_repo.resolve())]
+
+
+def test_passthrough_in_unstarted_worktree_explains_itself(stack_repo, capsys):
+    wt = add_worktree(stack_repo, "story-72")
+    stub = StubRunner()
+    rc = supabase_local.main(["db", "reset", str(wt)], environ=ENV, run=stub)
+    assert rc == 1
+    assert "run scripts/supabase-local.sh start" in capsys.readouterr().err
+    assert stub.cli_calls() == []
+
+
+def test_env_prints_only_the_three_variables(stack_repo, capsys):
+    stub = StubRunner()
+    assert supabase_local.main(["env", str(stack_repo)], environ=ENV, run=stub) == 0
+    (call,) = stub.cli_calls()
+    assert call == [CLI, "status", "--workdir", str(stack_repo.resolve()), "-o", "env"]
+    assert capsys.readouterr().out.splitlines()[0] == "SUPABASE_URL=http://127.0.0.1:54331"
+
+
+def test_env_fails_when_status_fails(stack_repo, capsys):
+    stub = StubRunner(status_rc=1)
+    rc = supabase_local.main(["env", str(stack_repo)], environ=ENV, run=stub)
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "not running" in captured.err
+
+
+def test_prune_stops_entries_without_worktree(stack_repo):
+    wt = add_worktree(stack_repo, "story-72")
+    ident = supabase_local.checkout_identity(str(wt), {})
+    reg = supabase_local.registry_path(ident)
+    supabase_local.allocate_slot(reg, "story-72")
+    supabase_local.allocate_slot(reg, "bug-12")
+    stub = StubRunner()
+    assert supabase_local.main(["prune"], environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub) == 0
+    (stop,) = stub.cli_calls()
+    assert stop == [CLI, "stop", "--project-id", "cholobots-bug-12", "--no-backup"]
+    assert supabase_local.registered_slots(reg) == {"story-72": 1}
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["link", "--project-ref", "x"], ["login"], ["db", "push"], ["db", "reset", "--linked"], ["db", "dump", "--db-url=postgres://h"], ["start", "--db-url", "x"]],
+)
+def test_refuses_hosted_subcommands(stack_repo, capsys, argv):
+    stub = StubRunner()
+    rc = supabase_local.main(argv, environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub)
+    assert rc == 2
+    assert "refusing hosted operation" in capsys.readouterr().err
+    assert stub.cli_calls() == []
+
+
+def test_no_hosted_flags_ever_emitted(stack_repo):
+    wt = add_worktree(stack_repo, "story-72")
+    stub = StubRunner()
+    for argv in (["start", str(wt)], ["env", str(wt)], ["status", str(wt)], ["stop", str(wt)], ["prune"]):
+        supabase_local.main(argv, environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub)
+    emitted = {tok for call in stub.cli_calls() for tok in call}
+    assert emitted.isdisjoint({"--linked", "--db-url", "link", "login", "push"})

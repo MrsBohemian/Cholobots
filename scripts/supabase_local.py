@@ -5,8 +5,12 @@ import fcntl
 import json
 import os
 import re
+import shlex
+import shutil
 import socket
 import subprocess
+import sys
+import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -166,3 +170,213 @@ def port_in_use(port: int) -> bool:
         except OSError:
             return True
     return False
+
+
+DEFAULT_CLI = "npx --yes supabase@2.121.0"
+HOSTED_TOKENS = {"--linked", "--db-url", "link", "login"}
+WORKDIR_NAME = ".supabase-local"
+USAGE = "usage: supabase-local.sh start|stop|status|env|prune|<supabase cli subcommand> [checkout-path] [args...]"
+
+
+class LocalError(Exception):
+    def __init__(self, message: str, code: int = 1):
+        super().__init__(message)
+        self.code = code
+
+
+def _fail(message: str) -> None:
+    print(f"supabase-local: {message}", file=sys.stderr)
+
+
+def hosted_operation(argv: list[str]) -> str | None:
+    for tok in argv:
+        if tok in HOSTED_TOKENS or tok.startswith("--db-url="):
+            return tok
+    if argv[:1] == ["db"] and "push" in argv:
+        return "db push"
+    return None
+
+
+def _cli(environ: Mapping[str, str]) -> list[str]:
+    return shlex.split(environ.get("SUPABASE_CLI", DEFAULT_CLI))
+
+
+def _workdir(identity: Identity) -> str:
+    return identity.toplevel if identity.is_main else os.path.join(identity.toplevel, WORKDIR_NAME)
+
+
+def _slot_for_start(identity: Identity) -> int:
+    return 0 if identity.is_main else allocate_slot(registry_path(identity), identity.name)
+
+
+def _stack_running(identity: Identity, run) -> bool:
+    try:
+        result = run(
+            ["docker", "ps", "--filter", f"name=supabase_db_{identity.project_id}", "--format", "{{.Names}}"],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        return False
+    return f"supabase_db_{identity.project_id}" in (result.stdout or "").split()
+
+
+def _prepare_workdir(identity: Identity, slot: int, base_config: str) -> str:
+    """Render config.toml and link the rest of supabase/ into <checkout>/.supabase-local/supabase."""
+    src = os.path.join(identity.toplevel, "supabase")
+    dst = os.path.join(_workdir(identity), "supabase")
+    os.makedirs(dst, exist_ok=True)
+    wanted = mirror_entries(src)
+    for entry in os.listdir(dst):
+        path = os.path.join(dst, entry)
+        if entry != "config.toml" and os.path.islink(path) and entry not in wanted:
+            os.unlink(path)
+    with open(os.path.join(dst, "config.toml"), "w") as f:
+        f.write(render_config(base_config, identity.project_id, slot))
+    for entry in wanted:
+        link = os.path.join(dst, entry)
+        if os.path.lexists(link):
+            os.unlink(link)
+        os.symlink(os.path.relpath(os.path.join(src, entry), dst), link)
+    return os.path.dirname(dst)
+
+
+def _ports_to_probe(base_config: str, excludes: list[str], slot: int) -> list[int]:
+    cfg = tomllib.loads(base_config)
+    block = port_block(slot)
+
+    def enabled(*path: str) -> bool:
+        node = cfg
+        for key in path:
+            node = node.get(key, {}) if isinstance(node, dict) else {}
+        return node.get("enabled", True) if isinstance(node, dict) else True
+
+    ports = [block["shadow"], block["api"], block["db"]]
+    if cfg.get("db", {}).get("pooler", {}).get("enabled", False):
+        ports.append(block["pooler"])
+    if "studio" not in excludes and enabled("studio"):
+        ports.append(block["studio"])
+    if "mailpit" not in excludes and enabled("inbucket") and enabled("local_smtp"):
+        ports.append(block["smtp"])
+    if "logflare" not in excludes and enabled("analytics"):
+        ports.append(block["analytics"])
+    if "edge-runtime" not in excludes and enabled("edge_runtime"):
+        ports.append(block["inspector"])
+    return ports
+
+
+def _print_env(cli: list[str], workdir: str, run) -> int:
+    result = run([*cli, "status", "--workdir", workdir, "-o", "env"], capture_output=True, text=True)
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr or "")
+        return result.returncode
+    status = parse_status_env(result.stdout or "")
+    try:
+        lines = env_lines(status)
+    except KeyError as missing:
+        _fail(f"supabase status did not report {missing}")
+        return 1
+    print("\n".join(lines))
+    return 0
+
+
+def _require_workdir(identity: Identity) -> str:
+    workdir = _workdir(identity)
+    if not os.path.isdir(workdir):
+        raise LocalError(
+            f"no stack for {identity.project_id}; run scripts/supabase-local.sh start {identity.toplevel}"
+        )
+    return workdir
+
+
+def _start(identity, cli, environ, run) -> int:
+    base_path = os.path.join(identity.toplevel, "supabase", "config.toml")
+    if not os.path.isfile(base_path):
+        _fail(f"no supabase/config.toml in {identity.toplevel}; nothing to start")
+        return 0
+    with open(base_path) as f:
+        base_config = f.read()
+    excludes = default_excludes(identity, environ)
+    slot = _slot_for_start(identity)
+    if not _stack_running(identity, run):
+        for port in _ports_to_probe(base_config, excludes, slot):
+            if port_in_use(port):
+                raise LocalError(f"port {port} (slot {slot}) is in use")
+    workdir = identity.toplevel if identity.is_main else _prepare_workdir(identity, slot, base_config)
+    command = [*cli, "start", "--workdir", workdir]
+    if excludes:
+        command += ["-x", ",".join(excludes)]
+    result = run(command, stdout=2)
+    if result.returncode != 0:
+        return result.returncode
+    return _print_env(cli, workdir, run)
+
+
+def _stop(identity, cli, run) -> int:
+    workdir = _workdir(identity)
+    command = [*cli, "stop"]
+    if os.path.isdir(workdir):
+        command += ["--workdir", workdir]
+    result = run([*command, "--project-id", identity.project_id, "--no-backup"], stdout=2)
+    if result.returncode != 0:
+        return result.returncode
+    if not identity.is_main:
+        release_slot(registry_path(identity), identity.name)
+        shutil.rmtree(workdir, ignore_errors=True)
+    return 0
+
+
+def _prune(identity, cli, run) -> int:
+    listing = run(["git", "-C", identity.toplevel, "worktree", "list", "--porcelain"], capture_output=True, text=True, check=True)
+    live = {
+        sanitize_name(os.path.basename(line.split(" ", 1)[1].strip()))
+        for line in listing.stdout.splitlines()
+        if line.startswith("worktree ")
+    }
+    reg = registry_path(identity)
+    code = 0
+    for name in sorted(set(registered_slots(reg)) - live):
+        result = run([*cli, "stop", "--project-id", f"cholobots-{name}", "--no-backup"], stdout=2)
+        if result.returncode == 0:
+            release_slot(reg, name)
+        else:
+            code = result.returncode
+    return code
+
+
+def main(argv: list[str], environ: Mapping[str, str] = os.environ, run=subprocess.run) -> int:
+    if not argv:
+        print(USAGE, file=sys.stderr)
+        return 2
+    hosted = hosted_operation(argv)
+    if hosted:
+        _fail(f"refusing hosted operation {hosted}")
+        return 2
+    sub, checkout, rest = split_args(argv, environ, os.getcwd())
+    cli = _cli(environ)
+    try:
+        identity = checkout_identity(checkout, environ)
+        if sub == "start":
+            return _start(identity, cli, environ, run)
+        if sub == "stop":
+            return _stop(identity, cli, run)
+        if sub == "prune":
+            return _prune(identity, cli, run)
+        workdir = _require_workdir(identity)
+        if sub == "env":
+            return _print_env(cli, workdir, run)
+        if sub == "status":
+            return run([*cli, "status", "--workdir", workdir, *rest]).returncode
+        return run([*cli, sub, *rest, "--workdir", workdir]).returncode
+    except LocalError as error:
+        _fail(str(error))
+        return error.code
+    except RuntimeError as error:
+        _fail(str(error))
+        return 1
+    except subprocess.CalledProcessError as error:
+        _fail(f"{' '.join(error.cmd)} failed: {(error.stderr or '').strip()}")
+        return error.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
