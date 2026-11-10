@@ -56,8 +56,9 @@ STUB
 chmod +x "$STUB_BIN/docker"
 
 export PATH="$STUB_BIN:$PATH"
-assert_true "docker resolves to the stub" "[ \"\$(command -v docker)\" = \"$STUB_BIN/docker\" ]"
-assert_true "devcontainer resolves to the stub" "[ \"\$(command -v devcontainer)\" = \"$STUB_BIN/devcontainer\" ]"
+# Abort, not just record a failure: a run with the real CLIs would reach the Docker daemon.
+[ "$(command -v docker)" = "$STUB_BIN/docker" ] || { echo "FATAL: docker is not the stub; refusing to run" >&2; exit 1; }
+[ "$(command -v devcontainer)" = "$STUB_BIN/devcontainer" ] || { echo "FATAL: devcontainer is not the stub; refusing to run" >&2; exit 1; }
 
 # A linked worktree of a sandbox repo, so launch.sh skips checkout creation,
 # passes the main-checkout refusal and goes straight to `devcontainer up`.

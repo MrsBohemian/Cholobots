@@ -78,7 +78,7 @@ REL_LINE_2="$(cat "$TMP/wt3/.git")"
 assert_true "--relativize is a no-op on an already-relative pointer" \
   "[ \"\$REL_LINE\" = \"\$REL_LINE_2\" ]"
 
-# 6. Regression guard (bug #2827): adding a worktree must not mutate the source
+# 6. Regression guard (you-thon bug #2827, carried over with the port): adding a worktree must not mutate the source
 # repo's `.git/config`. A worktree shares that file with its main checkout, so
 # any write there — including git's own implicit one — permanently alters the
 # developer's repository. `git worktree add --relative-paths` records the
@@ -115,9 +115,9 @@ assert_true "worktree created via a path with '..' resolves" \
 assert_true "git worktree remove succeeds on the '..'-created worktree" \
   "git -C \"$TMP/repo\" worktree remove \"$TMP/wt-dotdot\""
 
-# 8. Regression guard (bug #2830): a <base> that exists only as a remote-tracking
+# 8. Regression guard (you-thon bug #2830, carried over with the port): a <base> that exists only as a remote-tracking
 # ref must still produce a worktree on the requested branch, and must still leave
-# the main checkout's `.git/config` byte-identical (story #2745 AC2). Passing such
+# the main checkout's `.git/config` byte-identical (you-thon story #2745 AC2). Passing such
 # a base straight to `git worktree add -b <branch> <path> <base>` makes git apply
 # DWIM to it, and the symptom is git-version dependent:
 #   - git 2.47.3 (CI's version) silently ignores the explicit `-b`, checks out the

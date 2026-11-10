@@ -30,17 +30,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 echo "=== Devcontainer teardown containment tests ==="
 
-# Static shape checks.
-assert_true "teardown.sh uses docker rm -f" \
-  "grep -qE 'docker rm -f' \"\$TEARDOWN\""
-assert_true "teardown.sh re-queries for surviving containers" \
-  "[ \"\$(grep -cE 'docker ps -aq --filter \"label=devcontainer.local_folder=' \"\$TEARDOWN\")\" -ge 2 ]"
-assert_true "docker rm -f outcome is not suppressed with || true" \
-  "! grep -E 'docker rm -f' \"\$TEARDOWN\" | grep -q '|| true'"
-assert_true "teardown.sh tracks FAILED=1 and exits 1" \
-  "grep -qE 'FAILED=1' \"\$TEARDOWN\" && grep -qE 'exit 1' \"\$TEARDOWN\""
-
-# Stub docker. Logs argv; `ps -aq` prints cid until `rm -f` creates the state file.
+# Stub docker. Logs argv; `ps -aq` prints cid until a successful `rm -f` creates the state file.
 mkdir -p "$TMP/bin"
 cat >"$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -55,7 +45,8 @@ case "$1" in
   stop) ;;
   rm)
     if [ -n "${STUB_RM_FAIL:-}" ]; then exit 1; fi
-    : >"$STUB_STATE"
+    # STUB_RM_SURVIVES: rm reports success but the container is still listed afterwards.
+    if [ -z "${STUB_RM_SURVIVES:-}" ]; then : >"$STUB_STATE"; fi
     ;;
   volume)
     if [ -n "${STUB_VOLUME_RM_FAIL:-}" ]; then exit 1; fi
@@ -92,7 +83,7 @@ reset_state() {
 # (a) Success path.
 make_clone
 reset_state
-ABS="$(cd "$TMP/clone" && pwd)"
+ABS="$(cd "$TMP/clone" && pwd -P)"
 OVERRIDE="$XDG_CACHE_HOME/cholobots-devcontainer/$(override_key "$ABS")"
 mkdir -p "$OVERRIDE"
 touch "$OVERRIDE/devcontainer.json"
@@ -112,7 +103,7 @@ assert_true "(a) clone is gone" "[ ! -d \"$TMP/clone\" ]"
 # (b) Container removal fails.
 make_clone
 reset_state
-ABS="$(cd "$TMP/clone" && pwd)"
+ABS="$(cd "$TMP/clone" && pwd -P)"
 OVERRIDE="$XDG_CACHE_HOME/cholobots-devcontainer/$(override_key "$ABS")"
 mkdir -p "$OVERRIDE"
 B_EXIT=0
@@ -148,6 +139,20 @@ assert_true "(d) override dir keyed by the physical path is gone" "[ ! -e \"$OVE
 assert_true "(d) container lookup uses the physical path" \
   "grep -q 'label=devcontainer.local_folder=$PHYS\$' \"$TMP/log\" && ! grep -q 'clone-link' \"$TMP/log\""
 assert_true "(d) logical and physical override keys differ" "[ \"$OVERRIDE\" != \"$LOGICAL_OVERRIDE\" ]"
+
+# (e) rm -f reports success but the container is still listed: the re-query catches it.
+make_clone
+reset_state
+ABS="$(cd "$TMP/clone" && pwd -P)"
+OVERRIDE="$XDG_CACHE_HOME/cholobots-devcontainer/$(override_key "$ABS")"
+mkdir -p "$OVERRIDE"
+E_EXIT=0
+STUB_RM_SURVIVES=1 "$TEARDOWN" "$TMP/clone" >"$TMP/e.out" 2>"$TMP/e.err" || E_EXIT=$?
+assert_true "(e) exits 1" "[ \"$E_EXIT\" -eq 1 ]"
+assert_true "(e) names the surviving container" "grep -q 'still bound' \"$TMP/e.err\" && grep -q 'cid' \"$TMP/e.err\""
+assert_true "(e) no volume rm" "! grep -q '^volume rm' \"$TMP/log\""
+assert_true "(e) clone still exists" "[ -d \"$TMP/clone\" ]"
+assert_true "(e) override dir still exists" "[ -d \"$OVERRIDE\" ]"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
