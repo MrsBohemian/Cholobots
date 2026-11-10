@@ -203,7 +203,7 @@ PREBUILD_IMAGE="${CHOLOBOTS_DEVCONTAINER_IMAGE:-ghcr.io/mrsbohemian/cholobots/de
 GHCR_TOKEN="${GH_TOKEN_FOR_PACKAGES:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
 if [ -n "$GHCR_TOKEN" ]; then
     if ! echo "$GHCR_TOKEN" | docker login ghcr.io -u oauth2 --password-stdin >/dev/null 2>&1; then
-        echo "Warning: Failed to authenticate to ghcr.io; continuing without registry auth (pulls may be slower or rate-limited)." >&2
+        echo "Warning: GHCR login failed; trying an anonymous pull." >&2
     fi
 fi
 if docker pull "$PREBUILD_IMAGE" >/dev/null 2>&1; then
