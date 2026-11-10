@@ -76,7 +76,30 @@ def test_contributing_links_merge_side_effects():
     assert ".claude/skills/shared/merge-side-effects.md" in _relative_links("CONTRIBUTING.md")
 
 
-@pytest.mark.parametrize("name", ["CONTRIBUTING.md", "CLAUDE.md"])
+README_SECTIONS = [
+    "Running the bot",
+    "Resetting data",
+    "Running tests",
+    "Work tracking",
+    "Contributing",
+]
+
+
+def test_readme_has_setup_section():
+    headings = _headings("README.md")
+    assert "Quickstart" in headings or "Local development" in headings
+
+
+@pytest.mark.parametrize("heading", README_SECTIONS)
+def test_readme_has_required_sections(heading):
+    assert heading in _headings("README.md")
+
+
+def test_readme_links_contributing():
+    assert "CONTRIBUTING.md" in _relative_links("README.md")
+
+
+@pytest.mark.parametrize("name", ["README.md", "CONTRIBUTING.md", "CLAUDE.md"])
 def test_relative_links_resolve(name):
     missing = [t for t in _relative_links(name) if t and not (ROOT / name).parent.joinpath(t).exists()]
     assert missing == []
