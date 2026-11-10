@@ -234,7 +234,8 @@ project. `scripts/supabase-local.sh` (core in `scripts/supabase_local.py`) is th
   Docker daemon (Docker-in-Docker) and one stack on the default ports (API 54321, DB 54322, project id
   `cholobots`), so containers on one machine do not collide.
 - **Worktree mode.** Each `.claude/worktrees/<story|bug>-<ref>` gets its own stack: project id
-  `cholobots-<worktree directory name>`, a slot `n` (1 to 99) allocated on first `start`, and ports
+  `cholobots-<worktree directory name>-<8 hex digits of a hash of the full path>` (so same-named
+  worktrees in different places never share a stack), a slot `n` (1 to 99) allocated on first `start`, and ports
   offset from the defaults: every port is the default plus `10*n`, except the inspector (8083 plus `n`).
   API is `54321+10n`, DB `54322+10n`. The slot registry is `cholobots-supabase-slots.json` in the git
   common dir (shared by every worktree of the clone, flock-guarded); the rendered config and a mirror of
@@ -242,11 +243,12 @@ project. `scripts/supabase-local.sh` (core in `scripts/supabase_local.py`) is th
   `mailpit`, `imgproxy`, `logflare`, `vector` and `edge-runtime` unless `SUPABASE_LOCAL_EXCLUDE` says
   otherwise.
 - **Main checkout and CI** use the defaults (slot 0), with no mirror.
-- **Commands.** `scripts/supabase-local.sh start|stop|status|env|prune [checkout-path]`; any other
-  first word is passed to the Supabase CLI against the checkout's stack. `env` prints `SUPABASE_URL`,
+- **Commands.** `scripts/supabase-local.sh start|stop|status|env|prune [checkout-path]`; only an allowlist of
+  local-only CLI commands (`db reset|diff|lint`, `migration new|list|up`, `test db`) is passed to the
+  Supabase CLI against the checkout's stack, with the checkout path right after the command words. `env` prints `SUPABASE_URL`,
   `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_DB_URL`. `stop` also frees the slot and removes
-  `.supabase-local/`. `prune` stops stacks whose worktree no longer exists. Hosted operations
-  (`link`, `login`, `--linked`, `--db-url`, `db push`) are refused.
+  `.supabase-local/`. `prune` stops stacks whose worktree no longer exists, deleted directories included. Every other
+  command and the hosted flags (`--linked`, `--db-url`, `--project-ref`) are refused.
 - **Who starts and stops.** `/implement-story`, `/fully-implement-story`, `/implement-epic`,
   `/fix-single-bug`, `/fully-fix-bugs` and `/parallel-fix-bugs` start the stack when they create a
   worktree and stop it before removing the worktree; a failure is a warning (`STACK_WARN`), never a

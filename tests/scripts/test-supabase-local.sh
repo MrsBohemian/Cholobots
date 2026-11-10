@@ -118,7 +118,7 @@ esac
 if [ "$url_a" != "$url_b" ]; then pass "API ports differ ($url_a, $url_b)"; else fail "both stacks share $url_a"; fi
 
 names="$(docker ps --format '{{.Names}}')"
-if grep -q 'supabase_db_cholobots-sl-a$' <<<"$names" && grep -q 'supabase_db_cholobots-sl-b$' <<<"$names"; then
+if grep -qE 'supabase_db_cholobots-sl-a-[0-9a-f]{8}$' <<<"$names" && grep -qE 'supabase_db_cholobots-sl-b-[0-9a-f]{8}$' <<<"$names"; then
     pass "each stack runs under its own project id"
 else
     fail "expected supabase_db_cholobots-sl-a and -sl-b containers, got: $names"

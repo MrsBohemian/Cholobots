@@ -2,6 +2,7 @@
 # ABOUTME: Core of the per-checkout local Supabase stack: identity, slot registry, port block, config rendering.
 # ABOUTME: Stdlib only; the main checkout keeps default ports, a worktree gets its own project id and port block.
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -46,6 +47,16 @@ def sanitize_name(name: str) -> str:
     return re.sub(r"[^a-z0-9-]+", "-", name.lower()).strip("-")
 
 
+def worktree_key(toplevel: str) -> str:
+    """Sanitized basename plus a hash of the full path: the registry key and the project id suffix.
+
+    The basename alone collides (`/a/story-72` and `/b/story-72`, or `Story_72` and `story-72`),
+    which would make a second worktree adopt the first one's stack, ports and data."""
+    path = os.path.realpath(toplevel)
+    digest = hashlib.sha256(path.encode()).hexdigest()[:8]
+    return f"{sanitize_name(os.path.basename(path))}-{digest}"
+
+
 def checkout_identity(path: str, environ: Mapping[str, str]) -> Identity:
     toplevel = os.path.realpath(_git(path, "rev-parse", "--show-toplevel"))
     git_dir = os.path.realpath(_git(path, "rev-parse", "--absolute-git-dir"))
@@ -53,7 +64,7 @@ def checkout_identity(path: str, environ: Mapping[str, str]) -> Identity:
         _git(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
     )
     is_main = git_dir == common or environ.get("CHOLOBOTS_DEVCONTAINER") == "1"
-    name = sanitize_name(os.path.basename(toplevel))
+    name = worktree_key(toplevel)
     project_id = "cholobots" if is_main else f"cholobots-{name}"
     return Identity(toplevel, common, name, project_id, is_main)
 
@@ -157,10 +168,16 @@ def env_lines(status: Mapping[str, str]) -> list[str]:
 
 
 def split_args(argv: list[str], environ: Mapping[str, str], cwd: str) -> tuple[str, str, list[str]]:
-    sub, rest = argv[0], list(argv[1:])
-    if rest and not rest[0].startswith("-") and os.path.isdir(rest[0]):
-        return sub, rest[0], rest[1:]
-    return sub, environ.get("CHOLOBOTS_CHECKOUT") or cwd, rest
+    """Split `<command words> [checkout-path] [args...]` into (first word, checkout, remaining args).
+
+    The checkout path sits right after the command words: one word, or two for the CLI's command
+    groups (`db reset <path>`, `migration new <path> name`)."""
+    sub = argv[0]
+    words = 2 if sub in COMMAND_GROUPS and len(argv) > 1 else 1
+    head, tail = list(argv[1:words]), list(argv[words:])
+    if tail and not tail[0].startswith("-") and os.path.isdir(tail[0]):
+        return sub, tail[0], head + tail[1:]
+    return sub, environ.get("CHOLOBOTS_CHECKOUT") or cwd, head + tail
 
 
 def port_in_use(port: int) -> bool:
@@ -176,8 +193,19 @@ def port_in_use(port: int) -> bool:
 
 
 DEFAULT_CLI = "npx --yes supabase@2.121.0"
-HOSTED_TOKENS = {"--linked", "--db-url", "link", "login"}
+HOSTED_TOKENS = {"--linked", "--db-url", "--project-ref", "--local=false", "link", "login"}
+# Handled here, against this checkout's stack.
+NATIVE_COMMANDS = {"start", "stop", "status", "env", "prune"}
+# The only CLI commands forwarded: each runs against the local stack when given --workdir and no
+# hosted flag. Everything else (`db pull`, `db dump`, `gen types`, `projects`, `functions`, ...) can
+# reach the hosted project when the checkout carries link metadata, so it is refused, not denylisted.
+PASSTHROUGH_COMMANDS = {
+    ("db", "reset"), ("db", "diff"), ("db", "lint"),
+    ("migration", "new"), ("migration", "list"), ("migration", "up"),
+    ("test", "db"),
+}
 WORKDIR_NAME = ".supabase-local"
+COMMAND_GROUPS = {group for group, _ in PASSTHROUGH_COMMANDS}
 USAGE = "usage: supabase-local.sh start|stop|status|env|prune|<supabase cli subcommand> [checkout-path] [args...]"
 
 
@@ -198,6 +226,12 @@ def hosted_operation(argv: list[str]) -> str | None:
     if argv[:1] == ["db"] and "push" in argv:
         return "db push"
     return None
+
+
+def allowed_command(argv: list[str]) -> bool:
+    if argv[0] in NATIVE_COMMANDS:
+        return True
+    return tuple(argv[:2]) in PASSTHROUGH_COMMANDS
 
 
 def _cli(environ: Mapping[str, str]) -> list[str]:
@@ -330,10 +364,16 @@ def _stop(identity, cli, run) -> int:
 
 def _prune(identity, cli, run) -> int:
     listing = run(["git", "-C", identity.toplevel, "worktree", "list", "--porcelain"], capture_output=True, text=True, check=True)
+    # A worktree whose directory was deleted stays listed (marked prunable) until git prunes its
+    # metadata, so only an existing directory counts as live.
     live = {
-        sanitize_name(os.path.basename(line.split(" ", 1)[1].strip()))
-        for line in listing.stdout.splitlines()
-        if line.startswith("worktree ")
+        worktree_key(path)
+        for path in (
+            line.split(" ", 1)[1].strip()
+            for line in listing.stdout.splitlines()
+            if line.startswith("worktree ")
+        )
+        if os.path.isdir(path)
     }
     reg = registry_path(identity)
     code = 0
@@ -353,6 +393,10 @@ def main(argv: list[str], environ: Mapping[str, str] = os.environ, run=subproces
     hosted = hosted_operation(argv)
     if hosted:
         _fail(f"refusing hosted operation {hosted}")
+        return 2
+    if not allowed_command(argv):
+        _fail(f"{' '.join(argv[:2])!r} is not an allowed local-only command; allowed: "
+              + ", ".join(sorted(NATIVE_COMMANDS | {" ".join(c) for c in PASSTHROUGH_COMMANDS})))
         return 2
     sub, checkout, rest = split_args(argv, environ, os.getcwd())
     cli = _cli(environ)

@@ -1,6 +1,8 @@
 # ABOUTME: Tests the per-checkout Supabase stack helper: identity, slots, ports, config rendering.
 # ABOUTME: Pure functions and real git in tmp_path; no Docker, no network.
 import os
+import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -73,12 +75,31 @@ def test_main_checkout_is_cholobots_slot_zero(repo):
     assert Path(ident.toplevel) == repo.resolve()
 
 
-def test_worktree_project_id_uses_sanitized_worktree_name(repo):
+def test_worktree_identity_is_sanitized_name_plus_path_hash(repo):
     wt = add_worktree(repo, "Story_72")
     ident = supabase_local.checkout_identity(str(wt), {})
     assert ident.is_main is False
-    assert ident.name == "story-72"
-    assert ident.project_id == "cholobots-story-72"
+    assert re.fullmatch(r"story-72-[0-9a-f]{8}", ident.name)
+    assert ident.project_id == f"cholobots-{ident.name}"
+    assert supabase_local.checkout_identity(str(wt), {}) == ident  # stable across calls
+
+
+def test_worktrees_with_the_same_basename_get_distinct_identities(repo):
+    a = repo.parent / "a" / "story-72"
+    b = repo.parent / "b" / "story-72"
+    for path in (a, b):
+        path.parent.mkdir()
+        git("worktree", "add", "--quiet", "--detach", str(path), cwd=repo)
+    ida = supabase_local.checkout_identity(str(a), {})
+    idb = supabase_local.checkout_identity(str(b), {})
+    assert ida.project_id != idb.project_id
+    assert ida.name != idb.name
+
+
+def test_names_that_sanitize_alike_get_distinct_identities(repo):
+    upper = supabase_local.checkout_identity(str(add_worktree(repo, "Story_72")), {})
+    lower = supabase_local.checkout_identity(str(add_worktree(repo, "story-72")), {})
+    assert upper.project_id != lower.project_id
 
 
 def test_devcontainer_env_forces_main_identity(repo):
@@ -237,13 +258,29 @@ def test_split_args_takes_an_existing_directory_as_the_checkout(tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("argv", "rest"),
+    [
+        (["db", "reset", "{d}"], ["reset"]),
+        (["db", "reset", "{d}", "--no-seed"], ["reset", "--no-seed"]),
+        (["migration", "new", "{d}", "add_x"], ["new", "add_x"]),
+        (["test", "db", "{d}"], ["db"]),
+    ],
+)
+def test_split_args_finds_the_checkout_after_a_two_word_command(tmp_path, argv, rest):
+    d = str(tmp_path)
+    argv = [a.replace("{d}", d) for a in argv]
+    assert supabase_local.split_args(argv, {"CHOLOBOTS_CHECKOUT": "/co"}, "/cwd") == (argv[0], d, rest)
+
+
+@pytest.mark.parametrize(
     ("argv", "environ", "expected"),
     [
         (["status", "-o", "env"], {}, ("status", "/cwd", ["-o", "env"])),
         (["env"], {"CHOLOBOTS_CHECKOUT": "/co"}, ("env", "/co", [])),
         (["db", "reset"], {}, ("db", "/cwd", ["reset"])),
+        (["db", "reset", "/no/such/dir"], {}, ("db", "/cwd", ["reset", "/no/such/dir"])),
     ],
-    ids=["flags-stay-args", "checkout-env", "non-directory-stays-arg"],
+    ids=["flags-stay-args", "checkout-env", "no-path-given", "non-directory-stays-arg"],
 )
 def test_split_args_falls_back_to_env_then_cwd(argv, environ, expected):
     assert supabase_local.split_args(argv, environ, "/cwd") == expected
@@ -329,7 +366,7 @@ def test_start_runs_cli_with_workdir_and_excludes(stack_repo, capsys):
     assert start[:4] == [CLI, "start", "--workdir", str(workdir)]
     assert start[4:] == ["-x", "studio,mailpit,imgproxy,logflare,vector,edge-runtime"]
     rendered = tomllib.loads((workdir / "supabase" / "config.toml").read_text())
-    assert rendered["project_id"] == "cholobots-story-72"
+    assert rendered["project_id"] == supabase_local.checkout_identity(str(wt), {}).project_id
     assert rendered["api"]["port"] == 54331
     assert (workdir / "supabase" / "migrations").is_symlink()
     assert (workdir / "supabase" / "migrations" / "001_init.sql").read_text() == "select 1;\n"
@@ -371,7 +408,8 @@ def test_start_refuses_a_port_in_use(stack_repo, monkeypatch, capsys):
 def test_start_skips_port_probe_when_this_stack_is_already_running(stack_repo, monkeypatch):
     wt = add_worktree(stack_repo, "story-72")
     monkeypatch.setattr(supabase_local, "port_in_use", lambda port: True)
-    stub = StubRunner(docker_out="supabase_db_cholobots-story-72\n")
+    project_id = supabase_local.checkout_identity(str(wt), {}).project_id
+    stub = StubRunner(docker_out=f"supabase_db_{project_id}\n")
     assert supabase_local.main(["start", str(wt)], environ=ENV, run=stub) == 0
     assert [c for c in stub.cli_calls() if "start" in c]
 
@@ -397,12 +435,12 @@ def test_stop_removes_only_this_project_with_no_backup_and_releases_slot(stack_r
     supabase_local.main(["start", str(wt)], environ=ENV, run=stub)
     ident = supabase_local.checkout_identity(str(wt), {})
     reg = supabase_local.registry_path(ident)
-    assert supabase_local.registered_slots(reg) == {"story-72": 1}
+    assert supabase_local.registered_slots(reg) == {ident.name: 1}
     stub = StubRunner()
     assert supabase_local.main(["stop", str(wt)], environ=ENV, run=stub) == 0
     (stop,) = stub.cli_calls()
     workdir = str(Path(wt.resolve()) / ".supabase-local")
-    assert stop == [CLI, "stop", "--workdir", workdir, "--project-id", "cholobots-story-72", "--no-backup"]
+    assert stop == [CLI, "stop", "--workdir", workdir, "--project-id", ident.project_id, "--no-backup"]
     assert supabase_local.registered_slots(reg) == {}
     assert not os.path.exists(workdir)
 
@@ -439,9 +477,7 @@ def test_passthrough_appends_workdir(stack_repo):
 def test_passthrough_in_unstarted_worktree_explains_itself(stack_repo, capsys):
     wt = add_worktree(stack_repo, "story-72")
     stub = StubRunner()
-    # A checkout path only counts directly after the subcommand (`db reset <path>` would resolve
-    # the checkout from the cwd), so name the worktree via CHOLOBOTS_CHECKOUT instead of relying on cwd.
-    rc = supabase_local.main(["db", "reset"], environ={**ENV, "CHOLOBOTS_CHECKOUT": str(wt)}, run=stub)
+    rc = supabase_local.main(["db", "reset", str(wt)], environ=ENV, run=stub)
     assert rc == 1
     assert "run scripts/supabase-local.sh start" in capsys.readouterr().err
     assert stub.cli_calls() == []
@@ -468,13 +504,42 @@ def test_prune_stops_entries_without_worktree(stack_repo):
     wt = add_worktree(stack_repo, "story-72")
     ident = supabase_local.checkout_identity(str(wt), {})
     reg = supabase_local.registry_path(ident)
-    supabase_local.allocate_slot(reg, "story-72")
-    supabase_local.allocate_slot(reg, "bug-12")
+    supabase_local.allocate_slot(reg, ident.name)
+    supabase_local.allocate_slot(reg, "bug-12-deadbeef")
     stub = StubRunner()
     assert supabase_local.main(["prune"], environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub) == 0
     (stop,) = stub.cli_calls()
-    assert stop == [CLI, "stop", "--project-id", "cholobots-bug-12", "--no-backup"]
-    assert supabase_local.registered_slots(reg) == {"story-72": 1}
+    assert stop == [CLI, "stop", "--project-id", "cholobots-bug-12-deadbeef", "--no-backup"]
+    assert supabase_local.registered_slots(reg) == {ident.name: 1}
+
+
+def test_prune_releases_a_worktree_whose_directory_was_deleted(stack_repo):
+    gone = add_worktree(stack_repo, "story-72")
+    kept = add_worktree(stack_repo, "story-73")
+    ids = {w: supabase_local.checkout_identity(str(w), {}) for w in (gone, kept)}
+    reg = supabase_local.registry_path(ids[gone])
+    for ident in ids.values():
+        supabase_local.allocate_slot(reg, ident.name)
+    shutil.rmtree(gone)  # git still lists it, marked prunable
+    stub = StubRunner()
+    assert supabase_local.main(["prune"], environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub) == 0
+    (stop,) = stub.cli_calls()
+    assert stop == [CLI, "stop", "--project-id", ids[gone].project_id, "--no-backup"]
+    assert supabase_local.registered_slots(reg) == {ids[kept].name: 2}
+
+
+def test_prune_does_not_mistake_a_same_named_worktree_elsewhere_for_live(stack_repo):
+    live = stack_repo.parent / "b" / "story-72"
+    live.parent.mkdir()
+    git("worktree", "add", "--quiet", "--detach", str(live), cwd=stack_repo)
+    ident = supabase_local.checkout_identity(str(live), {})
+    reg = supabase_local.registry_path(ident)
+    supabase_local.allocate_slot(reg, ident.name)
+    supabase_local.allocate_slot(reg, "story-72-00000000")  # same basename, another (gone) location
+    stub = StubRunner()
+    assert supabase_local.main(["prune"], environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub) == 0
+    (stop,) = stub.cli_calls()
+    assert stop[-2] == "cholobots-story-72-00000000"
 
 
 @pytest.mark.parametrize(
@@ -496,3 +561,96 @@ def test_no_hosted_flags_ever_emitted(stack_repo):
         supabase_local.main(argv, environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub)
     emitted = {tok for call in stub.cli_calls() for tok in call}
     assert emitted.isdisjoint({"--linked", "--db-url", "link", "login", "push"})
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["db", "reset"],
+        ["db", "diff"],
+        ["db", "lint"],
+        ["migration", "new", "add_x"],
+        ["migration", "list"],
+        ["migration", "up"],
+        ["test", "db"],
+    ],
+)
+def test_passthrough_allows_local_only_subcommands(stack_repo, argv):
+    stub = StubRunner()
+    rc = supabase_local.main(argv, environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub)
+    assert rc == 0
+    (call,) = stub.cli_calls()
+    assert call == [CLI, *argv, "--workdir", str(stack_repo.resolve())]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["db", "pull"],
+        ["db", "dump"],
+        ["db", "remote", "commit"],
+        ["migration", "repair", "20240101000000"],
+        ["inspect", "db", "bloat"],
+        ["projects", "list"],
+        ["functions", "deploy"],
+        ["secrets", "set", "A=1"],
+        ["gen", "types"],
+        ["branches", "list"],
+        ["init"],
+        ["db"],
+        ["frobnicate"],
+    ],
+)
+def test_passthrough_rejects_everything_off_the_local_allowlist(stack_repo, capsys, argv):
+    stub = StubRunner()
+    rc = supabase_local.main(argv, environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub)
+    assert rc == 2
+    assert "not an allowed local-only command" in capsys.readouterr().err
+    assert stub.cli_calls() == []
+
+
+@pytest.mark.parametrize(
+    "argv", [["db", "reset", "--project-ref", "abc"], ["migration", "list", "--local=false"]]
+)
+def test_refuses_flags_that_retarget_an_allowed_command_at_the_hosted_project(stack_repo, capsys, argv):
+    stub = StubRunner()
+    rc = supabase_local.main(argv, environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub)
+    assert rc == 2
+    assert "refusing hosted operation" in capsys.readouterr().err
+    assert stub.cli_calls() == []
+
+
+def test_db_reset_with_a_checkout_path_acts_on_that_checkout(stack_repo):
+    wt = add_worktree(stack_repo, "story-72")
+    supabase_local.main(["start", str(wt)], environ=ENV, run=StubRunner())
+    stub = StubRunner()
+    # cwd is elsewhere (the main checkout via the environment); the path names the worktree.
+    rc = supabase_local.main(
+        ["db", "reset", str(wt)], environ={**ENV, "CHOLOBOTS_CHECKOUT": str(stack_repo)}, run=stub
+    )
+    assert rc == 0
+    (call,) = stub.cli_calls()
+    assert call == [CLI, "db", "reset", "--workdir", str(Path(wt.resolve()) / ".supabase-local")]
+
+
+# --- the shell launcher --------------------------------------------------------------
+
+
+def test_launcher_resolves_its_directory_without_gnu_readlink_f(tmp_path):
+    # BSD/macOS readlink has no -f. Put a readlink that rejects -f first on PATH and run the
+    # launcher through a symlink, as a checkout-relative `make` target or a user alias would.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = shutil.which("readlink")
+    (bindir / "readlink").write_text(
+        f'#!/bin/sh\nfor a in "$@"; do [ "$a" = "-f" ] && {{ echo "readlink: illegal option -- f" >&2; exit 1; }}; done\nexec {real} "$@"\n'
+    )
+    (bindir / "readlink").chmod(0o755)
+    link = tmp_path / "linked-supabase-local.sh"
+    link.symlink_to(os.path.join(REPO_ROOT, "scripts", "supabase-local.sh"))
+    result = subprocess.run(
+        ["bash", str(link)], capture_output=True, text=True,
+        env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"},
+    )
+    assert result.returncode == 2, result.stderr
+    assert "usage: supabase-local.sh" in result.stderr

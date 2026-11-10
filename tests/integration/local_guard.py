@@ -63,4 +63,12 @@ def integration_settings(environ: Mapping[str, str]) -> tuple[IntegrationSetting
         db_url = DEFAULT_DB_URL
     if not is_local_url(db_url):
         return None, _not_local("SUPABASE_DB_URL", db_url)
+    # A stack's DB port is its API port plus one (54321/54322, 54331/54332, ...). A URL pair from
+    # two stacks would reset one database while the bot clients use the other.
+    api_port, db_port = _port(url), _port(db_url)
+    if api_port is None or db_port != api_port + 1:
+        return None, (
+            f"SUPABASE_URL (port {api_port}) and SUPABASE_DB_URL (port {db_port}) belong to different stacks; "
+            "export both from the same `scripts/supabase-local.sh env`"
+        )
     return IntegrationSettings(url=url, service_key=key, db_url=db_url), ""
