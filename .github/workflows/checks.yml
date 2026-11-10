@@ -1,0 +1,57 @@
+# ABOUTME: CI gate run on every pull request (any base, so stacked PRs too) and on pushes to main.
+# ABOUTME: Mirrors `make compile lint test`: py_compile, ruff, unit tests, script pytest tests and every tests/scripts/test-*.sh.
+#
+# The workflow and its job are both named "checks": branch protection requires the
+# job name as a context, and scripts/monitor-pr-stability.sh matches those contexts
+# against workflow-run names. Rename one and you must rename the other.
+# No paths filter: a required context that never reports blocks the PR forever.
+# The default workspace (/home/runner/work/...) matters: tests/scripts/test-taiga-wiki.sh
+# fails when the checkout lives under /tmp.
+name: checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # config.py raises at import without these, and chismebot, guardabot and
+      # crudobot call create_client at import. Dummies only: no test talks to a
+      # hosted service, and there is no .env on the runner.
+      DISCORD_TOKEN: ci-dummy
+      OPENAI_API_KEY: ci-dummy
+      SUPABASE_URL: http://127.0.0.1:54321
+      SUPABASE_SERVICE_ROLE_KEY: ci-dummy
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Check shell-test tools
+        run: make check-tools
+      - name: Compile
+        run: python -m py_compile cholobots.py config.py db/database.py bots/*.py
+      - name: Lint
+        run: python -m ruff check --output-format=github .
+      - name: Unit tests
+        run: python -m pytest -q tests/unit
+      - name: Script tests
+        run: |
+          python -m pytest -q tests/scripts
+          for t in tests/scripts/test-*.sh; do echo "== $t"; bash "$t" || exit 1; done
