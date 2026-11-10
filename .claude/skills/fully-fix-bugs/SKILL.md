@@ -6,6 +6,7 @@ disable-model-invocation: true  # human-only: unattended sweep orchestrator - a 
 allowed-tools:
   - Agent
   - Bash(scripts/taiga-story.sh *)
+  - Bash(scripts/supabase-local.sh *)
   - Bash(python3 scripts/taiga_select_issues.py *)
   - Bash(python3 scripts/taiga_project_setup.py --check)
   - Bash(python3 scripts/remediate_pr.py *)
@@ -54,7 +55,7 @@ Check if `/tmp/fully-fix-bugs.json` exists:
     - `"monitoring"` -> Step 4 (monitor PR)
     - `"stable"` -> Step 5 (update Taiga, advance to next)
     - `"escalated"` -> Step 5 (advance to next bug)
-  - **Worktree recovery on resume:** before spawning any agent for the current bug, restore the path from state: `WT=$(jq -r ".bugs[.currentBugIndex].worktreePath" /tmp/fully-fix-bugs.json)`. Check `git worktree list`. If the worktree is gone but the bug has a `branch`, recreate it on that branch (`git worktree add "$WT" <branch>`). If neither exists, start from Step 3 (the worktree is created there).
+  - **Worktree recovery on resume:** before spawning any agent for the current bug, restore the path from state: `WT=$(jq -r ".bugs[.currentBugIndex].worktreePath" /tmp/fully-fix-bugs.json)`. Check `git worktree list`. If the worktree is gone but the bug has a `branch`, recreate it on that branch (`git worktree add "$WT" <branch>`) and start its stack again as in Step 3.3a. If neither exists, start from Step 3 (the worktree is created there).
   - Reuse `options`/`urgentRefs` from state; never re-select or re-prompt
   - Skip Steps 1b and 1c
 - If it doesn't exist or `phase` is `"complete"`, proceed with fresh initialization
@@ -141,6 +142,8 @@ Process bugs sequentially starting from `currentBugIndex`. For each bug:
    ```
    Skip the add if the worktree already exists (resume). Record `worktreePath` in the state file. If this fails, set `status = "escalated"`, `escalationReason = "worktree creation failed"` and go to Step 5.
 
+3a. **Start the worktree's own Supabase stack** (its own Bash call, run from `REPO_ROOT`, the main checkout): `scripts/supabase-local.sh start "$WT" >/dev/null`. A base without `supabase/config.toml` exits 0 with a note. A non-zero exit is a warning only: print `STACK_WARN:<ref>:<first stderr line>` and continue; never escalate for it. Each running stack costs about 1 GB RAM.
+
 4. **Spawn the fix agent** (synchronous, foreground; wait for its return):
    - **Agent type**: `senior-software-developer`
    - **Prompt**:
@@ -150,6 +153,7 @@ Process bugs sequentially starting from `currentBugIndex`. For each bug:
      Working directory: <WT> (a git worktree of this repo based on upstream/main). Do all file edits and git commands there (use absolute paths or `git -C <WT>`). Main checkout: <REPO_ROOT>.
      FORBIDDEN: cd to the main checkout, checking out other branches, `git reset --hard`, `git stash` (the stash is shared across worktrees).
      The skills and helper scripts live in the main checkout and may be absent from the worktree: read skill text from <REPO_ROOT>/.claude/skills/ and run helpers as `python3 <REPO_ROOT>/scripts/...` with <WT> as the working directory.
+     Local Supabase for this worktree: scripts/supabase-local.sh env <WT> prints its SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_DB_URL; make test-integration uses it automatically. Never use another checkout's stack.
      Never run `python cholobots.py`. Follow .claude/skills/shared/synchronous-worker-contract.md: foreground Bash and Agent calls only, return only after the work is verified complete.
 
      Finish by returning: the PR number and URL, the branch name, the Codex review line, and the check results. If you cannot produce a PR, return `NO_PR` and the reason.
@@ -261,7 +265,9 @@ Based on the current bug's `status`:
 
 ### In both cases:
 
-1. **Remove the worktree:**
+1. **Stop the worktree's stack** (its own Bash call, escalated bugs included): `scripts/supabase-local.sh stop "$WT"`. A failure is a `STACK_WARN:<ref>:<first stderr line>`; continue.
+
+   **Remove the worktree:**
    ```bash
    git worktree remove "$WT"
    ```
@@ -278,6 +284,7 @@ Based on the current bug's `status`:
    - Bugs completed (with PR numbers and links)
    - Bugs escalated (with reasons)
    - Worktrees left in place (with paths)
+   - If any stack `stop` failed: run `scripts/supabase-local.sh prune` to stop stacks whose worktree is gone
    - Bugs remaining (if any were added to Taiga during the run: these are not tracked)
 
 ## Error handling
@@ -286,5 +293,5 @@ Based on the current bug's `status`:
 - If an agent spawn fails or returns an error, log it, set the current bug to `status = "escalated"`, `escalationReason = "agent execution failed"`, and proceed to Step 5.
 - The state file at `/tmp/fully-fix-bugs.json` enables resumability: if the conversation is interrupted, re-invoking the skill reads the state file and continues from the current bug and phase.
 - **Worktree recovery on resume:** when resuming, always verify the worktree exists before spawning an agent into it; recreate it if it is gone.
-- **Always remove worktrees** in Step 5, regardless of whether the bug was stable or escalated, unless removal is refused because of uncommitted work.
+- **Always stop the worktree's stack and remove the worktree** in Step 5, regardless of whether the bug was stable or escalated, unless removal is refused because of uncommitted work.
 - **Never stop the entire run for a single bug failure**: escalate the bug (`Blocked`, `escalation-needed` tag, assigned to Jon) and move on.

@@ -5,6 +5,7 @@ argument-hint: "<story-ref> [base-branch]"
 allowed-tools:
   - Agent
   - Bash(scripts/taiga-story.sh *)
+  - Bash(scripts/supabase-local.sh *)
   - mcp__taiga-py__get_story
   - mcp__taiga-py__update_story
   - mcp__taiga-py__set_story_status
@@ -60,13 +61,14 @@ Run these from the main checkout; never `git checkout` or `git switch` there (ot
    - Branch exists only on upstream: `git worktree add --track -b <branch-name> <wt> upstream/<branch-name>`.
    - No branch: `git fetch upstream <base> && git worktree add -b feature/<ref>-<short-slug> <wt> upstream/<base>` (slug from the story subject, lowercase, hyphens, 3 to 4 words).
 4. Fast-forward a reused branch when upstream is ahead: `git -C <wt> pull --ff-only upstream <branch-name>` (skip if the branch is not on upstream yet).
+5. Start the worktree's own local Supabase stack, as its own Bash call: `scripts/supabase-local.sh start <wt> >/dev/null` (a base without `supabase/config.toml` exits 0 with a note). A non-zero exit is a warning only: print `STACK_WARN:<ref>:<first stderr line>` and continue. Every spawn prompt below also carries this line: `Local Supabase for this worktree: scripts/supabase-local.sh env <wt> prints its SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_DB_URL; make test-integration uses it automatically. Never use another checkout's stack.`
 
 ## Step 3: Implement tasks with fresh agents
 
 Follow [`../shared/story-task-delegation.md`](../shared/story-task-delegation.md): **Task loop** (applying **Respawn guard** before every re-spawn), then **Safety net**, then **Test-quality review**, with `<branch-name>` and `<wt>` from Step 2.5 and `<base>` from Step 0. Every spawn prompt names `<wt>` and forbids `cd` to the main checkout, checking out other branches, `git reset --hard` and `git stash`. Every Agent spawn is foreground (`run_in_background: false`); this skill may itself be running inside an `/overseer` subagent.
 
 - **Run state:** keep it in this conversation. `openTaskIds` / `tasksTotal` come from Step 1; record `preSpawnTip` (the literal SHA from `git -C <wt> rev-parse <branch-name>`) before each spawn; start `tasksCompleted` at 0, `verifiedTaskIds` as `[]` and `noCommitRecoveryAttempted` as false; mark a task's TodoWrite item `completed` when it is added to `verifiedTaskIds`.
-- **escalate(<reason>):** set the story `Blocked`, tag it `escalation-needed` and assign Jon (`update_story(project=39, ref=<ref>, status="Blocked", tags=[<current tags...>, "escalation-needed"])`, then `assign_item(project=39, ref=<ref>, username="Jon Roberts", entity_type="story")`), post the reason with `add_comment(project=39, ref=<ref>, text="Escalated: <reason>", entity_type="story")`, keep the worktree for inspection, stop here (do not run Step 4), and report `BLOCKED: <reason>`.
+- **escalate(<reason>):** set the story `Blocked`, tag it `escalation-needed` and assign Jon (`update_story(project=39, ref=<ref>, status="Blocked", tags=[<current tags...>, "escalation-needed"])`, then `assign_item(project=39, ref=<ref>, username="Jon Roberts", entity_type="story")`), post the reason with `add_comment(project=39, ref=<ref>, text="Escalated: <reason>", entity_type="story")`, stop the worktree's stack (`scripts/supabase-local.sh stop <wt>`, its own Bash call; failure is a `STACK_WARN`), keep the worktree for inspection, stop here (do not run Step 4), and report `BLOCKED: <reason>`.
 
 Carry any `GATED:` lines into the Step 4 report.
 
@@ -78,7 +80,7 @@ When all tasks are done:
 2. Confirm from Taiga, not the report: `get_story(project=39, ref=<ref>)` shows `Ready for review`, and `env -u GH_TOKEN gh pr list --repo MrsBohemian/Cholobots --head <branch-name> --json number,url` returns the PR. If either is missing, `escalate("finalize-story-pr did not complete: <what is missing>")`.
 3. Assign the story to Jon for review if finalize did not: `assign_item(project=39, ref=<ref>, username="Jon Roberts", entity_type="story")`.
 4. **Do NOT set the story to `Done`** yourself. Done happens either by Jon after merging the PR, or by the post-merge sync when the PR carries `mark-done-on-merge` (or the story keeps that tag); see [`../shared/merge-side-effects.md`](../shared/merge-side-effects.md).
-5. Remove the worktree; the branch is pushed and stays: `git worktree remove <wt>`.
+5. Stop the worktree's stack (its own Bash call; failure is a `STACK_WARN`): `scripts/supabase-local.sh stop <wt>`. Then remove the worktree; the branch is pushed and stays: `git worktree remove <wt>`.
 6. Report what was completed, the PR link, the merge-side-effect labels or tags, the Codex review line (`REVIEW_POSTED`/`REVIEW_SKIPPED`/`REVIEW_PENDING`), the `GATED:` lines, and the PR's CI state (`checks`, `integration`).
 
 Remind the user to run `/clear` before invoking `/implement-story` again, to avoid context pollution from the previous story.

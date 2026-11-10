@@ -5,6 +5,7 @@ argument-hint: "<story-ref> [base-branch] [--resume]"
 allowed-tools:
   - Agent
   - Bash(scripts/taiga-story.sh *)
+  - Bash(scripts/supabase-local.sh *)
   - Bash(python3 scripts/taiga_project_setup.py --check*)
   - mcp__taiga-py__*
   - Bash(env -u GH_TOKEN gh *)
@@ -40,12 +41,14 @@ The same trap applies to every other way of leaving work in flight: never resume
 
 **Worktree isolation.** All story work happens in `<wt>` = `<main checkout>/.claude/worktrees/story-<ref>` (Step 1c). This orchestrator runs git commands against the main checkout only to create or remove worktrees and fetch; it never runs `git checkout`/`git switch` there (other sessions share it). Every spawn prompt names its worktree and forbids `cd` to the main checkout, checking out other branches, `git reset --hard` and `git stash`.
 
+**Per-worktree Supabase stack (story #72).** Every worktree this skill creates gets its own local stack, started (from the main checkout) with `scripts/supabase-local.sh start <path> >/dev/null` (its own Bash call) and stopped with `scripts/supabase-local.sh stop <path>` (its own Bash call) on every path that ends this skill's use of the worktree, kept worktrees included (the data is disposable and each stack holds about 1 GB RAM). `start` is idempotent, so a worktree whose stack `/implement-epic` already started is fine. A non-zero exit from either is a warning, never an escalation: print `STACK_WARN:<ref>:<first stderr line>` and continue. Every spawn prompt for a worker in a worktree also carries this line: `Local Supabase for this worktree: scripts/supabase-local.sh env <worktree> prints its SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_DB_URL; make test-integration uses it automatically. Never use another checkout's stack.`
+
 **escalate(<reason>)** means, in this order:
 1. Write `phase = "escalated"`, `escalated = true` and `escalationReason = <reason>` to the state file (its own Bash/Write call).
 2. `update_story(project=39, ref=<ref>, status="Blocked", tags=[<current tags...>, "escalation-needed"])` (re-read the tags first; Taiga replaces the whole list).
 3. `assign_item(project=39, ref=<ref>, username="Jon Roberts", entity_type="story")`.
 4. `add_comment(project=39, ref=<ref>, text="Escalated by fully-implement-story: <reason>", entity_type="story")`, and if a PR exists, `env -u GH_TOKEN gh pr comment <prNumber> --repo MrsBohemian/Cholobots --body "Escalating to @bigjonroberts: <reason>"`.
-5. Keep the worktree for inspection and **STOP**.
+5. Stop the worktree's Supabase stack (`scripts/supabase-local.sh stop <wt>`, its own Bash call; failure is a `STACK_WARN`), keep the worktree for inspection and **STOP**.
 
 Decision rules when things go wrong:
 - CI flaky but under 5 failures: invoke `/remediate-pr` again and let the script run its stability check.
@@ -109,6 +112,7 @@ No lookups needed: status names, the assignee name `"Jon Roberts"` and tags come
 2. `<wt>` = `<main checkout>/.claude/worktrees/story-<ref>` (absolute path), unless `git worktree list --porcelain` already shows the branch checked out elsewhere; then reuse that path.
 3. Branch exists locally: `git worktree add <wt> <branch-name>`, then `git -C <wt> pull --ff-only upstream <branch-name>` if it is on upstream. Only on upstream: `git worktree add --track -b <branch-name> <wt> upstream/<branch-name>`.
 4. No branch: `git fetch upstream +<base-branch>:refs/remotes/upstream/<base-branch> && git worktree add -b feature/<ref>-<slug> <wt> upstream/<base-branch>` (slug from the story subject, lowercase, hyphens, 3 to 4 words). The explicit refspec creates `upstream/<base-branch>` even for a stacked predecessor branch.
+5. Start the worktree's Supabase stack (its own Bash call): `scripts/supabase-local.sh start <wt> >/dev/null`. A base without `supabase/config.toml` (it predates #47) exits 0 with a note. Non-zero is a `STACK_WARN` only.
 
 ### 1d. Initialize state file
 
@@ -208,7 +212,7 @@ It drives `python3 scripts/remediate_pr.py` (stability monitoring, failure count
 1. Update state file: `phase = "fixing"`.
 2. For each bug in `state.bugs` with status `"filed"`:
 
-   a. Create a worktree for it on the feature branch tip: `git fetch upstream <featureBranch> && git worktree add --detach <main checkout>/.claude/worktrees/bug-<bug-ref> upstream/<featureBranch>` (the fix skill creates its `fix/` branch there). Call it `<bug-wt>`.
+   a. Create a worktree for it on the feature branch tip: `git fetch upstream <featureBranch> && git worktree add --detach <main checkout>/.claude/worktrees/bug-<bug-ref> upstream/<featureBranch>` (the fix skill creates its `fix/` branch there). Call it `<bug-wt>`. Start its stack (its own Bash call): `scripts/supabase-local.sh start <bug-wt> >/dev/null` (a failure is a `STACK_WARN`).
 
    b. **Spawn `senior-software-developer`** (`run_in_background: false`): `"Work only in <bug-wt>. Fix bug #<bug-ref> on feature branch <featureBranch>. Follow the fix-story-bug skill instructions with arguments '<bug-ref> <featureBranch>'. Never cd to the main checkout, check out another branch, run git reset --hard or git stash."`
 
@@ -221,6 +225,7 @@ It drives `python3 scripts/remediate_pr.py` (stability monitoring, failure count
    f. When remediation returns `STABLE`:
       - Merge the sub-PR: `env -u GH_TOKEN gh pr merge <subPrNumber> --repo MrsBohemian/Cholobots --squash --delete-branch`
       - Bring the story worktree up to date: `git -C <wt> pull --ff-only upstream <featureBranch>`
+      - Stop the bug worktree's stack (its own Bash call): `scripts/supabase-local.sh stop <bug-wt>` (a failure is a `STACK_WARN`)
       - Remove the bug worktree: `git worktree remove <bug-wt>`
       - Update the bug's status to `"merged"` in the state file
       - Make sure the bug is `Ready for test` in Taiga (fix-story-bug sets it): `update_issue(project=39, ref=<bug-ref>, status="Ready for test")`
@@ -254,7 +259,7 @@ It drives `python3 scripts/remediate_pr.py` (stability monitoring, failure count
    ```
    env -u GH_TOKEN gh pr comment <prNumber> --repo MrsBohemian/Cholobots --body "Story implementation complete. Comments resolved, manual testing: <passed | skipped: reason>. CI: <checks and integration green | no CI runs on this branch>. Ready for review."
    ```
-7. Remove the story worktree (its own Bash call; the branch stays on upstream): `git worktree remove <wt>`.
+7. Stop the story worktree's stack (its own Bash call; failure is a `STACK_WARN`): `scripts/supabase-local.sh stop <wt>`. Then remove the story worktree (its own Bash call; the branch stays on upstream): `git worktree remove <wt>`.
 8. Report success with the PR link, the base branch and whether it came from the argument or the `main` default, the manual-testing result, and the CI result (or the "no CI checks configured" note).
 
 ## Error handling

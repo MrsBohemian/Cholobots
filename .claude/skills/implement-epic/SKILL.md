@@ -6,6 +6,7 @@ allowed-tools:
   - Agent
   - Bash(scripts/taiga-story.sh *)
   - Bash(scripts/taiga-epic.sh *)
+  - Bash(scripts/supabase-local.sh *)
   - Bash(python3 scripts/taiga_project_setup.py --check)
   - Bash(python3 scripts/lib/parse_roadmap.py *)
   - Bash(mkdir *)
@@ -37,6 +38,8 @@ discovers the epic's analyzed stories, orders them by the epic's `## Dependency 
 up to `<n>` of them at a time, each in a **slot** — a git worktree at
 `.claude/worktrees/story-<ref>` plus one synchronous `senior-software-developer` agent following
 `/fully-implement-story` in that worktree. A finished slot is refilled with the next ready story.
+Each slot also runs its own local Supabase stack (`scripts/supabase-local.sh`, story #72), which
+costs about 1 GB RAM while it runs.
 Nothing is merged; `/merge-train epic:<ref>` does that afterwards.
 
 ## Choosing `<n>`
@@ -364,6 +367,18 @@ Record `branch`, `worktree`, `base` and `baseReason`. If any command fails, set 
 with the git error as `failureReason`, emit `LAUNCH_FAIL:<ref>:<reason>`, and go on to the next
 ready story.
 
+**Start the slot's Supabase stack**, as its own Bash call from the main checkout, once the worktree
+exists (also when it was reused):
+
+```bash
+scripts/supabase-local.sh start <absolute worktree path> >/dev/null
+```
+
+A base that predates #47 has no `supabase/config.toml`; the script says so and exits 0. A non-zero
+exit is a warning only: emit `STACK_WARN:<ref>:<first stderr line>`, remember that a stop may be
+needed, and carry on (the worker's integration tests then skip, or fail under
+`make test-integration`, which is the honest outcome). Never mark the story `error` for it.
+
 ### 4c. Spawn one agent per slot
 
 **Before spawning**, check `/tmp/fully-implement-<ref>.json`. If it exists with a **terminal**
@@ -384,6 +399,10 @@ command runs inside that worktree. Never cd to the main checkout at <repo root>,
 check out another branch, and never run `git reset --hard` or `git stash` (the stash is
 shared across worktrees). Your shell's working directory resets between calls, so cd to
 the worktree (or use absolute paths) in every Bash call.
+
+Local Supabase for this worktree: scripts/supabase-local.sh env <absolute worktree path>
+prints its SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_DB_URL; make test-integration
+uses it automatically. Never use another checkout's stack.
 
 Branch <branch> is ALREADY created and checked out there, cut from upstream/<base branch>.
 In /fully-implement-story this is the "branch exists" case, but SKIP any `git pull`: the
@@ -433,10 +452,15 @@ base. Branch names are never derived from a ref.
 Set `phase` to `"complete"` and emit `DONE:<complete>:<escalated>:<errors>:<skipped>`
 (`handed_off` stories count under `<complete>`).
 
-**Worktree cleanup is this skill's**: for a story that ended `complete`, run
-`git worktree remove .claude/worktrees/story-<ref>` then `git worktree prune` — the branch is pushed
-and the PR is open. **Keep** the worktree for a story that ended `escalated` or `error`: it may hold
-uncommitted work and it is the evidence for whoever picks the story up.
+**Worktree cleanup is this skill's**: for a story that ended `complete`, stop its stack first
+(`scripts/supabase-local.sh stop <absolute worktree path>`, its own Bash call), then
+run `git worktree remove .claude/worktrees/story-<ref>` and `git worktree prune` — the branch is
+pushed and the PR is open. **Keep** the worktree for a story that ended `escalated` or `error`: it
+may hold uncommitted work and it is the evidence for whoever picks the story up. Its stack is
+stopped anyway (the data is disposable: migrations and seed rebuild it, and each stack holds about
+1 GB), so run the same `stop` for kept worktrees. A failed `stop` is a `STACK_WARN:<ref>:<first
+stderr line>`, never an error; if any stop failed, the final report says to run
+`scripts/supabase-local.sh prune`. The scratch `integration-<ref>` worktree gets no stack.
 
 1. Read the state file for final counts.
 2. **Epic status.** The workflow MCP server has no epic-status tool, and `scripts/taiga-epic.sh`
