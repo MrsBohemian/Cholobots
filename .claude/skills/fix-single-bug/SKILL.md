@@ -36,7 +36,6 @@ Repo facts: branches are pushed to `upstream` (`MrsBohemian/Cholobots`) and PRs 
 1. Extract the bug ref from `$ARGUMENTS` (e.g., `12`). If `$ARGUMENTS` also contains the token `--mark-done-on-merge`, note it: only then may Step 6 label the PR to close the bug on merge. `/fully-fix-bugs` passes it; overseer and manual runs do not.
 2. Fetch the issue: `get_issue(project=39, ref=<bug-ref>)`. Note the `subject`, tags and status.
 3. If the issue is already `Closed` or `Rejected`, inform the caller and stop.
-4. If the bug lives only in the sibling dashboards repo (`../Cholobots-Mobile`) and this repo has no `mobile/` directory yet (story #64), stop and report "out of scope: lives in ../Cholobots-Mobile". Make no changes.
 
 ## Step 2: Setup branch
 

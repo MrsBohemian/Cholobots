@@ -79,7 +79,7 @@ Read the persona module the story touches and note:
 
 ### 2c. For dashboard stories
 
-Read the relevant page in `../Cholobots-Mobile` (or `mobile/` after story #64): layout, the Supabase tables and columns it queries, how it handles empty and error states, and the shared styling in that repo. The dashboards are static HTML with a publishable Supabase key; there is no component framework.
+Read the relevant page in `mobile/`: layout, the Supabase tables and columns it queries, how it handles empty and error states, and the shared styling in that directory. The dashboards are static HTML with a publishable Supabase key; there is no component framework.
 
 ### 2d. Check for existing designs
 
