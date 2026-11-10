@@ -10,16 +10,31 @@ PYTHON ?= python$(shell cat .python-version 2>/dev/null || echo 3)
 VENV_PY := .venv/bin/python
 
 .DEFAULT_GOAL := help
-.PHONY: help setup db-up db-down db-reset db-env run compile lint test test-integration check
+.PHONY: help setup check-tools db-up db-down db-reset db-env run compile lint test test-integration check
 
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "%-17s %s\n", $$1, $$2}'
 
-setup: ## Create .venv, install the pinned requirements and the pre-commit hook, create .env
+setup: check-tools ## Check shell-test tools, create .venv, install the pinned requirements and the pre-commit hook, create .env
 	$(PYTHON) -m venv .venv
 	$(VENV_PY) -m pip install -r requirements.txt -r requirements-dev.txt
 	$(VENV_PY) -m pre_commit install
 	[ -f .env ] || cp .env.example .env
+
+check-tools: ## Check the system tools the shell tests need (jq, timeout, setsid, curl)
+	@missing=0; \
+	for tool in jq timeout setsid curl; do \
+		command -v $$tool >/dev/null 2>&1 && continue; \
+		missing=1; \
+		case $$tool in \
+			jq) hint='brew install jq (macOS) or apt install jq (Debian/Ubuntu)';; \
+			timeout) hint='brew install coreutils, then put "$$(brew --prefix coreutils)/libexec/gnubin" on PATH (macOS); part of coreutils on Linux';; \
+			setsid) hint='brew install util-linux, then put "$$(brew --prefix util-linux)/bin" on PATH (macOS); part of util-linux on Linux';; \
+			*) hint='brew install curl (macOS) or apt install curl (Debian/Ubuntu)';; \
+		esac; \
+		echo "Missing required tool '$$tool': $$hint" >&2; \
+	done; \
+	exit $$missing
 
 db-up: ## Start the local Supabase stack in Docker
 	$(SUPABASE) start
@@ -42,7 +57,7 @@ compile: ## Byte-compile the bot modules
 lint: ## Run ruff
 	$(VENV_PY) -m ruff check .
 
-test: ## Run the unit tests, the script pytest tests and every tests/scripts/test-*.sh
+test: check-tools ## Run the unit tests, the script pytest tests and every tests/scripts/test-*.sh
 	$(VENV_PY) -m pytest -q tests/unit tests/scripts
 	for t in tests/scripts/test-*.sh; do echo "== $$t"; bash "$$t" || exit 1; done
 

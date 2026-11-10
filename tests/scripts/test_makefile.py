@@ -13,6 +13,7 @@ MAKEFILE = ROOT / "Makefile"
 TARGETS = (
     "help",
     "setup",
+    "check-tools",
     "db-up",
     "db-down",
     "db-reset",
@@ -133,3 +134,40 @@ def test_integration_target_reports_missing_harness(tmp_path):
 def test_cli_version_matches_readme():
     version = re.search(r"^SUPABASE_CLI_VERSION := (\S+)$", MAKEFILE.read_text(), re.M).group(1)
     assert f"supabase@{version}" in (ROOT / "README.md").read_text(encoding="utf-8")
+
+
+def test_setup_and_test_run_the_tool_preflight_first():
+    assert dry_run("setup").index("command -v") < dry_run("setup").index("-m venv .venv")
+    out = dry_run("test")
+    assert out.index("for tool in jq timeout setsid curl") < out.index("-m pytest -q")
+
+
+def test_check_tools_names_the_missing_binary_and_how_to_install_it(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    for tool in ("jq", "curl", "setsid"):  # everything but timeout is present
+        (fake_bin / tool).write_text("#!/bin/sh\n")
+        (fake_bin / tool).chmod(0o755)
+    env = {**CLEAN_ENV, "PATH": f"{fake_bin}:/usr/bin:/bin"}
+    if shutil.which("timeout", path=env["PATH"]):
+        pytest.skip("a system timeout is on the minimal PATH")
+    result = subprocess.run(
+        ["make", "check-tools"], cwd=ROOT, env=env, capture_output=True, text=True, check=False
+    )
+    assert result.returncode != 0
+    assert "Missing required tool 'timeout'" in result.stderr
+    assert "coreutils" in result.stderr
+    assert "'jq'" not in result.stderr
+
+
+def test_check_tools_passes_when_all_present(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    for tool in ("jq", "curl", "setsid", "timeout"):
+        (fake_bin / tool).write_text("#!/bin/sh\n")
+        (fake_bin / tool).chmod(0o755)
+    env = {**CLEAN_ENV, "PATH": f"{fake_bin}:/usr/bin:/bin"}
+    result = subprocess.run(
+        ["make", "check-tools"], cwd=ROOT, env=env, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
