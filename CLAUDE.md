@@ -2,6 +2,8 @@
 
 This file guides coding agents (Claude Code and Codex) and human contributors working in this repository. `AGENTS.md` is a symlink to this file so Codex reads the same notes; edit `CLAUDE.md`, never `AGENTS.md`.
 
+Branch and pull-request flow, database migrations, the command checklist and commit attribution for everyone (people and agents) are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## What this is
 
 Cholobots is a single Discord bot (discord.py, `!` prefix) that hosts six personas for a small contracting business (Handley Man): Metichebot (planning, daily tasks, time tracking, pings), Chismebot (CRM / leads), Guardabot (inventory), Crudobot (job costing, closeout, receipts), Obi Juan (subcontractor "quests"), Vueltabot (marketplace / delivery gigs). Data lives in Supabase. A sibling repo, `../Cholobots-Mobile`, is a set of static HTML dashboards reading the same Supabase project with a publishable key.
