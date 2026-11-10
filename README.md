@@ -64,4 +64,5 @@ The setup script is run once by a project admin with `--apply`. Like the other h
 - `bots/` — one module per persona
 - `db/database.py` — legacy SQLite helpers plus the Supabase `metiche_weekly` accessors
 - `config.py` — env loading and the shared OpenAI client
+- `supabase/` — Supabase CLI project: `config.toml` for the local stack and `migrations/`, the database schema of record (baseline dumped from the hosted project, story #32; changes follow story #49)
 - `docs/` — assessments and design notes; `Cholobots_48_Hour_Development_Plan.md` is the current roadmap
