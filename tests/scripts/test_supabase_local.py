@@ -439,7 +439,9 @@ def test_passthrough_appends_workdir(stack_repo):
 def test_passthrough_in_unstarted_worktree_explains_itself(stack_repo, capsys):
     wt = add_worktree(stack_repo, "story-72")
     stub = StubRunner()
-    rc = supabase_local.main(["db", "reset", str(wt)], environ=ENV, run=stub)
+    # A checkout path only counts directly after the subcommand (`db reset <path>` would resolve
+    # the checkout from the cwd), so name the worktree via CHOLOBOTS_CHECKOUT instead of relying on cwd.
+    rc = supabase_local.main(["db", "reset"], environ={**ENV, "CHOLOBOTS_CHECKOUT": str(wt)}, run=stub)
     assert rc == 1
     assert "run scripts/supabase-local.sh start" in capsys.readouterr().err
     assert stub.cli_calls() == []
