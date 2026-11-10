@@ -14,6 +14,10 @@ Python 3.14 and bash (`curl`, `jq`, `git`, `gh`; `codex` for reviews), except
 | `MERGE_TRAIN_REMOTE`, `CODEX_REVIEW_REMOTE` | merge train, codex review | git remote holding PR branches, default `upstream` |
 | `MONITOR_ADVISORY_CHECKS`, `MONITOR_ADVISORY_REVIEWERS`, `MONITOR_RUN_REGISTRATION_GRACE_SECONDS` | monitor | See `--help` |
 | `CODEX_REVIEW_*` | codex review | See `--help` |
+| `SUPABASE_CLI` | `supabase-local.sh` | Supabase CLI command, default `npx --yes supabase@2.121.0` (the Makefile exports the same value) |
+| `SUPABASE_LOCAL_EXCLUDE` | `supabase-local.sh` | Comma-separated services to skip on `start`; default none in the main checkout and a lighter set in a worktree. Empty value starts everything |
+| `CHOLOBOTS_CHECKOUT` | `supabase-local.sh` | Checkout to act on when no path argument is given, default the current directory |
+| `CHOLOBOTS_DEVCONTAINER` | `supabase-local.sh` | `1` (set by the devcontainer) makes the checkout use the default ports and project id |
 
 ### Credentials
 
@@ -96,6 +100,7 @@ for a scope that does not exist.
 |---|---|
 | `check_local_env.py [--env-file F]` | Preflight `make run` calls before `cholobots.py`. Resolves `.env` over the shell like `config.py` and exits 1, one line per problem on stderr, unless `SUPABASE_URL` is on `127.0.0.1`, `localhost` or `::1`, `DISCORD_TOKEN`, `OPENAI_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are non-empty, and `TRANSPORTATION_CHANNEL_ID` (when set) is an integer. Has no override flag. Needs python-dotenv, so it runs with `.venv/bin/python` |
 | `devcontainer/write_env.py ENV_FILE` | Run by `.devcontainer/post-start.sh`; stdlib-only (it imports `is_local_url` from `check_local_env.py`). Reads `supabase status -o env` on stdin and merges `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `DISCORD_TOKEN` (from `CHOLOBOTS_TEST_DISCORD_TOKEN`) and `OPENAI_API_KEY` into the given `.env`, leaving every other line alone. Refuses a `SUPABASE_URL` that is not local, never prints secret values, writes the file with mode 0600. Tests: `tests/scripts/test_devcontainer_write_env.py` and `test-devcontainer-lifecycle.sh` |
+| `supabase-local.sh start\|stop\|status\|env\|prune [checkout-path]` (core: `supabase_local.py`) | The one helper for local Supabase stacks. The main checkout and the devcontainer use the default ports; each worktree gets its own project id `cholobots-<name>` and a slot `n` with every port the default plus `10*n` (API `54321+10n`, DB `54322+10n`; inspector 8083 plus `n`), recorded in the git common dir. `start` mirrors `supabase/` into the worktree's git-ignored `.supabase-local/`; `stop` frees the slot; `env` prints `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_URL`; `prune` stops stacks of removed worktrees. Any other subcommand goes to the Supabase CLI. Refuses hosted operations (`link`, `login`, `--linked`, `--db-url`, `db push`). Needs Docker and Node. Tests: `tests/scripts/test_supabase_local.py` and `tests/scripts/test-supabase-local.sh` (the latter skips without Docker) |
 
 ## Tests
 

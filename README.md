@@ -31,6 +31,8 @@ From a fresh clone to the bot answering in your own test Discord server, against
 7. **Run.** `make run`. It first checks `.env` and refuses to start, listing each problem, when `SUPABASE_URL` is not the local stack, a required secret is empty, or `TRANSPORTATION_CHANNEL_ID` is not a whole number. The console then shows `✅ Logged in as <your test bot>`. In the test server, `!cholobots` answers with the persona overview, and `!cshow <a seeded contact>` shows a contact card.
 8. **Day to day.** `make check` (compile, `ruff` and the tests) before you push, `make test-integration` for the integration tests against the local stack, `make db-down` when you are done. Every pull request runs the same checks in GitHub Actions: `checks` (what `make check` runs) and `integration` (what `make test-integration` runs, on a throwaway local stack).
 
+**Several worktrees at once.** Run `make db-up` in each worktree (or `scripts/supabase-local.sh start`): every worktree gets its own stack on its own ports, so they do not collide. `make db-env` prints this checkout's `SUPABASE_URL` and key.
+
 Two local quirks: your test accounts are not in the bot's hardcoded user map, so Metichebot files them under Heaven's daily tasks (harmless locally), and once `!mtoday` is set up in a channel, any message there that does not start with `!` becomes a time block.
 
 Required variables: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. The full list, including optional variables and which ones crash the process at import, is in [CLAUDE.md](CLAUDE.md). `.env` is loaded with `override=True`, so it wins over your shell.
