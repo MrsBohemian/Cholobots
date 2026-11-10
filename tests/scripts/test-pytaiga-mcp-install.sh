@@ -53,7 +53,7 @@ exit 0
 FAKE
 cat > "$FAKEBIN/uv" <<'FAKE'
 #!/usr/bin/env bash
-echo "uv $* [UV_PYTHON_DOWNLOADS=${UV_PYTHON_DOWNLOADS:-unset}]" >> "$CALL_LOG"
+echo "uv $* [UV_PYTHON_DOWNLOADS=${UV_PYTHON_DOWNLOADS:-unset} UV_CONCURRENT_DOWNLOADS=${UV_CONCURRENT_DOWNLOADS:-unset}]" >> "$CALL_LOG"
 [ "${FAKE_UV_FAIL:-0}" = "1" ] && exit 1
 dir=""
 while [ $# -gt 0 ]; do
@@ -112,6 +112,11 @@ HOME_A="$TMP/home-a"
 export PYTAIGA_MCP_HOME="$HOME_A"
 run_install
 if [ "$RC" -eq 0 ]; then pass "fresh install exits 0"; else fail "fresh install exits 0 (rc=$RC: $OUT)"; fi
+if grep -qF "UV_CONCURRENT_DOWNLOADS=1]" "$CALL_LOG"; then
+    pass "uv sync runs with UV_CONCURRENT_DOWNLOADS=1 (parallel git fetches fail TLS on some Docker bridge networks)"
+else
+    fail "uv sync runs with UV_CONCURRENT_DOWNLOADS=1"
+fi
 if grep -qF "fetch --depth 1 origin $EXPECTED_COMMIT" "$CALL_LOG"; then
     pass "fresh install fetches the pinned commit"
 else

@@ -44,7 +44,9 @@ git -C "$HOME_DIR" fetch --depth 1 origin "$PYTAIGA_MCP_COMMIT"
 git -C "$HOME_DIR" checkout FETCH_HEAD
 
 # The system python is used as is; a missing interpreter must fail, not download one.
-UV_PYTHON_DOWNLOADS=never uv sync --frozen --directory "$HOME_DIR"
+# One fetch at a time: uv's parallel git fetches of the pyTaigaClient dependency fail with a TLS
+# "internal error" on some Docker bridge networks, which broke the devcontainer image build.
+UV_PYTHON_DOWNLOADS=never UV_CONCURRENT_DOWNLOADS=1 uv sync --frozen --directory "$HOME_DIR"
 
 for required in .venv/bin/python src/server_workflow.py; do
     if [ ! -e "$HOME_DIR/$required" ]; then
