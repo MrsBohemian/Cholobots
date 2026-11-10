@@ -30,6 +30,8 @@ REQUIRED_TABLES = [
     "vuelta_interests",
 ]
 
+PLACEHOLDER_DISCORD_IDS = {f"10000000000000000{n}" for n in range(1, 5)}
+
 
 @pytest.fixture(scope="module")
 def seed():
@@ -92,6 +94,14 @@ def test_seed_emails_use_reserved_domains(seed):
 def test_seed_contains_no_production_discord_ids(seed):
     for discord_id in production_discord_ids():
         assert discord_id not in seed
+
+
+def test_seed_discord_ids_are_only_the_placeholders(seed):
+    # Discord snowflakes are 17-20 digits; any such run that is not a placeholder is a real account.
+    ids = re.findall(r"(?<!\d)\d{17,20}(?!\d)", seed_code(seed))
+    assert ids
+    for discord_id in ids:
+        assert discord_id in PLACEHOLDER_DISCORD_IDS, discord_id
 
 
 @pytest.mark.parametrize(
