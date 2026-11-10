@@ -106,8 +106,10 @@ else
         echo "$UNPINNED"
     fi
 fi
-# The version comment survives the strip above, so read it from the raw file.
-if grep -E '^[[:space:]]*-?[[:space:]]*uses:' "$WORKFLOW" | grep -qvE '@[0-9a-f]{40}[[:space:]]+#[[:space:]]*v[0-9]'; then
+# The version comment does not survive the strip above, so read it from the raw file.
+# A here-string, not a pipe: under pipefail a SIGPIPE in the first grep would read as a pass.
+RAW_USES=$(grep -E '^[[:space:]]*-?[[:space:]]*uses:' "$WORKFLOW" || true)
+if grep -qvE '@[0-9a-f]{40}[[:space:]]+#[[:space:]]*v[0-9]' <<< "$RAW_USES"; then
     fail "every pinned action carries a version comment"
 else
     pass "every pinned action carries a version comment"
