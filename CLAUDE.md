@@ -11,13 +11,15 @@ Work is tracked in Taiga project `cholo-bots` (id 39) on https://backlog.growthg
 ## Running
 
 ```bash
-python3.14 -m venv .venv && . .venv/bin/activate   # Python pinned in .python-version
-pip install -r requirements.txt      # == pins: discord.py, python-dotenv, openai, supabase
-pip install -r requirements-dev.txt && pre-commit install   # dev: pytest, ruff, the ruff-check hook
-python cholobots.py                  # same as the Procfile worker
+make setup      # .venv (Python pinned in .python-version), == pins from requirements*.txt, pre-commit hook, .env from .env.example
+make db-up      # local Supabase stack; make db-reset rebuilds it, make db-env prints the two .env lines, make db-down stops it
+make check      # compile, lint (ruff), test (tests/unit + tests/scripts); make test-integration skips until #51
+make run        # scripts/check_local_env.py, then python cholobots.py; production runs python cholobots.py via the Procfile
 ```
 
-`supabase/` holds the Supabase CLI project (`config.toml` and `migrations/`, CLI pinned to 2.121.0). `supabase start` runs a local stack in Docker (API `http://127.0.0.1:54321`, Edge Functions off); point `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` at it from `supabase status -o env` (see README "Local development"). The local database has the baseline schema and no data. Agents never run `supabase login`/`link` or anything against the hosted project.
+The `Makefile` is the task runner (`make help` lists the targets, `tests/scripts/test_makefile.py` pins each recipe). `make run` runs `scripts/check_local_env.py` first, which resolves `.env` over the shell like `config.py` and refuses a non-local `SUPABASE_URL`, empty `DISCORD_TOKEN`/`OPENAI_API_KEY`/`SUPABASE_SERVICE_ROLE_KEY` and a non-integer `TRANSPORTATION_CHANNEL_ID`. Agents never run `make run` (it starts the bot), same as `python cholobots.py`; `make setup`, `make check`, `make -n <target>` and the `db-*` targets against the local Docker stack are fine.
+
+`supabase/` holds the Supabase CLI project (`config.toml` and `migrations/`, CLI pinned to 2.121.0). `supabase start` runs a local stack in Docker (API `http://127.0.0.1:54321`, Edge Functions off); point `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` at it from `supabase status -o env` (see README "Quickstart"). The local database has the baseline schema but no data until the seed (#48). Agents never run `supabase login`/`link` or anything against the hosted project.
 
 `config.py` runs `load_dotenv(override=True)`, so `.env` wins over the real environment. Required or the process dies at import: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (chismebot, guardabot and crudobot call `create_client` unguarded at module level; vueltabot does the same but is imported inside `on_ready`, so its failure surfaces there instead, see below; obijuan, metichebot and `db/database.py` degrade to a `None` client). `db/database.py` and vueltabot also accept `SUPABASE_KEY` as a fallback name; the other modules do not. Optional: `GUARDABOT_DB` (SQLite path, default `guardabot.db`), `DATA_SERVICE_URL` (dashboard push; when unset every metichebot time block replies "Saved, but dashboard push failed", crudobot's read of it is silent and unused), `TRANSPORTATION_CHANNEL_ID` (parsed with `int()`, default `0`), `DANIEL_MORNING_AUDIO_URL` (YouTube default), `CRUDOBOT_RECEIPT_MODEL` (default `gpt-5-mini`; chismebot's summary model is hardcoded to the same).
 
