@@ -5,7 +5,8 @@
 # environment that Heaven creates, never repository-wide):
 #   SUPABASE_ACCESS_TOKEN  personal access token for the Supabase CLI
 #   SUPABASE_PROJECT_REF   the hosted project's reference id
-#   SUPABASE_DB_PASSWORD   optional, the database password for `supabase link`
+#   SUPABASE_DB_PASSWORD   required, the database password for `supabase link` (the runner is
+#                          noninteractive, so a missing password would prompt and hang)
 #
 # Gate: the db-push job runs only when the repository variable
 # SUPABASE_DB_PUSH_ENABLED is 'true' (it does not exist until Jon allows
@@ -54,7 +55,13 @@ jobs:
       - name: Lint migrations
         run: python3 scripts/supabase_migrations.py lint
       - name: Link hosted project
-        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+        shell: bash
+        run: |
+          if [ -z "$SUPABASE_DB_PASSWORD" ] || [ -z "$SUPABASE_PROJECT_REF" ]; then
+            echo "::error::SUPABASE_DB_PASSWORD and SUPABASE_PROJECT_REF must be set as supabase-production environment secrets"
+            exit 1
+          fi
+          supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD" --yes
       - name: Plan push
         shell: bash
         run: |
