@@ -83,6 +83,12 @@ for a scope that does not exist.
 | `lib/dependency_satisfaction.py [--base B] <ref>...` | `/implement-epic` Step 2a-bis: classifies out-of-run dependencies as satisfied when Done, or when a merged PR into the base (default `$BASE_BRANCH` or `main`) claims the ref, no open PR does (claims per `taiga_closing_refs.py`) and every open task has a `## Gate` section; Archived, an open non-gated task, or a failed Taiga/gh/task lookup is never satisfied. Prints `satisfied_refs` plus per-ref reason, PRs, gated tasks and open agent tasks |
 | `lib/` | Shared Taiga client, dependency-diagram parser (`parse_roadmap.py --default-namespace cholobots`), base-branch selector, integration-branch names, stability parser, 0600 JSON writer for state files |
 
+## Database schema
+
+| Script | Purpose |
+|---|---|
+| `check_schema_coverage.py [--repo-root .] [--migrations supabase/migrations] [--mobile-dir D] [--json]` | Lists every table/view the bots (`.table("x")` in `bots/*.py`, `db/database.py`) and dashboards (`.from("x")` in `D/*.html`, `D/assets/*.js`) reference, and whether `supabase/migrations/*.sql` defines it, with kind, RLS state and policy count; objects nobody references are listed separately. `--mobile-dir` defaults to `mobile/`, else `../Cholobots-Mobile` (pass it explicitly from a worktree). Exit 0 all present, 1 something missing, 2 a directory not found. A dashboard-read table with RLS off is a `WARN` line, not a failure. Reads files only; never connects to Supabase |
+
 ## Tests
 
 ```bash
