@@ -165,6 +165,9 @@ def split_args(argv: list[str], environ: Mapping[str, str], cwd: str) -> tuple[s
 
 def port_in_use(port: int) -> bool:
     with socket.socket() as s:
+        # Docker binds with SO_REUSEADDR, so connections a stopped stack left in TIME_WAIT must
+        # not count as taken; a live listener still fails the bind.
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind(("127.0.0.1", port))
         except OSError:

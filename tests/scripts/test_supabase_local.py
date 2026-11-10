@@ -249,6 +249,21 @@ def test_port_in_use_detects_a_bound_port():
     assert supabase_local.port_in_use(port) is False
 
 
+def test_port_in_use_ignores_time_wait_left_by_a_stopped_stack():
+    # A stack stopped seconds ago leaves closed connections in TIME_WAIT on its ports; Docker
+    # binds them again anyway, so the probe must not report them as taken.
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        client = socket.create_connection(("127.0.0.1", port))
+        server_side, _ = listener.accept()
+        server_side.close()  # the side that closes first holds TIME_WAIT on `port`
+        client.close()
+    assert supabase_local.port_in_use(port) is False
+
+
 # --- main() with a stub CLI runner -------------------------------------------------
 
 STATUS_ENV = 'API_URL="http://127.0.0.1:54331"\nDB_URL="postgresql://postgres:postgres@127.0.0.1:54332/postgres"\nSERVICE_ROLE_KEY="svc-key"\n'
