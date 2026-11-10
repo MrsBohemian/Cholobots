@@ -93,7 +93,9 @@ else
 fi
 
 # Order: dry-run, then plan check, then the real push.
-line_of() { grep -nF -- "$1" <<< "$BODY" | head -1 | cut -d: -f1; }
+# grep -m1 instead of | head (SIGPIPE under pipefail), and || true so a missing
+# line reports as a failed check instead of aborting the script under set -e.
+line_of() { { grep -m1 -nF -- "$1" <<< "$BODY" || true; } | cut -d: -f1; }
 DRY=$(line_of "--dry-run")
 CHECK=$(line_of "check-push-plan")
 PUSH=$(line_of "name: Push migrations")
