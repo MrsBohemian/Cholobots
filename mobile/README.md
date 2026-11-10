@@ -48,4 +48,4 @@ The launcher reads `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` from t
 - `index.html` — landing menu
 - `*.html` — one dashboard per page, each with inline CSS, markup and script
 - `assets/` — icons for the menu tiles and the garage map image
-- `cholo-icon2.png` — the app icon
+- `assets/cholo-icon2.png` — the app icon
