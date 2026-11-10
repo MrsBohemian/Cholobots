@@ -22,7 +22,7 @@ python cholobots.py                  # same as the Procfile worker
 
 `cholobots.py` calls `bot.run()` at module level with no `__main__` guard: importing it starts the bot. For static checks use `python -m py_compile cholobots.py config.py db/database.py bots/*.py`.
 
-There are no tests, linters or CI for the bot itself yet (Taiga stories #33, #34, #35). The schema of record is `supabase/migrations/`, starting from `20261109194905_remote_baseline.sql`, a dump of the hosted project's `public` schema (tables, views, functions, triggers, RLS policies, grants). Read column names and types there, and check every reader before changing a column's meaning. Schema changes go in new migration files (workflow: Taiga story #49); never edit the hosted schema by hand. `python3 scripts/check_schema_coverage.py --mobile-dir <dashboards dir>` checks that every table the bots and dashboards reference is defined there.
+There are no tests, linters or CI for the bot itself yet (Taiga stories #33, #34, #35). The schema of record is `supabase/migrations/`, starting from `20261109194905_remote_baseline.sql`, a dump of the hosted project's `public` schema (tables, views, functions, triggers, RLS policies, grants). Read column names and types there, and check every reader before changing a column's meaning. Schema changes ship as new migration files ([docs/database-migrations.md](docs/database-migrations.md)); nobody edits the hosted schema by hand, including in the Supabase dashboard or SQL editor. `python3 scripts/check_schema_coverage.py --mobile-dir <dashboards dir>` checks that every table the bots and dashboards reference is defined there.
 
 ## Agent pipeline
 
