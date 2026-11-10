@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Static tests for the CI workflow definitions (checks.yml, and integration.yml once added).
+# ABOUTME: Static tests for the CI workflow definitions, checks.yml and integration.yml.
 # ABOUTME: Guards names, triggers, pins, permissions and the commands each job must run.
 set -euo pipefail
 
@@ -113,6 +113,27 @@ for step in Compile Lint 'Unit tests' 'Script tests'; do
     expect_match "$CHECKS" "^      - name: $step\$" "checks.yml: has a '$step' step"
 done
 
+check_common integration
+INTEGRATION=$(strip_comments "$WORKFLOWS/integration.yml" 2>/dev/null || true)
+MAKE_CLI_VERSION=$(sed -nE 's/^SUPABASE_CLI_VERSION := ([0-9.]+)$/\1/p' "$REPO_ROOT/Makefile")
+expect_match "$INTEGRATION" 'uses: supabase/setup-cli@[0-9a-f]{40}$' "integration.yml: installs the CLI with supabase/setup-cli"
+CLI_VERSION=$(sed -nE 's/^[[:space:]]+version: ([0-9][0-9.]*)$/\1/p' <<< "$INTEGRATION")
+if [ -n "$MAKE_CLI_VERSION" ] && [ "$CLI_VERSION" = "$MAKE_CLI_VERSION" ]; then
+    pass "integration.yml: pins the Supabase CLI to the Makefile's $MAKE_CLI_VERSION"
+else
+    fail "integration.yml: pins the Supabase CLI to the Makefile's version (workflow '${CLI_VERSION:-none}', Makefile '${MAKE_CLI_VERSION:-none}')"
+fi
+expect_match "$INTEGRATION" 'supabase start -x ' "integration.yml: starts the local Supabase stack"
+for service in gotrue realtime storage-api kong postgrest; do
+    expect_no_match "$(grep -E 'supabase start' <<< "$INTEGRATION")" "[ ,]$service(,|\$)" "integration.yml: keeps $service running"
+done
+expect_match "$INTEGRATION" 'make test-integration SUPABASE=supabase VENV_PY=python$' "integration.yml: runs make test-integration with the job's CLI and Python"
+# The job env must leave SUPABASE_* unset: make test-integration only fills
+# them from `supabase status` when they are empty.
+expect_no_match "$INTEGRATION" '^[[:space:]]+SUPABASE_[A-Z_]+:' "integration.yml: sets no SUPABASE_* env (make reads them from the local stack)"
+MAKE_RECIPE=$(sed -n '/^test-integration:/,/^[a-z]/p' "$REPO_ROOT/Makefile")
+expect_match "$MAKE_RECIPE" 'CHOLOBOTS_INTEGRATION_REQUIRED=1 \$\(VENV_PY\) -m pytest -q -m integration tests/integration' "Makefile: test-integration fails instead of skipping and runs the integration marker"
+
 # Structural check when PyYAML is available; the greps above stand alone without it.
 if python3 -c 'import yaml' 2>/dev/null; then
     if python3 - "$WORKFLOWS" <<'PY'
@@ -121,7 +142,7 @@ from pathlib import Path
 
 import yaml
 
-for name in ("checks",):
+for name in ("checks", "integration"):
     doc = yaml.safe_load((Path(sys.argv[1]) / f"{name}.yml").read_text())
     on = doc.get("on", doc.get(True))  # PyYAML reads a bare `on` key as True
     assert set(on) == {"pull_request", "push"}, on

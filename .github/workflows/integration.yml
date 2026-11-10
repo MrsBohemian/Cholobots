@@ -1,0 +1,52 @@
+# ABOUTME: Integration tests against a throwaway local Supabase stack built from supabase/migrations and seed.sql.
+# ABOUTME: Runs on every pull request (any base) and on pushes to main; never touches the hosted project.
+#
+# The workflow and its job are both named "integration": branch protection requires the
+# job name as a context, and scripts/monitor-pr-stability.sh matches those contexts
+# against workflow-run names. Rename one and you must rename the other.
+# The Supabase CLI version must match SUPABASE_CLI_VERSION in the Makefile
+# (tests/scripts/test-ci-workflows.sh checks it).
+name: integration
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # config.py raises at import without these. SUPABASE_* stay unset on purpose:
+      # make test-integration fills them from `supabase status` only when empty.
+      DISCORD_TOKEN: ci-dummy
+      OPENAI_API_KEY: ci-dummy
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
+        with:
+          version: 2.121.0
+      - name: Start local Supabase
+        # A fresh stack applies supabase/migrations then supabase/seed.sql. Only the
+        # services the tests and the baseline schema need are started.
+        run: supabase start -x studio,postgres-meta,imgproxy,mailpit,edge-runtime,logflare,vector,supavisor
+      - name: Integration tests
+        # CHOLOBOTS_INTEGRATION_REQUIRED=1 (set by the make target) fails the run
+        # instead of skipping when the stack is unreachable.
+        run: make test-integration SUPABASE=supabase VENV_PY=python
