@@ -67,6 +67,7 @@ cat > "$BIN/docker" <<FAKE
 #!/usr/bin/env bash
 $log_call
 if [ "\${1:-}" = "info" ] && [ -n "\${FAKE_DOCKER_DOWN:-}" ]; then exit 1; fi
+if [ "\${1:-}" = "info" ] && [ -n "\${FAKE_DOCKER_DOWN_ONCE:-}" ] && [ ! -f "\$STATE/dockerd" ]; then exit 1; fi
 exit 0
 FAKE
 
@@ -74,12 +75,34 @@ cat > "$BIN/supabase" <<FAKE
 #!/usr/bin/env bash
 $log_call
 case "\$*" in
-    "status") [ -f "\$STATE/started" ] || exit 1 ;;
+    "status"|start*)
+        # FAKE_STACK_STARTING=N: the first N status/start calls fail like a stack whose db container is restarting.
+        if [ -n "\${FAKE_STACK_STARTING:-}" ]; then
+            n=\$(cat "\$STATE/starting-count" 2>/dev/null || echo 0)
+            if [ "\$n" -lt "\$FAKE_STACK_STARTING" ]; then
+                echo \$((n + 1)) > "\$STATE/starting-count"
+                echo "supabase_db_cholobots container is not ready: starting" >&2
+                exit 1
+            fi
+        fi
+        case "\$*" in
+            "status") [ -f "\$STATE/started" ] || exit 1 ;;
+            start*) touch "\$STATE/started" ;;
+        esac
+        ;;
     "status -o env")
         echo 'API_URL="http://127.0.0.1:54321"'
         echo 'SERVICE_ROLE_KEY="local-key"'
         ;;
-    start*) touch "\$STATE/started" ;;
+    "db reset")
+        # FAKE_DB_RESET_FAILS=N: the first N resets fail the way a still-starting db container does.
+        n=\$(cat "\$STATE/reset-count" 2>/dev/null || echo 0)
+        echo \$((n + 1)) > "\$STATE/reset-count"
+        if [ "\$n" -lt "\${FAKE_DB_RESET_FAILS:-0}" ]; then
+            echo "supabase_db_cholobots container is not ready: starting" >&2
+            exit 1
+        fi
+        ;;
 esac
 exit 0
 FAKE
@@ -93,6 +116,9 @@ FAKE
 cat > "$BIN/sudo" <<FAKE
 #!/usr/bin/env bash
 $log_call
+if [ "\${1:-}" = "iptables" ] && [ -n "\${FAKE_LEGACY_IPTABLES_BROKEN:-}" ] && [ ! -f "\$STATE/nft" ]; then exit 3; fi
+if [ "\${1:-}" = "update-alternatives" ]; then touch "\$STATE/nft"; fi
+if [ "\${1:-}" = "/fake/docker-init.sh" ]; then touch "\$STATE/dockerd"; fi
 exit 0
 FAKE
 
@@ -207,6 +233,73 @@ set -e
 if [ "$DOWN_STATUS" -ne 0 ]; then pass "post-start.sh exits non-zero when Docker never starts"; else fail "post-start.sh exits non-zero when Docker never starts"; fi
 if grep -qF 'Docker daemon' "$TMP/down.err"; then pass "failure message names the Docker daemon"; else fail "failure message names the Docker daemon"; fi
 if grep -q '^supabase' "$CALLS"; then fail "no supabase call when Docker is down"; else pass "no supabase call when Docker is down"; fi
+
+# After a container restart dockerd brings the stack's containers back while its db container is still
+# starting: status, start and db reset all fail for a while. post-start retries each of them.
+: > "$CALLS"
+rm -f "$STATE/started" "$STATE/reset-count" "$STATE/starting-count"
+(cd "$WS" && PATH="$BIN:$PATH" DOCKER_WAIT_LIMIT=5 SUPABASE_RETRY_ATTEMPTS=5 SUPABASE_RETRY_DELAY=0 FAKE_STACK_STARTING=2 \
+    .devcontainer/post-start.sh > /dev/null 2> "$TMP/starting.err") \
+    || { fail "post-start.sh retries start while the stack is restarting"; cat "$TMP/starting.err"; }
+if [ "$(grep -c '^supabase start' "$CALLS")" -ge 1 ] && calls_has "supabase db reset" && calls_has "supabase status -o env"; then
+    pass "start is retried until the stack is ready, then db reset and .env follow"
+else
+    fail "start is retried until the stack is ready, then db reset and .env follow"
+    cat "$CALLS"
+fi
+
+: > "$CALLS"
+rm -f "$STATE/started" "$STATE/reset-count"
+(cd "$WS" && PATH="$BIN:$PATH" DOCKER_WAIT_LIMIT=5 SUPABASE_RETRY_ATTEMPTS=5 SUPABASE_RETRY_DELAY=0 FAKE_DB_RESET_FAILS=2 \
+    .devcontainer/post-start.sh > /dev/null 2> "$TMP/retry.err") \
+    || { fail "post-start.sh retries db reset while the db container starts"; cat "$TMP/retry.err"; }
+if [ "$(grep -cxF 'supabase db reset' "$CALLS")" = "3" ] && calls_has "supabase status -o env"; then
+    pass "db reset is retried until the db container is ready"
+else
+    fail "db reset is retried until the db container is ready"
+    cat "$CALLS"
+fi
+
+: > "$CALLS"
+rm -f "$STATE/started" "$STATE/reset-count"
+set +e
+(cd "$WS" && PATH="$BIN:$PATH" DOCKER_WAIT_LIMIT=5 SUPABASE_RETRY_ATTEMPTS=3 SUPABASE_RETRY_DELAY=0 FAKE_DB_RESET_FAILS=99 \
+    .devcontainer/post-start.sh > /dev/null 2> "$TMP/resetfail.err")
+RESET_STATUS=$?
+set -e
+if [ "$RESET_STATUS" -ne 0 ] && [ "$(grep -cxF 'supabase db reset' "$CALLS")" = "3" ]; then
+    pass "post-start.sh gives up after SUPABASE_RETRY_ATTEMPTS failed resets"
+else
+    fail "post-start.sh gives up after SUPABASE_RETRY_ATTEMPTS failed resets"
+fi
+if calls_has "supabase status -o env"; then fail "no .env written when db reset keeps failing"; else pass "no .env written when db reset keeps failing"; fi
+rm -f "$STATE/reset-count"
+
+# Host kernel without legacy iptables (nftables only): the DinD feature selects iptables-legacy,
+# dockerd cannot create its NAT chain, so post-start switches to iptables-nft and restarts dockerd.
+: > "$CALLS"
+rm -f "$STATE/started" "$STATE/nft" "$STATE/dockerd"
+(cd "$WS" && PATH="$BIN:$PATH" FAKE_LEGACY_IPTABLES_BROKEN=1 FAKE_DOCKER_DOWN_ONCE=1 DOCKER_WAIT_LIMIT=5 \
+    DOCKER_INIT=/fake/docker-init.sh .devcontainer/post-start.sh > /dev/null 2> "$TMP/nft.err") \
+    || { fail "post-start.sh succeeds on a host without legacy iptables"; cat "$TMP/nft.err"; }
+if calls_has "sudo update-alternatives --set iptables /usr/sbin/iptables-nft" \
+    && calls_has "sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-nft"; then
+    pass "legacy iptables unusable: switches iptables and ip6tables to nft"
+else
+    fail "legacy iptables unusable: switches iptables and ip6tables to nft"
+    cat "$CALLS"
+fi
+if calls_has "sudo /fake/docker-init.sh true"; then
+    pass "restarts dockerd through docker-init after the switch"
+else
+    fail "restarts dockerd through docker-init after the switch"
+fi
+
+# Working legacy iptables: nothing is switched.
+: > "$CALLS"
+rm -f "$STATE/started" "$STATE/nft" "$STATE/dockerd"
+(cd "$WS" && PATH="$BIN:$PATH" DOCKER_WAIT_LIMIT=5 .devcontainer/post-start.sh > /dev/null 2>&1) || true
+if grep -q 'update-alternatives' "$CALLS"; then fail "no iptables switch when legacy works"; else pass "no iptables switch when legacy works"; fi
 
 # --- post-create.sh ----------------------------------------------------------
 WSC="$TMP/ws-create"

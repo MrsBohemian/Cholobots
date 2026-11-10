@@ -1,7 +1,7 @@
 {
   "name": "Cholobots Dev",
   "build": { "dockerfile": "Dockerfile", "context": ".." },
-  "features": { "ghcr.io/devcontainers/features/docker-in-docker:2.17.0": {} },
+  "features": { "ghcr.io/devcontainers/features/docker-in-docker:2.17.0": { "moby": false } },
   "initializeCommand": "bash -c 'mkdir -p \"${HOME}/.claude\" && mkdir -p \"${HOME}/.codex\" && touch \"${HOME}/.claude.json\"'",
   "mounts": [
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind",

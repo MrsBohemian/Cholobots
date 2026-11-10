@@ -5,6 +5,17 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# The docker-in-docker feature selects iptables-legacy. On a host kernel with nftables only, dockerd then
+# cannot create its NAT chain and never comes up. Switch to iptables-nft and start dockerd again.
+if ! sudo iptables -t nat -L -n >/dev/null 2>&1 && sudo iptables-nft -t nat -L -n >/dev/null 2>&1; then
+    echo "Legacy iptables is unusable on this host; switching to iptables-nft."
+    sudo update-alternatives --set iptables /usr/sbin/iptables-nft
+    sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-nft
+    if ! docker info >/dev/null 2>&1; then
+        sudo "${DOCKER_INIT:-/usr/local/share/docker-init.sh}" true
+    fi
+fi
+
 echo "Waiting for Docker daemon..."
 limit="${DOCKER_WAIT_LIMIT:-60}"
 waited=0
@@ -22,16 +33,40 @@ SUPABASE_BIN="${SUPABASE:-supabase}"
 # Services nothing in this repo uses. Set SUPABASE_START_EXCLUDE= (empty) to start everything.
 exclude="${SUPABASE_START_EXCLUDE-imgproxy,logflare,vector,mailpit}"
 
-if "$SUPABASE_BIN" status >/dev/null 2>&1; then
-    echo "Supabase already running"
-elif [ -n "$exclude" ]; then
-    "$SUPABASE_BIN" start -x "$exclude"
-else
-    "$SUPABASE_BIN" start
-fi
+# After a container restart dockerd brings the stack's containers back. Until the db container is healthy,
+# `status` fails, `start` fails with "container is not ready: starting" and `db reset` fails, so each step retries.
+attempts="${SUPABASE_RETRY_ATTEMPTS:-30}"
+delay="${SUPABASE_RETRY_DELAY:-2}"
+
+retry() {
+    local label="$1"
+    shift
+    local attempt=1
+    until "$@"; do
+        if [ "$attempt" -ge "$attempts" ]; then
+            echo "Error: ${label} still failing after ${attempts} attempts." >&2
+            exit 1
+        fi
+        echo "${label} failed (attempt ${attempt}/${attempts}); retrying in ${delay}s..."
+        sleep "$delay"
+        attempt=$((attempt + 1))
+    done
+}
+
+start_stack() {
+    if "$SUPABASE_BIN" status >/dev/null 2>&1; then
+        echo "Supabase already running"
+    elif [ -n "$exclude" ]; then
+        "$SUPABASE_BIN" start -x "$exclude"
+    else
+        "$SUPABASE_BIN" start
+    fi
+}
+
+retry "supabase start" start_stack
 
 # Container start means fresh seed data; stop the bot first if one is running.
-"$SUPABASE_BIN" db reset
+retry "supabase db reset" "$SUPABASE_BIN" db reset
 
 "$SUPABASE_BIN" status -o env | python3 scripts/devcontainer/write_env.py .env
 

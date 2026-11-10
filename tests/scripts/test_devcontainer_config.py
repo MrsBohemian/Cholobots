@@ -88,6 +88,11 @@ def test_docker_in_docker_feature_enabled_and_locked(config, lock):
     assert entry["resolved"].endswith("@" + entry["integrity"])
 
 
+def test_docker_in_docker_does_not_use_moby_on_trixie(config):
+    # The moby packages do not exist for Debian trixie, so the feature install fails with the default.
+    assert config["features"][DIND].get("moby") is False
+
+
 def test_mounts_claude_and_codex_config(config):
     mounts = config["mounts"]
     for name in (".claude", ".claude.json", ".codex"):
