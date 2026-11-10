@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# ABOUTME: Runs a command inside a devcontainer via docker exec.
+# ABOUTME: Used by orchestrating agents to execute build/test/CLI commands.
+set -euo pipefail
+
+WORKTREE_PATH="${1:?Usage: exec.sh <worktree-path> <command...>}"
+shift
+
+if [ "$#" -eq 0 ]; then
+    echo "Usage: exec.sh <worktree-path> <command...>" >&2
+    exit 1
+fi
+
+ABS_PATH=$(cd "$WORKTREE_PATH" && pwd)
+mapfile -t CONTAINER_IDS < <(docker ps -q --filter "label=devcontainer.local_folder=$ABS_PATH")
+if [ "${#CONTAINER_IDS[@]}" -eq 0 ]; then
+    echo "Error: no running container found for $ABS_PATH" >&2
+    exit 1
+elif [ "${#CONTAINER_IDS[@]}" -gt 1 ]; then
+    echo "Error: multiple containers found for $ABS_PATH (${CONTAINER_IDS[*]}); run teardown.sh first" >&2
+    exit 1
+fi
+CONTAINER_ID="${CONTAINER_IDS[0]}"
+
+# Determine the workspace path inside the container
+REPO_NAME=$(basename "$ABS_PATH")
+WORKSPACE="/workspaces/$REPO_NAME"
+
+# docker exec does not apply remoteEnv, so put the workspace venv first on PATH here.
+# The user command travels as $1 to the inner bash so quotes and ';' in it survive.
+# shellcheck disable=SC2016 # expands inside the container, not here
+VENV_PREFIX='if [ -x .venv/bin/python ]; then PATH="$PWD/.venv/bin:$PATH"; export PATH; fi; '
+docker exec -u vscode -w "$WORKSPACE" "$CONTAINER_ID" bash -lc "${VENV_PREFIX}"'eval "$1"' _ "$*"
