@@ -45,8 +45,8 @@ The failure is genuinely pre-existing. Proceed to Step 3.
      which branch/PR discovered it
    - Severity per `docs/bug-triage.md`: Important if the failure is deterministic on `main` (main
      is red for that check), Normal if it is flaky or environment-dependent
-   - Priority: from the matrix (surface is `ci` once CI exists (story #35) and the failure shows
-     there; `devx` for a failure in the local suite or setup)
+   - Priority: from the matrix (surface is `ci` when the failure shows in the `checks` or
+     `integration` run; `devx` for a failure in the local suite or setup)
    - Tags: surface tag, `src:agent`, and `pre-existing-failure`
 4. Note the bug ref number, then remove the throwaway worktree:
    `git worktree remove --force /tmp/base-check-<ref>`

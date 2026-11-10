@@ -29,7 +29,7 @@ experience it; add every per-bot tag that applies, one or more of `metichebot`, 
 `guardabot`, `crudobot`, `obijuan`, `vueltabot`, `mobile`; when no bot can be determined, add none
 and say so in the triage comment), `devx` (local setup, venv, env vars, Supabase local stack, seeding,
 docs for those), `pipeline` (skills, agents, scripts, Taiga and GitHub automation), `ci` (GitHub
-Actions and failures that only show there; story #35).
+Actions: the `checks` and `integration` workflows, and failures that only show there).
 
 **Source** (exactly one): `src:user` (Heaven, Daniel or the crew), `src:monitor` (an automated
 production signal), `src:manual-test`, `src:pr-review`, `src:agent`, `src:jon`. An existing source

@@ -1,6 +1,6 @@
 ---
 name: analyze-build-failure
-description: Analyze a failed GitHub Actions CI build (or, until CI exists, a locally reproduced check failure) from a PR or run ID, diagnose the failure, and post findings as a PR comment
+description: Analyze a failed GitHub Actions CI build (or, when a PR has no runs, a locally reproduced check failure) from a PR or run ID, diagnose the failure, and post findings as a PR comment
 argument-hint: "pr-<number> or build-<run-id>"
 allowed-tools:
   - Bash
@@ -18,12 +18,12 @@ All GitHub calls target `MrsBohemian/Cholobots` and are prefixed `env -u GH_TOKE
 
 ## CI status today
 
-GitHub Actions does not build or test this repo yet. Story #35 adds a CI workflow; its expected shape is three jobs: **compile** (`python -m py_compile cholobots.py config.py db/database.py bots/*.py`), **lint** (`ruff check .`, once story #33 configures ruff) and **test** (`python -m pytest -q`, once story #34 adds `tests/`). `.github/workflows/taiga-sync.yml` is the only workflow that exists and it is a post-merge Taiga sync, not a build; a failure there is not a build failure (report it as a sync failure and stop).
+GitHub Actions runs two workflows on every pull request (any base, so stacked PRs too) and on pushes to `main`, each with one job named like its workflow: **`checks`** (`.github/workflows/checks.yml`, steps `Compile`, `Lint`, `Unit tests`, `Script tests`: `py_compile`, `ruff check`, `pytest tests/unit`, then `pytest tests/scripts` and every `tests/scripts/test-*.sh`, the same scope as `make check`) and **`integration`** (`.github/workflows/integration.yml`, steps `Start local Supabase` and `Integration tests`: a fresh local stack from `supabase/migrations/` and `seed.sql`, then `make test-integration`). Workflow name and job name must stay identical: `scripts/monitor-pr-stability.sh` matches branch-protection contexts (job names) against workflow-run names. A step's name tells you which local command reproduces it (`docs/testing-workflow.md`). `.github/workflows/taiga-sync.yml` is a post-merge Taiga sync on the fork, not a build; a failure there is not a build failure (report it as a sync failure and stop).
 
 So this skill has two modes:
 
 - **CI mode** (workflow runs exist for the PR or run ID): diagnose from the Actions logs, Steps 1 to 4.
-- **Local reproduction mode** (no workflow runs): reproduce the checks yourself on the PR's head commit, Step 1b, then continue at Step 4. Say in the report that the diagnosis is from a local reproduction, not a CI run.
+- **Local reproduction mode** (no workflow runs, e.g. a branch that predates the workflows): reproduce the checks yourself on the PR's head commit, Step 1b, then continue at Step 4. Say in the report that the diagnosis is from a local reproduction, not a CI run.
 
 ## Step 1: Parse the argument and locate the failure
 
@@ -40,7 +40,7 @@ So this skill has two modes:
    ```
 3. If the list is empty, check whether any runs exist at all (`env -u GH_TOKEN gh run list --repo MrsBohemian/Cholobots --commit "$PR_SHA"`).
    - Runs exist and all passed: inform the user and stop: "PR #<number> has no failed workflow runs."
-   - No runs at all (today's normal case): go to **Step 1b** (local reproduction).
+   - No runs at all (the branch predates the workflows): go to **Step 1b** (local reproduction).
 4. Extract the run database ID from the output.
 5. Proceed to Step 2 with the run ID(s). If multiple runs failed, analyze the build/CI workflow run, not `taiga-sync`.
 
@@ -87,10 +87,13 @@ If every check passes, report "PR #<number> passes all locally runnable checks" 
 env -u GH_TOKEN gh run view <run-id> --repo MrsBohemian/Cholobots --json jobs --jq '.jobs[] | {name, conclusion, steps: [.steps[] | select(.conclusion == "failure") | {name, number}]}'
 ```
 
-Note the failed job name and step name. The expected CI jobs that can fail are:
-- **Compile** — `py_compile` syntax errors
-- **Lint** — ruff violations
-- **Test** — pytest failures (unit, integration, or script tests)
+Note the failed job name and step name. The CI steps that can fail are:
+- `checks` / **Compile** — `py_compile` syntax errors
+- `checks` / **Lint** — ruff violations
+- `checks` / **Unit tests** — `pytest tests/unit` failures
+- `checks` / **Script tests** — `pytest tests/scripts` or a `tests/scripts/test-*.sh` failure
+- `integration` / **Start local Supabase** — a migration or `seed.sql` that does not apply, or a CLI/Docker problem
+- `integration` / **Integration tests** — `make test-integration` failures
 
 If the workflow differs from this shape, use whatever steps it actually defines.
 
@@ -182,7 +185,7 @@ Write a structured analysis using this template:
 ```markdown
 ## Build Failure Analysis
 
-**Run:** [<run-url>](<run-url>)   (or "local reproduction on <short SHA>; no CI configured yet (#35)")
+**Run:** [<run-url>](<run-url>)   (or "local reproduction on <short SHA>; the PR has no CI runs")
 **Failed step:** <step-name>
 **Failed at:** <timestamp or "N/A">
 

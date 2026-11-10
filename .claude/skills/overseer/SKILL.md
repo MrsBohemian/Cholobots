@@ -134,8 +134,8 @@ Parse the sentinel:
 
 Only if a PR exists. [`remediation.md`](remediation.md) drives `python3 scripts/remediate_pr.py` by
 its exit-code contract instead of a hand-rolled `gh pr checks` loop — the script owns the failure
-counter, the rebase trigger, the review-thread sweep and the "no CI checks = stable with a note"
-rule (#35). `Read` it before entering `phase: "remediating"`.
+counter, the rebase trigger, the review-thread sweep and the rule that a PR without runs
+(a branch that predates the workflows) is stable. `Read` it before entering `phase: "remediating"`.
 
 **Exits:** `0` (STABLE) → **Gate B**; `12` (5+ build failures) or a worker returning `BLOCKED` →
 **Escalation**. Codes `10`/`11`/`13` spawn a single-shot `remediation-developer`, `14` just resumes.
@@ -144,7 +144,7 @@ Every remediation prompt carries the same sentinel sentence as Step 3.
 
 ## Gate B: Human reviews before hand-back
 
-When the PR is stable, present the outcome (PR link, checks run — `py_compile`, the unit suite or "no test suite yet (#34)", CI or "no CI checks configured (#35)" — and tasks closed) and ask the human how to proceed (`AskUserQuestion`):
+When the PR is stable, present the outcome (PR link, checks run — `py_compile`, the unit suite or "no test suite yet (#34)", the `checks` and `integration` runs, or "no CI runs on this branch" — and tasks closed) and ask the human how to proceed (`AskUserQuestion`):
 
 - **Hand back** → advance to Step 6. (Merging is not yours — `merge-train` owns that, after Jon's review.)
 - **Run a QA pass first** → set `phase: "qa"` and go to Step 5. The tester runs the PR branch against the test Discord server and env (story #31) or opens the dashboards, and stops what it started. You run nothing locally.
@@ -198,7 +198,7 @@ When a worker returns `BLOCKED`, the build-failure counter is exhausted, or the 
 
 ## Tests
 
-You never run tests yourself — the workers do, per [`docs/testing-workflow.md`](../../../docs/testing-workflow.md). At Gate B you check that the PR's checks are green (or no CI is configured yet, #35) and that the worker named what it ran: `py_compile` always, `pytest` when `tests/` exists, manual test steps in the Taiga item for handlers that need a live bot.
+You never run tests yourself — the workers do, per [`docs/testing-workflow.md`](../../../docs/testing-workflow.md). At Gate B you check that the PR's checks are green (`checks` and `integration`, or none on a branch that predates the workflows) and that the worker named what it ran: `py_compile` always, `pytest` when `tests/` exists, manual test steps in the Taiga item for handlers that need a live bot.
 
 When you author any prose yourself — a Taiga item you mint at runtime, a PR body, a commit message — keep it current-state only: no dated narration, no "recently" or "now"; provenance goes in the commit message or PR body.
 

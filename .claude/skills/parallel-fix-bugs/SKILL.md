@@ -162,5 +162,5 @@ When no bug is `queued`, `launching` or `active`: set `phase = "complete"` and p
 - **Resume**: re-invoke with the same N; filters are not re-applied on resume. The state file is the only resume record.
 - **Rate limits**: N=2-3 is safe; N=4+ will throttle.
 - **Existing sequential skill**: `/fully-fix-bugs` remains available for sequential processing (one bug at a time). Use this parallel skill when you have multiple bugs to fix concurrently.
-- **No CI yet** (story #35): workers treat "no checks configured" as a pass-with-note, so remediation mostly waits on review comments.
+- **CI**: workers wait for the `checks` and `integration` runs; a PR with no runs (its branch predates the workflows) counts as passed once the monitor's two-minute run-registration grace ends; the "no CI checks configured" note appears only for a repo with no workflows at all.
 - **Merge train**: After all bugs are fixed, use `/merge-train <PR1> <PR2> ...` to sequentially rebase and merge the resulting PRs.

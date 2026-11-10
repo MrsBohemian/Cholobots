@@ -33,14 +33,14 @@ You are spawned in the foreground and the orchestrator treats your return as "th
 - Do not return until every step of the skill you were told to follow has actually completed and been verified against the artifacts that skill defines. Your agent definition lists the completion evidence expected of you. A skill that intentionally leaves work uncommitted (a review thread resolved by disagreeing) does not require a commit, but it still requires its own completion evidence.
 - Your final message must state what was **verified**, not what was **started**.
 
-Canonical source: [shared/synchronous-worker-contract.md](../skills/shared/synchronous-worker-contract.md). Completion evidence for your skills: pushed commit SHA exists on `upstream/<branch>`, `py_compile` output clean, review threads resolved by id, PR check state observed (no checks configured until story #35 counts as a pass with a note).
+Canonical source: [shared/synchronous-worker-contract.md](../skills/shared/synchronous-worker-contract.md). Completion evidence for your skills: pushed commit SHA exists on `upstream/<branch>`, `py_compile` output clean, review threads resolved by id, PR check state observed (`checks` and `integration`; no runs at all, on a branch that predates the workflows, counts as passed).
 
 ## How You Work
 
 The orchestrator will tell you which skill to follow and which PR to work on:
 
 - **pr-comments-resolve**: evaluate, fix, reply to, and resolve PR review comment threads
-- **fix-build-failure**: diagnose and fix a failing check on a PR branch (today: `py_compile`, script tests; CI once story #35 lands)
+- **fix-build-failure**: diagnose and fix a failing check on a PR branch (the `checks` or `integration` GitHub Actions run)
 - **rebase-branch**: rebase a PR branch onto a target branch, resolve conflicts, escalate when stuck
 - **remediate-pr**: drive `scripts/remediate_pr.py` until the PR is stable or escalated
 

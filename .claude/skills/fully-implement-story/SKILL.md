@@ -183,7 +183,7 @@ Follow `.claude/skills/remediate-pr/SKILL.md` with arguments:
 <prNumber> --taiga-id <ref> --taiga-type story --max-failures 5
 ```
 
-It drives `python3 scripts/remediate_pr.py` (stability monitoring, failure counting, state) and spawns agents only for fixes and comment resolution. Cholobots has no CI yet (story #35): "no CI checks configured" is reported as STABLE with a note, never as a failure or an endless wait. Record the note for the Step 9 report.
+It drives `python3 scripts/remediate_pr.py` (stability monitoring, failure counting, state) and spawns agents only for fixes and comment resolution. The script waits for the PR's `checks` and `integration` runs. A PR with no runs (its branch predates the workflows) counts as passed after the monitor's two-minute run-registration grace, never as a failure or an endless wait; a repo with no workflows at all gets STABLE with a "no CI checks configured" note. Record the CI result or the note for the Step 9 report.
 
 - **`STABLE`**: proceed to Step 5.
 - **`ESCALATED`**: `escalate("5+ build failures")`.
@@ -252,10 +252,10 @@ It drives `python3 scripts/remediate_pr.py` (stability monitoring, failure count
 5. Make sure the PR link is on the story (finalize-story-pr comments it; add it if missing): `add_comment(project=39, ref=<ref>, text="PR: https://github.com/MrsBohemian/Cholobots/pull/<prNumber>", entity_type="story")`.
 6. Post a PR comment:
    ```
-   env -u GH_TOKEN gh pr comment <prNumber> --repo MrsBohemian/Cholobots --body "Story implementation complete. Comments resolved, manual testing: <passed | skipped: reason>. CI: none configured yet (#35). Ready for review."
+   env -u GH_TOKEN gh pr comment <prNumber> --repo MrsBohemian/Cholobots --body "Story implementation complete. Comments resolved, manual testing: <passed | skipped: reason>. CI: <checks and integration green | no CI runs on this branch>. Ready for review."
    ```
 7. Remove the story worktree (its own Bash call; the branch stays on upstream): `git worktree remove <wt>`.
-8. Report success with the PR link, the base branch and whether it came from the argument or the `main` default, the manual-testing result, and the "no CI configured" note.
+8. Report success with the PR link, the base branch and whether it came from the argument or the `main` default, the manual-testing result, and the CI result (or the "no CI checks configured" note).
 
 ## Error handling
 
