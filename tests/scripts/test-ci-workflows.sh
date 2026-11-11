@@ -24,7 +24,7 @@ strip_comments() {
     sed -E 's/[[:space:]]+#.*$//; /^[[:space:]]*#/d' "$1"
 }
 
-# Here-strings, not echo-to-grep pipes: under pipefail, grep -q's early exit can SIGPIPE the writer (bug #2791).
+# Here-strings, not echo-to-grep pipes: under pipefail, grep -q's early exit can SIGPIPE the writer.
 expect_match() {
     local body="$1" pattern="$2" what="$3"
     if grep -qE -- "$pattern" <<< "$body"; then pass "$what"; else fail "$what"; fi

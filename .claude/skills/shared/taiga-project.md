@@ -248,4 +248,4 @@ Raw REST callers use `https://backlog.growthgarage.org/api/v1/...` with header
 - Branch names: `feature/<ref>-<slug>`, `fix/<ref>-<slug>`, `epic/<epic>-integration-<story>`.
 - After a merge: `git fetch upstream && git push origin upstream/main:main` fast-forwards the fork and runs the
   Taiga sync (`/merge-train` does it after each merge; never force it).
-- CI: `gh pr checks` reports `checks` and `integration` (GitHub Actions, every PR and every push to `main`). A PR whose branch predates the workflows has no runs, which the monitor counts as passed after its two-minute run-registration grace when its base requires no checks; on a base that requires `checks`/`integration` (story #179), missing required runs stay `PENDING` until the branch is rebased onto a base that has the workflows.
+- CI: `gh pr checks` reports `checks` and `integration` (GitHub Actions, every PR and every push to `main`). A PR whose branch predates the workflows has no runs: it counts as passed after a two-minute grace when its base requires no checks, otherwise it stays `PENDING` until rebased.

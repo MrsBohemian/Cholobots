@@ -7,9 +7,10 @@ its **Retention budget** note). `Read` this before entering `phase: "remediating
 `remediate_pr.py` is the deterministic PR stability loop: a deduplicated build-failure counter,
 `monitor-pr-stability.sh`'s CI-wait semantics, and a Codex review pass built in (2 of the 3
 expected reviews come from the script itself), with **no Taiga writes of its own**. GitHub Actions
-runs `checks` and `integration` on each PR; a PR with no runs (its branch predates the workflows)
-counts as passed after the two-minute run-registration grace when its base requires no checks; on a base that requires `checks`/`integration` (story #179), missing required runs stay `PENDING` until the branch is rebased onto a base that has the workflows (a repo with no workflows at all gets
-stable with a "no CI checks configured" note), never as a failure or an endless wait. Driving its exit codes here — rather than
+runs `checks` and `integration` on each PR; a PR whose branch predates the workflows has no runs
+and counts as passed after a two-minute grace when its base requires no checks, otherwise it stays
+`PENDING` until rebased. A repo with no workflows at all gets stable with a "no CI checks configured"
+note. Neither is a failure. Driving its exit codes here — rather than
 hand-rolling a `gh pr checks` loop, or delegating the whole loop to the `remediate-pr` **skill** —
 keeps the human gates and the escalation decision at the conductor level while still reusing the
 pipeline. The `remediate-pr` skill wrapper is still never delegated from here, because that

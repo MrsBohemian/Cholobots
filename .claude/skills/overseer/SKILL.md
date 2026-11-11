@@ -134,8 +134,8 @@ Parse the sentinel:
 
 Only if a PR exists. [`remediation.md`](remediation.md) drives `python3 scripts/remediate_pr.py` by
 its exit-code contract instead of a hand-rolled `gh pr checks` loop — the script owns the failure
-counter, the rebase trigger, the review-thread sweep and the rule that a PR without runs
-(a branch that predates the workflows) is stable when its base requires no checks (on a base that requires `checks`/`integration`, story #179, it stays `PENDING` until rebased onto a base that has the workflows). `Read` it before entering `phase: "remediating"`.
+counter, the rebase trigger, the review-thread sweep and the rule for a PR whose branch
+predates the workflows (stable when its base requires no checks, otherwise `PENDING` until rebased). `Read` it before entering `phase: "remediating"`.
 
 **Exits:** `0` (STABLE) → **Gate B**; `12` (5+ build failures) or a worker returning `BLOCKED` →
 **Escalation**. Codes `10`/`11`/`13` spawn a single-shot `remediation-developer`, `14` just resumes.

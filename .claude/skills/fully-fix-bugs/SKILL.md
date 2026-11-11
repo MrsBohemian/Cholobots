@@ -187,7 +187,7 @@ Before monitoring, check if the branch needs a rebase onto `main`:
 
 This step delegates to `scripts/remediate_pr.py` for deterministic CI monitoring and state management. The script runs in the orchestrator session (from `REPO_ROOT`). When it requests agent intervention (exit codes 10/11/13), the fix runs in an `Agent` spawn working in the bug's worktree.
 
-GitHub Actions runs `checks` and `integration` on the PR and the script waits for them. A PR with no runs (its branch predates the workflows) counts as passed after the monitor's two-minute run-registration grace when its base requires no checks; on a base that requires `checks`/`integration` (story #179), missing required runs stay `PENDING` until the branch is rebased onto a base that has the workflows; do not treat it as a failure and do not wait for checks that will never arrive.
+GitHub Actions runs `checks` and `integration` on the PR and the script waits for them. A PR whose branch predates the workflows has no runs: it counts as passed after a two-minute grace when its base requires no checks, otherwise it stays `PENDING` until rebased. Do not treat it as a failure and do not wait for checks that will never arrive.
 
 1. Update bug `status` to `"monitoring"` in state file.
 
