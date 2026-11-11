@@ -1071,6 +1071,49 @@ class TestLaunchFailureStartsFromCleanClone:
 # ── transient exit handling in check_completions ────────
 
 
+class TestFailedStoryKeepsClone:
+    """An agent that exits in error or escalates leaves unpushed work in its
+    clone; the next run re-queues the story and resumes over that directory."""
+
+    @pytest.mark.parametrize("outcome", ["error", "escalated"])
+    def test_finish_story_keeps_clone_and_marker(self, tmp_path, outcome):
+        orch, mock_bin = _make_orchestrator(tmp_path)
+        teardown_log = tmp_path / "teardown-calls.log"
+        _write_script(mock_bin / "teardown.sh", f'echo "$*" >> "{teardown_log}"\n')
+        story = orch.sm.get_story(101)
+
+        orch._finish_story(story, outcome, "none")
+
+        after = orch.sm.get_story(101)
+        assert after["holdsPreservedWork"] is True
+        assert teardown_log.read_text().strip() == f"{story['clonePath']} --keep-clone"
+
+    def test_complete_story_still_removes_clone(self, tmp_path):
+        orch, mock_bin = _make_orchestrator(tmp_path)
+        teardown_log = tmp_path / "teardown-calls.log"
+        _write_script(mock_bin / "teardown.sh", f'echo "$*" >> "{teardown_log}"\n')
+        story = orch.sm.get_story(101)
+
+        orch._finish_story(story, "complete", "55")
+
+        assert orch.sm.get_story(101)["holdsPreservedWork"] is False
+        assert "--keep-clone" not in teardown_log.read_text()
+
+    def test_requeued_errored_story_resumes_over_preserved_clone(self, tmp_path):
+        orch, mock_bin = _make_orchestrator(tmp_path)
+        _write_script(mock_bin / "teardown.sh", "exit 0\n")
+        orch._finish_story(orch.sm.get_story(101), "error", "none")
+
+        stories = json.loads(Path(orch.stories_file).read_text())
+        requeued, _ = orch.sm.reconcile_with_input(stories, orch.base_dir)
+
+        assert requeued == [101]
+        story = orch.sm.get_story(101)
+        assert story["status"] == "queued"
+        assert story["holdsPreservedWork"] is True, "the retry must keep the marker"
+        assert orch._holds_preserved_work(story)
+
+
 class TestCheckCompletionsTransientExit:
     """A rate-limited agent exit requeues the story and keeps its clone/container."""
 

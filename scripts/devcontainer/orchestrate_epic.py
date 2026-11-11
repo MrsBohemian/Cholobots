@@ -1694,10 +1694,18 @@ class Orchestrator(HostRepoBaseMixin):
         distinct label is preserved in state) and whether dependents are
         cascade-skipped. `outcome_label` is the stored outcome when it differs
         from the reported one (e.g. no_pr_created, rate_limit_exhausted).
-        `branch` is the story's feature branch, when known.
+        `branch` is the story's feature branch, when known. The clone is kept for
+        the error and escalated outcomes whatever `keep_clone` says.
         """
         ref = story["ref"]
         status = "complete" if outcome in SUCCESS_OUTCOMES else outcome
+        # An agent that exited in error or escalated leaves unpushed commits
+        # and uncommitted edits in its clone. error and PR-less escalated
+        # stories are re-queued by the next run, and the relaunch resumes over
+        # that directory (launch_story), so deleting it here would throw away
+        # exactly the work the retry exists to recover.
+        if outcome in ("error", "escalated"):
+            keep_clone = True
         self.sm.update_story(
             ref,
             status=status, outcome=outcome_label or outcome,
