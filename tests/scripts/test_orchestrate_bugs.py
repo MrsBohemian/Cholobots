@@ -492,7 +492,7 @@ class TestAlreadyClosedOutcome:
 
 
 class TestNonTerminalPhaseWithPrBecomesEscalated:
-    """Non-terminal phase + PR → escalated (bug #1825 defense-in-depth)."""
+    """Non-terminal phase + PR → escalated."""
 
     def test_non_terminal_with_pr(self, tmp_path):
         state_file = tmp_path / "fix-and-remediate-701.json"
@@ -715,7 +715,7 @@ class TestHandleLaunchFailurePersistsContainerIdOnRetry:
         assert bug["containerId"] == "xyz789"
 
 
-# ── Asynchronous launch tests (bug #2630) ───────────────────────────
+# ── Asynchronous launch tests ───────────────────────────────────────
 
 
 def join_launch_threads(orch, timeout=10):
@@ -1398,7 +1398,7 @@ class TestStateRecordsMode:
         assert open(orch.sm.state_file).read() == before
 
     def _legacy_worktree_state(self, tmp_path):
-        """A /tmp/parallel-fix-bugs.json as the pre-#75 worktree skill wrote it:
+        """A legacy worktree-mode /tmp/parallel-fix-bugs.json:
         no `mode` key, per-bug `worktreePath` instead of clonePath/logFile/containerId."""
         state_file = tmp_path / "parallel-fix-bugs.json"
         state_file.write_text(json.dumps({
@@ -1414,9 +1414,8 @@ class TestStateRecordsMode:
         return state_file
 
     def test_resume_refuses_a_legacy_state_file_without_mode(self, tmp_path, capsys):
-        # A file with no `mode` was written by the worktree skill before #75
-        # (the container orchestrator always writes the key), so resuming it in
-        # container mode would fail on the missing clonePath/containerId.
+        # A file with no `mode` is worktree state; resuming it in container
+        # mode would fail on the missing clonePath/containerId.
         state_file = self._legacy_worktree_state(tmp_path)
         before = state_file.read_text()
 
@@ -1520,7 +1519,7 @@ class TestBugAgentRunsThroughExecSkill:
         assert orch.sm.get_bug(101)["containerId"] == "abc123"
 
 
-# ── PR #29 review: base branch, teardown failures, resume mapping ──
+# ── Base branch, teardown failures, resume mapping ─────────────────
 
 
 def _git(cwd, *args):

@@ -23,8 +23,8 @@ Environment variables:
   BASE_BRANCH             Branch to clone for each bug devcontainer and open PRs against (default: main);
                           fetched from the remote before each launch and passed to the worker
   ORCHESTRATE_LAUNCH_TIMEOUT  Seconds allowed for launch.sh before giving up
-                          (default: 1800 — a cold Docker-in-Docker launch pulls
-                          images and provisions services, which exceeds 600s)
+                          (default: 1800; a cold launch pulls images and starts
+                          services)
 """
 
 import json
@@ -40,9 +40,8 @@ from pathlib import Path
 
 MAX_LAUNCH_ATTEMPTS = 3
 
-# Git remote and GitHub repository the orchestrator works against, as in
-# orchestrate_epic.py: PRs live in MrsBohemian/Cholobots, whose remote is
-# `upstream` (`origin` is only a mirror).
+# PRs live in MrsBohemian/Cholobots, whose remote is `upstream` (`origin` is
+# only a mirror).
 REMOTE = os.environ.get("ORCHESTRATE_REMOTE", "upstream")
 GH_REPO = os.environ.get("GH_REPO", "MrsBohemian/Cholobots")
 
@@ -51,7 +50,7 @@ GH_REPO = os.environ.get("GH_REPO", "MrsBohemian/Cholobots")
 STATE_MODE = "container"
 # Opt-in for the host-side outcome file; see determine_outcome.
 HOST_STATE_ENV = "ORCHESTRATE_TEST_HOST_STATE"
-# State files written before #75 carry no `mode`; only the worktree skill wrote them.
+# A state file without `mode` was written by the worktree skill.
 LEGACY_STATE_MODE = "worktree"
 
 
@@ -193,8 +192,8 @@ class StateManager:
             self.save()
 
 
-# Shared with orchestrate_epic (same logic, avoids duplication): the PID check,
-# PR-number validation and the host-repo base-branch resolution.
+# Shared with orchestrate_epic: the PID check, PR-number validation and the
+# host-repo base-branch resolution.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from orchestrate_epic import (  # noqa: E402
     HostRepoBaseMixin, is_agent_process, read_log_tail, valid_pr_number,
@@ -205,7 +204,7 @@ def _classify_phase(phase, pr):
     """Classify a state file phase into an outcome.
 
     Returns (outcome, escalation_reason). Terminal phases return reason=None.
-    Non-terminal phases with a PR are downgraded to escalated (bug #1825).
+    Non-terminal phases with a PR are downgraded to escalated.
     """
     terminal_phases = {"complete", "escalated", "already-closed"}
     if phase == "complete":
@@ -215,11 +214,9 @@ def _classify_phase(phase, pr):
     elif phase == "already-closed":
         return "already_closed", None
     elif phase not in terminal_phases and pr is not None and str(pr).strip().isdigit() and int(str(pr)) > 0:
-        # Inner agent exited without writing a terminal phase but did create a PR
-        # (e.g., paused asking user questions, then was timed out by parent).
-        # Surface as escalation rather than silent error — bug #1825.
-        # Only treat prNumber as valid if it is a positive integer to avoid
-        # masking errors caused by empty-string, "0", or stale null-ish values.
+        # The agent created a PR but stopped before a terminal phase (e.g. it
+        # paused to ask a question and timed out): escalate, don't error.
+        # Only a positive integer counts as a PR; "", "0" and nulls do not.
         return "escalated", f"non-terminal phase: {phase}"
     return None, None
 
@@ -594,11 +591,8 @@ class Orchestrator(HostRepoBaseMixin):
                 log("Previous run completed. Starting fresh.")
                 os.remove(self.sm.state_file)
             else:
-                # The container orchestrator always writes `mode`. A file
-                # without it is the pre-#75 /parallel-fix-bugs worktree state
-                # (per-bug worktreePath, no clonePath/logFile/containerId), so
-                # it is reported as a worktree run, never resumed as a
-                # container one.
+                # A file without `mode` is worktree-mode state (per-bug
+                # worktreePath, no clonePath/containerId): never resume it here.
                 written_by = self.sm.state.get("mode", LEGACY_STATE_MODE)
                 if written_by != STATE_MODE:
                     log(
@@ -615,9 +609,8 @@ class Orchestrator(HostRepoBaseMixin):
                         f"using stored concurrency={stored_concurrency}"
                     )
                     self.concurrency = stored_concurrency
-                # baseBranch is stored at init so a resume with BASE_BRANCH
-                # unset (or different) still clones and opens PRs against the
-                # run's real base instead of silently falling back to "main".
+                # The stored baseBranch wins, so a resume without BASE_BRANCH
+                # does not silently fall back to "main".
                 stored_base_branch = self.sm.state.get("baseBranch", self.base_branch)
                 if stored_base_branch != self.base_branch:
                     log(
@@ -625,7 +618,7 @@ class Orchestrator(HostRepoBaseMixin):
                         f"using stored baseBranch={stored_base_branch}"
                     )
                     self.base_branch = stored_base_branch
-                # Backfill the key for state files written before it existed.
+                # Backfill the key into an older state file that lacks it.
                 if self.sm.state.get("baseBranch") != stored_base_branch:
                     self.sm.state["baseBranch"] = stored_base_branch
                     self.sm.save()

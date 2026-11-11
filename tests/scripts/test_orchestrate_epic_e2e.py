@@ -290,7 +290,7 @@ class TestResumeWithDeadPid:
 
 
 class TestReconcileOnCompletedState:
-    """Bug #2019: re-invoking a completed run retries only failures, not PR'd stories."""
+    """Re-invoking a completed run retries only failures, not PR'd stories."""
 
     def test_completed_run_relaunches_only_failed_story(self, tmp_env):
         state_file = tmp_env["state_file"]
@@ -408,7 +408,7 @@ class TestLaunchFailure:
 
 
 class TestHostRepoRootOverride:
-    """bug #3221: ORCHESTRATE_REPO_ROOT selects the host repo the base check
+    """ORCHESTRATE_REPO_ROOT selects the host repo the base check
     runs against, independent of the clone the script lives in."""
 
     def test_stale_main_in_the_configured_host_repo_fails_the_launch(self, tmp_env, monkeypatch):
@@ -1098,7 +1098,7 @@ class TestNoWorkCompletion:
 
 
 class TestHandoffCompletion:
-    """Test 18: Clean handoff — agent exits in monitoring phase with a PR (story #2095).
+    """Test 18: Clean handoff — agent exits in monitoring phase with a PR.
 
     A story-agent that creates a PR and exits while the state file is still at
     phase="monitoring" is a clean handoff, not an escalation. It must be scored
@@ -1365,7 +1365,7 @@ class TestFinalCleanup:
 
 
 class TestLaunchContainment:
-    """Bug #2465: a launch that times out or fails must be fully contained —
+    """A launch that times out or fails must be fully contained —
     the launch script's process tree is killed, teardown failures are logged,
     and a retry never reuses the failed attempt's clone."""
 
@@ -1477,7 +1477,7 @@ class TestLaunchContainment:
 
 
 class TestRateLimitedAgentExit:
-    """Bug #2439: a provider rate limit that kills the agent is transient, not a
+    """A provider rate limit that kills the agent is transient, not a
     story failure — the story is requeued, its clone kept, and no dependents skip.
 
     One end-to-end run through the poll loop; the per-path behaviour (budget
@@ -1619,7 +1619,7 @@ class TestRateLimitedAgentExit:
 
 
 class TestContainerModeWiring:
-    """Story #75: the orchestrators run each item through exec-skill.sh in a
+    """The orchestrators run each item through exec-skill.sh in a
     container, and record the mode that wrote the state file."""
 
     def test_two_stories_concurrency_two_complete(self, tmp_env):
@@ -1688,7 +1688,7 @@ class TestContainerModeWiring:
 
 
 class TestDryRun:
-    """Story #75: --dry-run smokes each container's stack through exec.sh and
+    """--dry-run smokes each container's stack through exec.sh and
     keeps every container and clone for the isolation check."""
 
     def test_dry_run_concurrency_two_keeps_both_clones(self, tmp_env):
@@ -1726,7 +1726,7 @@ class TestDryRun:
 
 
 class TestBugsOrchestrator:
-    """Story #75: orchestrate_bugs.py runs fix-and-remediate-bug through exec-skill.sh."""
+    """orchestrate_bugs.py runs fix-and-remediate-bug through exec-skill.sh."""
 
     def test_bugs_orchestrator_two_bugs_complete(self, tmp_env):
         with open(os.path.join(tmp_env["mock_bin"], "claude"), "w") as f:

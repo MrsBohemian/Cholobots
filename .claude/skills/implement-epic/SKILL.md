@@ -79,16 +79,14 @@ slower.
 
 Split `$ARGUMENTS` into `<epic-ref>`, `<n>` (concurrency limit) and the flags `--worktrees` and
 `--dry-run`. Default `<n>` to 1 if not provided. If `<n>` is provided but is not a positive integer,
-stop and report the error: neither mode applies to zero, a negative value or a non-integer.
+stop and report the error.
 
 The run's **mode** is `worktree` when `<n>` = 1 or `--worktrees` is present, otherwise `container`.
 `--dry-run` is only valid in container mode (`<n>` > 1, no `--worktrees`); with `<n>` = 1 or with
 `--worktrees`, stop and say so.
 
-In container mode `<n>` must be in the range **1-5**: `scripts/devcontainer/orchestrate_epic.py` exits
-with "concurrency must be 1-5" for anything larger, before it creates any state. Validate that here
-and stop with the same message rather than launching the orchestrator to fail. Worktree mode has no
-such cap.
+In container mode `<n>` must be in the range **1-5** (`orchestrate_epic.py` rejects anything
+larger): validate it here and stop with "concurrency must be 1-5". Worktree mode has no such cap.
 
 If `<n>` > 3, warn:
 > "Warning: N=<n> may exceed account rate limits. Recommended max is 3."
@@ -569,8 +567,6 @@ to run `scripts/supabase-local.sh prune`. The scratch `integration-<ref>` worktr
    re-validates before merging. Every PR whose branch has the workflows reports `checks` and `integration`.
 
 ## Event vocabulary
-
-Two tables, one per mode; the modes differ and so does what they emit.
 
 ### Worktree mode
 

@@ -1232,7 +1232,7 @@ class TestLaunchFailureStartsFromCleanClone:
     def test_launch_failure_after_failed_cleanup_is_terminal_and_keeps_clone(
             self, tmp_path, monkeypatch, capsys):
         """If a container may still be bound to the clone, retrying would bind a
-        second container to the same folder — the original bug. Do not requeue."""
+        second container to the same folder. Do not requeue."""
         orch, mock_bin = _make_orchestrator(tmp_path)
         _write_script(mock_bin / "teardown.sh", "exit 1\n")
         monkeypatch.setattr(orch, "_force_remove_containers", lambda path, cid=None: False)

@@ -28,8 +28,8 @@ Environment variables:
   POLL_INTERVAL           Seconds between poll cycles (default: 30)
   BASE_BRANCH             Branch to clone for each story devcontainer (default: main)
   ORCHESTRATE_LAUNCH_TIMEOUT  Seconds allowed for launch.sh before giving up
-                          (default: 1800 — a cold Docker-in-Docker launch pulls
-                          images and provisions services, which exceeds 600s)
+                          (default: 1800; a cold launch pulls images and starts
+                          services)
   ORCHESTRATE_TEARDOWN_TIMEOUT  Seconds allowed for teardown.sh (default: 180)
   ORCHESTRATE_TRANSIENT_BACKOFF  Seconds to wait before relaunching a story whose
                           agent was killed by a provider rate limit when the log
@@ -57,9 +57,8 @@ from base_selector import UnresolvedDependencyError, select_base_branch  # noqa:
 
 MAX_LAUNCH_ATTEMPTS = 3
 
-# Git remote and GitHub repository the orchestrator works against. Read once at
-# import, like scripts/merge_train.py: the PR branches and every PR live in
-# MrsBohemian/Cholobots, whose remote is `upstream` (`origin` is only a mirror).
+# The PR branches and every PR live in MrsBohemian/Cholobots, whose remote is
+# `upstream` (`origin` is only a mirror). Read once at import.
 REMOTE = os.environ.get("ORCHESTRATE_REMOTE", "upstream")
 GH_REPO = os.environ.get("GH_REPO", "MrsBohemian/Cholobots")
 
@@ -733,29 +732,18 @@ class HostRepoBaseMixin:
         """Guarantee `base` resolves as a local head in the host repo that
         matches the remote, before launch.sh clones from it.
 
-        A dependency's `feature/<slug>-<ref>` branch is created and pushed to
-        GitHub from inside that story's own container, so the host repo —
-        where launch.sh's `git clone --branch` runs — has never seen it.
-        `git clone --branch` resolves against refs/heads/ and refs/tags/
-        only, so a bare `git fetch <remote> <base>` (which only writes
-        refs/remotes/<remote>/<base>) would not be enough; the fetch below
-        creates a local head instead.
+        A dependency's branch is pushed from inside its own container, so the
+        host repo has never seen it, and `git clone --branch` only resolves
+        refs/heads/ and refs/tags/: a plain `git fetch <remote> <base>` is not
+        enough, so the fetch below writes a local head.
 
-        The local head this leaves behind in the operator's host repo is not
-        evidence that the base is current: a relaunch, a re-run of the epic,
-        or a `gh pr checkout` can all leave a head at an older commit, and
-        merge-train force-pushes mean the stale head may not even be an
-        ancestor of the remote tip. So the head is always re-fetched with a
-        forced refspec, which resets it to the remote tip rather than failing
-        the fast-forward. That is safe because the orchestrator, not a human,
-        owns these heads.
+        An existing local head may be stale (an earlier run, `gh pr checkout`,
+        a merge-train force-push), so it is always re-fetched with a forced
+        refspec. The orchestrator owns these heads, so resetting them is safe.
 
-        The heads the orchestrator must not rewrite are the ones checked out
-        in the host repo or in one of its linked worktrees (worktree mode
-        leaves a base branch checked out in one) — git refuses to fetch into
-        them anyway. Those are verified instead: the local head must equal the
-        remote tip, otherwise the launch fails loudly rather than cloning a
-        stale base or unpushed host commits.
+        A head checked out in the host repo or one of its worktrees cannot be
+        fetched into; it is verified instead and must equal the remote tip, or
+        the launch fails rather than cloning a stale base or unpushed commits.
 
         Returns True if `base` is (or was made) reachable and current, False
         otherwise.
@@ -1021,20 +1009,14 @@ class Orchestrator(HostRepoBaseMixin):
     def _holds_preserved_work(story):
         """True when the story's clone must survive teardown.
 
-        The persisted `holdsPreservedWork` marker says the clone has a branch
-        with unpushed commits from a rate-limited run; the container may go,
-        the clone stays. The marker is set when a rate-limited exit parks the
-        story or escalates it with its retry budget spent, and it is cleared
-        wherever the clone is removed. Unlike the per-run `transientRetries`
-        budget, which reconcile_with_input resets on every requeue, the marker
-        lasts across orchestrator runs -- as the clone on disk does. The
-        relaunch resumes from the directory (see launch_story).
-
-        A parked story that is skipped before it relaunches -- a failed
-        dependency, a cascade skip, or a blocked integration branch -- never ran
-        again, so its clone still holds that work. The marker stays set, and
-        the clone is kept for a human to recover, in whatever status the story
-        ends up in.
+        The persisted `holdsPreservedWork` marker means the clone has unpushed
+        commits from a rate-limited run: the container may go, the clone stays
+        and a relaunch resumes from it (see launch_story). It is set when a
+        rate-limited exit parks or escalates the story, cleared wherever the
+        clone is removed, and, unlike `transientRetries`, survives
+        reconcile_with_input and later runs. A parked story that is skipped
+        before it relaunches keeps the marker, so its clone is kept for a human
+        to recover.
         """
         return bool(story.get("holdsPreservedWork"))
 
@@ -1278,10 +1260,8 @@ class Orchestrator(HostRepoBaseMixin):
         `outcome` distinguishes a genuine merge conflict between the parents
         (`integration_conflict`) from an operational failure -- an
         unresolvable parent branch, a fetch, checkout, push or PR-create
-        failure (`integration_error`). Collapsing the latter into
-        `integration_conflict` makes the emitted event claim a conflict that
-        never happened, which sends whoever reads it looking for a merge to
-        resolve.
+        failure (`integration_error`), so the event never reports a conflict
+        that did not happen.
 
         Either way the block only affects this story: dependents cascade-skip,
         but every unrelated queued story stays launchable (next_queued_ref
@@ -1347,8 +1327,7 @@ class Orchestrator(HostRepoBaseMixin):
         # skips every parent ref that differs from it -- checkout below would
         # then either fail outright or, worse, resolve a stale local
         # <remote>/<parent> ref left over from an earlier fetch. Fetch each
-        # parent explicitly and check the result, the same fix rebase-branch's
-        # Step 3 and worktree-add.sh apply for the same reason.
+        # parent explicitly and check the result.
         for parent in parent_branches:
             rc, _, stderr = self._run_cmd(
                 ["git", "fetch", REMOTE, f"+{parent}:refs/remotes/{REMOTE}/{parent}"]
@@ -1358,19 +1337,15 @@ class Orchestrator(HostRepoBaseMixin):
                 self._block_integration(ref, deps, "integration_error")
                 return None
 
-        # Build the branch in a throwaway worktree rather than the process's
-        # own checkout. Doing it in place made the outcome depend on the
-        # operator's uncommitted work -- git refuses a checkout/merge that
-        # would overwrite a locally modified file, and that refusal was
-        # reported as a conflict between the parents -- and left HEAD on the
-        # integration branch afterwards. A worktree shares the repo's object
-        # store and refs, so the branch is still local to the host repo (which
-        # launch.sh requires: it clones the container workspace from
-        # file://$REPO_ROOT), while HEAD and the working tree stay untouched.
+        # Build the branch in a throwaway worktree, not the operator's
+        # checkout: there, uncommitted edits would make git refuse the merge
+        # (misreported as a parent conflict) and HEAD would be moved. The
+        # worktree shares the repo's refs, so the branch is still local to the
+        # host repo, which launch.sh clones from (file://$REPO_ROOT).
         tmp_root = tempfile.mkdtemp(prefix="orchestrate-integration-")
         worktree = os.path.join(tmp_root, "worktree")
-        # --force: an earlier in-place run may have left the branch checked
-        # out in the host repo, which would otherwise refuse the -B reset.
+        # --force: the branch may already be checked out in the host repo,
+        # which would otherwise refuse the -B reset.
         rc, _, stderr = self._run_cmd([
             "git", "worktree", "add", "--force", "-B", name, worktree,
             f"{REMOTE}/{parent_branches[0]}",
@@ -1423,11 +1398,9 @@ class Orchestrator(HostRepoBaseMixin):
         # through the remote's configured fetch refspec. A single-branch clone
         # only maps the branch it was cloned from, so git finds no tracking ref
         # for the integration branch and rejects the push as "stale info" even
-        # when the parents merged cleanly. Fetch the branch's own ref and state
-        # the expectation explicitly: the fetched SHA when the remote has the
-        # branch, or the empty string ("must not already exist") when the fetch
-        # fails because it does not. The lease still protects a branch someone
-        # else advanced; only the ref lookup changes.
+        # when the parents merged cleanly. So fetch the branch's own ref and
+        # state the expectation explicitly: the fetched SHA, or "" ("must not
+        # already exist") when the remote has no such branch.
         rc, _, _ = self._run_cmd(["git", "fetch", REMOTE, f"+{name}:refs/remotes/{REMOTE}/{name}"])
         expected = ""
         if rc == 0:
@@ -1488,7 +1461,7 @@ class Orchestrator(HostRepoBaseMixin):
         """
         if self.sm.exists():
             self.sm.load()
-            # A file with no `mode` predates the key and is a container run.
+            # A file with no `mode` is a container run.
             written_by = self.sm.state.get("mode", STATE_MODE)
             if written_by != STATE_MODE:
                 log(
@@ -1514,10 +1487,8 @@ class Orchestrator(HostRepoBaseMixin):
                 )
                 self.concurrency = stored_concurrency
 
-            # baseBranch is stored at init time so a resume with BASE_BRANCH
-            # unset (or set differently) still targets the run's real base
-            # rather than silently falling back to "main" for new/requeued
-            # stories and their PRs.
+            # The stored baseBranch wins, so a resume without BASE_BRANCH
+            # does not silently fall back to "main".
             stored_base_branch = self.sm.state.get("baseBranch", self.base_branch)
             if stored_base_branch != self.base_branch:
                 log(
@@ -1525,8 +1496,7 @@ class Orchestrator(HostRepoBaseMixin):
                     f"using stored baseBranch={stored_base_branch}"
                 )
                 self.base_branch = stored_base_branch
-            # Backfill the key for state files written before it existed, so
-            # the next resume has a stored value to prefer over the env.
+            # Backfill the key into an older state file that lacks it.
             self.sm.state["baseBranch"] = stored_base_branch
 
             stories = self._load_stories_file()
@@ -1661,17 +1631,14 @@ class Orchestrator(HostRepoBaseMixin):
 
         if not cleaned:
             # A container may still be bound to this clone. Retrying would bind
-            # a second container to the same folder (the original bug), so the
-            # story is terminal and the clone is kept for diagnosis.
+            # a second container to the same folder, so the story is terminal
+            # and the clone is kept for diagnosis.
             log(f"Cleanup failed for story {ref}; not retrying, clone kept at {clone_path}")
             reason = f"{reason}; cleanup failed, container may still be running"
         elif not keep_clone and not self._ensure_clone_absent(clone_path):
-            # _ensure_clone_absent refused to remove a git worktree. Retrying
-            # would leave launch.sh's `resuming` check finding the directory
-            # still present and skipping checkout, running the agent against
-            # whatever branch the worktree happened to hold instead of the
-            # resolved base. Treat this the same as a failed cleanup: terminal,
-            # clone kept for diagnosis.
+            # _ensure_clone_absent refused to remove a git worktree. A retry
+            # would find the directory, skip checkout and run the agent on
+            # whatever branch it holds, so treat it as a failed cleanup.
             cleaned = False
             log(f"Could not remove worktree clone for story {ref}; not retrying, clone kept at {clone_path}")
             reason = f"{reason}; clone is a git worktree, refusing to remove it"
@@ -1779,8 +1746,7 @@ class Orchestrator(HostRepoBaseMixin):
         Returns True when the exit was transient and has been handled: either
         requeued with a notBefore (clone and container kept, so the relaunch
         resumes in place) or, once the retry budget is spent, escalated with
-        the clone kept — its unpushed work is exactly the work a teardown would lose, so a
-        human recovers it rather than the orchestrator deleting it — and
+        the clone kept for a human to recover its unpushed work, and
         dependents cascade-skipped. Any PR the agent had already created is
         recorded so a resume never relaunches it into a duplicate. Returns
         False for a non-transient exit so the caller runs the normal outcome
@@ -1901,12 +1867,10 @@ class Orchestrator(HostRepoBaseMixin):
             # A conflict or unresolvable parent blocks only this story.
             base = self._ensure_integration_branch(ref, deps)
             if base is None:
-                # The block already flipped the story to "skipped", so stop the
-                # container bound to the clone now rather than leaving it for
-                # final cleanup. A story that was not resuming has no clone
-                # directory yet and the teardown is a no-op. The clone itself
-                # survives the rest of the run: _holds_preserved_work counts a
-                # skipped story with transient retries as preserved work.
+                # The block already marked the story "skipped": stop its
+                # container now. A story that was not resuming has no clone yet,
+                # so this is a no-op; a resuming one keeps its clone, which the
+                # holdsPreservedWork marker protects for the rest of the run.
                 self._teardown(clone_path, keep_clone=resuming)
                 return False
         else:
@@ -1926,10 +1890,7 @@ class Orchestrator(HostRepoBaseMixin):
                     None,
                 )
                 log(f"Story {ref}: {e}")
-                # `resuming` means clone_path holds preserved work (see the comment
-                # above): the teardown removes the container now, and the clone
-                # survives final cleanup because _holds_preserved_work counts a
-                # skipped story with transient retries as preserved work.
+                # As above: remove the container, keep a preserved clone.
                 self._teardown(clone_path, keep_clone=resuming)
                 self.sm.update_story(
                     ref, status="skipped", outcome="dependency_failed", completedAt=utcnow_iso(),
