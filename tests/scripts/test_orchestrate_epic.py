@@ -69,6 +69,83 @@ class TestUnreviewablePrNumberIsNone:
         assert got == "42"
 
 
+class TestHostStateFileIsNotReadInRealRuns:
+    """The state file that decides an outcome is the one inside the story's
+    container. /tmp/fully-implement-<ref>.json on the host is the path worktree
+    mode writes, so a leftover there must not be taken for this run's result."""
+
+    @pytest.fixture(autouse=True)
+    def _real_run(self, monkeypatch):
+        monkeypatch.delenv("ORCHESTRATE_TEST_HOST_STATE", raising=False)
+
+    def _stale(self, tmp_path):
+        stale = tmp_path / "fully-implement-101.json"
+        stale.write_text(json.dumps({
+            "phase": "complete", "prNumber": 42, "featureBranch": "feature/old-101",
+        }))
+        return stale
+
+    def test_stale_host_file_is_ignored_when_docker_exec_fails(self, tmp_path, monkeypatch):
+        stale = self._stale(tmp_path)
+        monkeypatch.setattr(
+            "orchestrate_epic.subprocess.run",
+            lambda cmd, **kw: SimpleNamespace(returncode=1, stdout="", stderr="no such container"),
+        )
+
+        outcome, pr, reason, branch = determine_outcome(
+            101, None, container_id="abc123", state_dir=str(tmp_path),
+        )
+
+        assert (outcome, pr, reason, branch) == ("error", "none", None, None)
+        assert stale.exists(), "a file this run did not write must not be deleted"
+
+    def test_stale_host_file_is_ignored_without_a_container(self, tmp_path):
+        stale = self._stale(tmp_path)
+
+        outcome, pr, _reason, _branch = determine_outcome(
+            101, None, container_id=None, state_dir=str(tmp_path),
+        )
+
+        assert (outcome, pr) == ("error", "none")
+        assert stale.exists()
+
+    def test_container_state_still_wins(self, tmp_path, monkeypatch):
+        self._stale(tmp_path)
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            if "cat" in cmd:
+                return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(
+                    {"phase": "complete", "prNumber": 7, "featureBranch": "feature/new-101"}))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr("orchestrate_epic.subprocess.run", fake_run)
+
+        outcome, pr, _reason, branch = determine_outcome(
+            101, None, container_id="abc123", state_dir=str(tmp_path),
+        )
+
+        assert (outcome, pr, branch) == ("complete", "7", "feature/new-101")
+
+    def test_check_completions_does_not_complete_a_story_from_a_stale_file(self, tmp_path, monkeypatch):
+        orch, _ = _make_orchestrator(tmp_path, refs=(101,))
+        stale = self._stale(orch.state_dir)
+        orch.sm.update_story(101, status="active", pid=None, containerId="abc123")
+        monkeypatch.setattr(
+            "orchestrate_epic.subprocess.run",
+            lambda cmd, **kw: SimpleNamespace(returncode=1, stdout="", stderr="gone"),
+        )
+        monkeypatch.setattr(orch, "_teardown", lambda *a, **k: True)
+
+        orch.check_completions()
+
+        story = orch.sm.get_story(101)
+        assert story["status"] != "complete"
+        assert story.get("prNumber") != 42
+        assert stale.exists()
+
+
 class TestFeatureBranchRecording:
     """The 4th determine_outcome element carries the story's feature branch."""
 

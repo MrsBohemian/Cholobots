@@ -4,6 +4,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import pytest
+
 # Identity passed on every commit so the sandbox never depends on (or writes)
 # the developer's global git config.
 _GIT_IDENTITY = ["-c", "user.name=Sandbox", "-c", "user.email=sandbox@example.invalid"]
@@ -46,3 +48,12 @@ def make_host_repo(parent, stale_main=False, remote="origin"):
         _git("push", "--quiet", remote, "main", cwd=seed)
 
     return host
+
+
+@pytest.fixture(autouse=True)
+def host_state_outcome(monkeypatch):
+    """Let the orchestrators read the per-item outcome file a fake exec-skill.sh
+    writes into the state dir. Real runs read it from inside the container only
+    (ORCHESTRATE_TEST_HOST_STATE unset); a test of that default deletes the
+    variable itself."""
+    monkeypatch.setenv("ORCHESTRATE_TEST_HOST_STATE", "1")

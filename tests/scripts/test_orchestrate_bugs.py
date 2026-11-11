@@ -1131,6 +1131,60 @@ class TestRunScriptRegistersBeforeShutdownCanMissIt:
         assert 101 not in orch.launch_procs, "launch process was never deregistered"
 
 
+class TestHostStateFileIsNotReadInRealRuns:
+    """The state file that decides an outcome is the one inside the bug's
+    container. /tmp/fix-and-remediate-<ref>.json on the host is the path worktree
+    mode writes, so a leftover there must not be taken for this run's result."""
+
+    @pytest.fixture(autouse=True)
+    def _real_run(self, monkeypatch):
+        monkeypatch.delenv("ORCHESTRATE_TEST_HOST_STATE", raising=False)
+
+    def _stale(self, tmp_path):
+        stale = tmp_path / "fix-and-remediate-101.json"
+        stale.write_text(json.dumps({"phase": "complete", "prNumber": 42}))
+        return stale
+
+    def test_stale_host_file_is_ignored_when_docker_exec_fails(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+
+        stale = self._stale(tmp_path)
+        monkeypatch.setattr(
+            "orchestrate_bugs.subprocess.run",
+            lambda cmd, **kw: SimpleNamespace(returncode=1, stdout="", stderr="no such container"),
+        )
+
+        result = determine_outcome(101, None, container_id="abc123", state_dir=str(tmp_path))
+
+        assert result == ("error", "none", None)
+        assert stale.exists(), "a file this run did not write must not be deleted"
+
+    def test_stale_host_file_is_ignored_without_a_container(self, tmp_path):
+        stale = self._stale(tmp_path)
+
+        assert determine_outcome(101, None, state_dir=str(tmp_path)) == ("error", "none", None)
+        assert stale.exists()
+
+    def test_check_completions_does_not_complete_a_bug_from_a_stale_file(self, tmp_path, monkeypatch):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+        stale = self._stale(tmp_path)
+        orch.sm.update_bug(101, status="active", pid=99999, containerId="abc123")
+        monkeypatch.setattr("orchestrate_bugs.is_agent_process", lambda pid: False)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
+        monkeypatch.setattr(
+            "orchestrate_bugs.subprocess.run",
+            lambda cmd, **kw: __import__("types").SimpleNamespace(
+                returncode=1, stdout="", stderr="gone"),
+        )
+
+        orch.check_completions()
+
+        bug = orch.sm.get_bug(101)
+        assert bug["status"] != "complete"
+        assert bug.get("prNumber") != 42
+        assert stale.exists()
+
+
 class TestOrchestratorReadsHostStateFromStateDir:
     """The orchestrator reads host-side per-bug completion files from its own state dir."""
 
@@ -1240,15 +1294,49 @@ class TestStateRecordsMode:
         assert "worktree" in capsys.readouterr().err
         assert open(orch.sm.state_file).read() == before
 
-    def test_resume_treats_a_file_without_mode_as_container(self, tmp_path):
+    def _legacy_worktree_state(self, tmp_path):
+        """A /tmp/parallel-fix-bugs.json as the pre-#75 worktree skill wrote it:
+        no `mode` key, per-bug `worktreePath` instead of clonePath/logFile/containerId."""
+        state_file = tmp_path / "parallel-fix-bugs.json"
+        state_file.write_text(json.dumps({
+            "phase": "running",
+            "concurrency": 2,
+            "repoRoot": str(tmp_path),
+            "bugs": [{
+                "ref": 101, "id": 1101, "subject": "Bug 101", "status": "active",
+                "branch": "fix/101-x", "prNumber": None, "outcome": None,
+                "escalationReason": None, "worktreePath": str(tmp_path / "wt-101"),
+            }],
+        }))
+        return state_file
+
+    def test_resume_refuses_a_legacy_state_file_without_mode(self, tmp_path, capsys):
+        # A file with no `mode` was written by the worktree skill before #75
+        # (the container orchestrator always writes the key), so resuming it in
+        # container mode would fail on the missing clonePath/containerId.
+        state_file = self._legacy_worktree_state(tmp_path)
+        before = state_file.read_text()
+
+        again = Orchestrator(1, "unused", str(tmp_path), str(tmp_path), "main")
+        with pytest.raises(SystemExit) as exc:
+            again.init_or_resume()
+
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "worktree" in err
+        assert "--worktrees" in err
+        assert state_file.read_text() == before
+
+    def test_resume_refuses_any_file_without_mode(self, tmp_path):
         orch = make_orch(tmp_path, [101], concurrency=1)
         del orch.sm.state["mode"]
         orch.sm.save()
 
         again = Orchestrator(1, "unused", str(tmp_path), str(tmp_path), "main")
-        again.init_or_resume()
+        with pytest.raises(SystemExit) as exc:
+            again.init_or_resume()
 
-        assert again.sm.get_bug(101) is not None
+        assert exc.value.code == 2
 
 
 class TestBaseBranchPersistence:

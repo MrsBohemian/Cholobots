@@ -13,8 +13,12 @@ Environment variables:
                           (default: MrsBohemian/Cholobots)
   ORCHESTRATE_SCRIPT_DIR  Override directory containing launch.sh, prepare-clone.sh,
                           exec-skill.sh and teardown.sh
-  ORCHESTRATE_STATE_DIR   Override directory for the bug state file and the host-side
-                          per-bug fix-and-remediate-<ref>.json files (default: /tmp)
+  ORCHESTRATE_STATE_DIR   Override directory for the bug state file (default: /tmp)
+  ORCHESTRATE_TEST_HOST_STATE  Set to 1 by the test suite so a fake exec-skill.sh can
+                          report a bug's outcome through a host-side
+                          fix-and-remediate-<ref>.json in the state dir. Off in real
+                          runs: that path is shared with worktree-mode runs, so a
+                          stale file there would be taken for this run's outcome
   POLL_INTERVAL           Seconds between poll cycles (default: 30)
   BASE_BRANCH             Branch to clone for each bug devcontainer and open PRs against (default: main);
                           fetched from the remote before each launch and passed to the worker
@@ -45,6 +49,10 @@ GH_REPO = os.environ.get("GH_REPO", "MrsBohemian/Cholobots")
 # The state file records which mode wrote it so a resume never mixes the
 # container orchestrator with the worktree slot loop.
 STATE_MODE = "container"
+# Opt-in for the host-side outcome file; see determine_outcome.
+HOST_STATE_ENV = "ORCHESTRATE_TEST_HOST_STATE"
+# State files written before #75 carry no `mode`; only the worktree skill wrote them.
+LEGACY_STATE_MODE = "worktree"
 
 
 def gh_cmd(*args):
@@ -254,8 +262,12 @@ def determine_outcome(ref, log_file, container_id=None, state_dir="/tmp"):
         except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
             pass
 
-    # Secondary: check host-side state file
-    if outcome == "error":
+    # Secondary, tests only: a host-side state file in the state dir, which a
+    # fake exec-skill.sh writes where no container exists. Never in a real run:
+    # the authoritative state file is inside the container, and a file here
+    # (the same path worktree mode uses) belongs to an earlier or other run, so
+    # reading it would classify -- and delete -- unrelated work.
+    if outcome == "error" and os.environ.get(HOST_STATE_ENV) == "1":
         host_state_path = os.path.join(state_dir, f"fix-and-remediate-{ref}.json")
         if os.path.exists(host_state_path):
             try:
@@ -566,8 +578,12 @@ class Orchestrator(HostRepoBaseMixin):
                 log("Previous run completed. Starting fresh.")
                 os.remove(self.sm.state_file)
             else:
-                # A file with no `mode` predates the key and is a container run.
-                written_by = self.sm.state.get("mode", STATE_MODE)
+                # The container orchestrator always writes `mode`. A file
+                # without it is the pre-#75 /parallel-fix-bugs worktree state
+                # (per-bug worktreePath, no clonePath/logFile/containerId), so
+                # it is reported as a worktree run, never resumed as a
+                # container one.
+                written_by = self.sm.state.get("mode", LEGACY_STATE_MODE)
                 if written_by != STATE_MODE:
                     log(
                         f"ERROR: {self.sm.state_file} was written by {written_by} mode; "
