@@ -38,8 +38,7 @@ discovers the epic's analyzed stories, orders them by the epic's `## Dependency 
 up to `<n>` of them at a time, each in a **slot** — a git worktree at
 `.claude/worktrees/story-<ref>` plus one synchronous `senior-software-developer` agent following
 `/fully-implement-story` in that worktree. A finished slot is refilled with the next ready story.
-Each slot also runs its own local Supabase stack (`scripts/supabase-local.sh`, story #72), which
-costs about 1 GB RAM while it runs.
+Each slot also runs its own local Supabase stack (`scripts/supabase-local.sh`), about 1 GB RAM.
 Nothing is merged; `/merge-train epic:<ref>` does that afterwards.
 
 ## Choosing `<n>`
@@ -374,10 +373,10 @@ exists (also when it was reused):
 scripts/supabase-local.sh start <absolute worktree path> >/dev/null
 ```
 
-A base that predates #47 has no `supabase/config.toml`; the script says so and exits 0. A non-zero
-exit is a warning only: emit `STACK_WARN:<ref>:<first stderr line>`, remember that a stop may be
-needed, and carry on (the worker's integration tests then skip, or fail under
-`make test-integration`, which is the honest outcome). Never mark the story `error` for it.
+A base without `supabase/config.toml` exits 0 with a note. A non-zero exit is a warning only: emit
+`STACK_WARN:<ref>:<first stderr line>`, remember that a stop may be needed, and carry on (the
+worker's integration tests then skip, or fail under `make test-integration`). Never mark the story
+`error` for it.
 
 ### 4c. Spawn one agent per slot
 
@@ -456,11 +455,10 @@ Set `phase` to `"complete"` and emit `DONE:<complete>:<escalated>:<errors>:<skip
 (`scripts/supabase-local.sh stop <absolute worktree path>`, its own Bash call), then
 run `git worktree remove .claude/worktrees/story-<ref>` and `git worktree prune` — the branch is
 pushed and the PR is open. **Keep** the worktree for a story that ended `escalated` or `error`: it
-may hold uncommitted work and it is the evidence for whoever picks the story up. Its stack is
-stopped anyway (the data is disposable: migrations and seed rebuild it, and each stack holds about
-1 GB), so run the same `stop` for kept worktrees. A failed `stop` is a `STACK_WARN:<ref>:<first
-stderr line>`, never an error; if any stop failed, the final report says to run
-`scripts/supabase-local.sh prune`. The scratch `integration-<ref>` worktree gets no stack.
+may hold uncommitted work and it is the evidence for whoever picks the story up. Run the same
+`stop` for kept worktrees too (migrations and seed rebuild the data). A failed `stop` is a
+`STACK_WARN:<ref>:<first stderr line>`, never an error; if any stop failed, the final report says
+to run `scripts/supabase-local.sh prune`. The scratch `integration-<ref>` worktree gets no stack.
 
 1. Read the state file for final counts.
 2. **Epic status.** The workflow MCP server has no epic-status tool, and `scripts/taiga-epic.sh`

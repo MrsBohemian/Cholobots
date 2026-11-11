@@ -117,7 +117,7 @@ Print `INIT:<total>:<N>` (or `RESUMED:<active>:<queued>:<complete>:<escalated>:<
    git worktree add --detach "$REPO_ROOT/.claude/worktrees/bug-<ref>" upstream/main
    ```
    Skip the add if the worktree exists (resume). Record `worktreePath`. On failure set `status = "error"`, `escalationReason = "worktree creation failed"`, print `LAUNCH_FAIL:<ref>:<reason>` and go on to the next queued bug.
-   Then start the worktree's own Supabase stack (its own Bash call, run from `REPO_ROOT`, the main checkout): `scripts/supabase-local.sh start "$WT" >/dev/null`. A base without `supabase/config.toml` exits 0 with a note. A non-zero exit is a warning only: print `STACK_WARN:<ref>:<first stderr line>` and continue. Each active slot's stack costs about 1 GB RAM while it runs, on top of its worker.
+   Then start the worktree's own Supabase stack (its own Bash call, run from `REPO_ROOT`, the main checkout): `scripts/supabase-local.sh start "$WT" >/dev/null`. A base without `supabase/config.toml` exits 0 with a note. A non-zero exit is a warning only: print `STACK_WARN:<ref>:<first stderr line>` and continue. Each active slot's stack costs about 1 GB RAM on top of its worker.
 4. Spawn the worker with the `Agent` tool:
    - **Agent type**: `senior-software-developer`
    - **Prompt**:

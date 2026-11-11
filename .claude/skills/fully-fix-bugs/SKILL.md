@@ -142,7 +142,7 @@ Process bugs sequentially starting from `currentBugIndex`. For each bug:
    ```
    Skip the add if the worktree already exists (resume). Record `worktreePath` in the state file. If this fails, set `status = "escalated"`, `escalationReason = "worktree creation failed"` and go to Step 5.
 
-3a. **Start the worktree's own Supabase stack** (its own Bash call, run from `REPO_ROOT`, the main checkout): `scripts/supabase-local.sh start "$WT" >/dev/null`. A base without `supabase/config.toml` exits 0 with a note. A non-zero exit is a warning only: print `STACK_WARN:<ref>:<first stderr line>` and continue; never escalate for it. Each running stack costs about 1 GB RAM.
+3a. **Start the worktree's own Supabase stack** (its own Bash call, run from `REPO_ROOT`, the main checkout): `scripts/supabase-local.sh start "$WT" >/dev/null`. A base without `supabase/config.toml` exits 0 with a note. A non-zero exit is a warning only: print `STACK_WARN:<ref>:<first stderr line>` and continue; never escalate for it.
 
 4. **Spawn the fix agent** (synchronous, foreground; wait for its return):
    - **Agent type**: `senior-software-developer`

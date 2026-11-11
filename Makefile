@@ -3,12 +3,11 @@
 # Nothing here talks to the hosted Supabase project; the db-* targets use the local Docker stack.
 
 SUPABASE_CLI_VERSION := 2.121.0
-# The CLI scripts/supabase-local.sh drives; Homebrew or Scoop installs of the same version:
+# CLI used by scripts/supabase-local.sh; for a Homebrew or Scoop install of the same version:
 # make SUPABASE_CLI=supabase <target>
 SUPABASE_CLI ?= npx --yes supabase@$(SUPABASE_CLI_VERSION)
 export SUPABASE_CLI
-# One stack per checkout (the main checkout keeps the default ports); bypass the script with
-# make SUPABASE=supabase <target> to talk to the CLI directly.
+# One stack per checkout; make SUPABASE=supabase <target> bypasses the script.
 SUPABASE ?= scripts/supabase-local.sh
 PYTHON ?= python$(shell cat .python-version 2>/dev/null || echo 3)
 VENV_PY := .venv/bin/python

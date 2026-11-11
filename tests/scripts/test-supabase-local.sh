@@ -2,10 +2,9 @@
 # ABOUTME: Two-worktree isolation test for scripts/supabase-local.sh: two stacks run side by side,
 # ABOUTME: each sees only its own data, and stopping one leaves the other (and the main stack) alone.
 #
-# Needs Docker and npx (it starts real local Supabase stacks from HEAD; several minutes), so it is
-# opt-in: SUPABASE_LOCAL_LIVE=1 bash tests/scripts/test-supabase-local.sh. Without that, and when
-# Docker, npx, supabase/config.toml or tests/integration is missing, it skips with exit 0, which
-# keeps `make test` and CI's Script tests step free of real stacks.
+# Starts real stacks (Docker and npx, several minutes), so it is opt-in:
+#   SUPABASE_LOCAL_LIVE=1 bash tests/scripts/test-supabase-local.sh
+# Otherwise, or when Docker, npx, supabase/config.toml or tests/integration is missing, it exits 0.
 # Never touches the hosted project and never starts, stops or resets the main checkout's stack.
 set -uo pipefail
 

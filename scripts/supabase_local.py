@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# ABOUTME: Core of the per-checkout local Supabase stack: identity, slot registry, port block, config rendering.
-# ABOUTME: Stdlib only; the main checkout keeps default ports, a worktree gets its own project id and port block.
+# ABOUTME: Core of the per-checkout local Supabase stack: identity, slot registry, ports, config rendering.
+# ABOUTME: Stdlib only. The main checkout keeps the default ports; each worktree gets its own id and ports.
 import fcntl
 import hashlib
 import json
@@ -50,8 +50,7 @@ def sanitize_name(name: str) -> str:
 def worktree_key(toplevel: str) -> str:
     """Sanitized basename plus a hash of the full path: the registry key and the project id suffix.
 
-    The basename alone collides (`/a/story-72` and `/b/story-72`, or `Story_72` and `story-72`),
-    which would make a second worktree adopt the first one's stack, ports and data."""
+    The hash keeps `/a/story-72` and `/b/story-72` (or `Story_72` and `story-72`) from sharing a stack."""
     path = os.path.realpath(toplevel)
     digest = hashlib.sha256(path.encode()).hexdigest()[:8]
     return f"{sanitize_name(os.path.basename(path))}-{digest}"
@@ -204,9 +203,8 @@ RETARGET_FLAGS = {"--workdir", "--project-id"}
 FORCE_LOCAL = {("db", "reset"), ("db", "diff"), ("db", "lint"), ("migration", "list"), ("migration", "up"), ("test", "db")}
 # Handled here, against this checkout's stack.
 NATIVE_COMMANDS = {"start", "stop", "status", "env", "prune"}
-# The only CLI commands forwarded: each runs against the local stack when given --workdir and no
-# hosted flag. Everything else (`db pull`, `db dump`, `gen types`, `projects`, `functions`, ...) can
-# reach the hosted project when the checkout carries link metadata, so it is refused, not denylisted.
+# An allowlist: other commands (`db pull`, `gen types`, `projects`, ...) can reach the hosted project
+# when the checkout carries link metadata.
 PASSTHROUGH_COMMANDS = {
     ("db", "reset"), ("db", "diff"), ("db", "lint"),
     ("migration", "new"), ("migration", "list"), ("migration", "up"),

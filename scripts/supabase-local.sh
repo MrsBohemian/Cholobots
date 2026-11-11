@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ABOUTME: Entry point for the per-checkout local Supabase stack (start, stop, status, env, prune, CLI passthrough).
-# ABOUTME: Delegates to supabase_local.py next to this file; see scripts/README.md.
+# ABOUTME: Entry point for the per-checkout local Supabase stack; see scripts/README.md.
+# ABOUTME: Delegates to supabase_local.py next to this file.
 set -euo pipefail
 # Resolve symlinks without `readlink -f` (BSD/macOS readlink has no -f).
 src="${BASH_SOURCE[0]}"
