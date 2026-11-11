@@ -84,7 +84,7 @@ echo '{"name":"t","build":{"dockerfile":"Dockerfile","context":".."}}' >"$SANDBO
 git -C "$SANDBOX" add .devcontainer
 git -C "$SANDBOX" -c user.email=t@t -c user.name=t commit -q -m init
 WS="$TMP/ws"
-"$WORKTREE_ADD" "$SANDBOX" "$WS" feature/img main >/dev/null
+"$WORKTREE_ADD" "$SANDBOX" "$WS" feature/img main >/dev/null 2>&1
 
 # run_launch <name> [VAR=value ...]: runs launch.sh with a clean log; leaves
 # $TMP/<name>.out, $TMP/<name>.err and the override config in $TMP/<name>.json.
@@ -123,19 +123,22 @@ assert_true "login failure warns about an anonymous pull on stderr" \
 assert_true "login failure still pulls the image" "grep -q '^docker pull ' \"$TMP/t5.log\""
 assert_true "login failure is not fatal" "grep -q '^CONTAINER_ID=stubcontainer123\$' \"$TMP/t5.out\""
 
-# 3. Pull succeeds: no build, config uses the GHCR reference, stdout is the container id only.
+# 3. Pull succeeds: no build, notice on stderr, pull happens before devcontainer up.
+# The override's image and missing build key and the container-id-only stdout on this path
+# are owned by test-launch-git-auth.sh cases 1, 6 and 8.
 GHCR_REF=ghcr.io/mrsbohemian/cholobots/devcontainer:latest
 run_launch t6 STUB_UNUSED=1
 assert_true "pull ok: pulls the default GHCR image" "grep -qx 'docker pull $GHCR_REF' \"$TMP/t6.log\""
 assert_true "pull ok: no docker build" "! grep -q '^docker build' \"$TMP/t6.log\""
 assert_true "pull ok: notice on stderr" "grep -q 'Using pre-built image: $GHCR_REF' \"$TMP/t6.err\""
-assert_true "pull ok: override config image is the GHCR reference" \
-    "[ \"\$(jq -r .image \"$TMP/t6.json\")\" = '$GHCR_REF' ]"
-assert_true "pull ok: override config has no build" "[ \"\$(jq 'has(\"build\")' \"$TMP/t6.json\")\" = false ]"
-assert_true "pull ok: stdout is only the container id line" \
-    "[ \"\$(cat \"$TMP/t6.out\")\" = 'CONTAINER_ID=stubcontainer123' ]"
+PULL_AT="$(grep -n '^docker pull ' "$TMP/t6.log" | head -1 | cut -d: -f1)"
+UP_AT="$(grep -n '^devcontainer up' "$TMP/t6.log" | head -1 | cut -d: -f1)"
+assert_true "pull ok: the image is pulled before devcontainer up runs" \
+    "[ -n '$PULL_AT' ] && [ -n '$UP_AT' ] && [ '$PULL_AT' -lt '$UP_AT' ]"
 
-# 4. Pull fails: stderr fallback notice, two builds in order, local image in config.
+# 4. Pull fails: stderr fallback notice, exactly two builds, both on the devcontainer.json context,
+# build output kept off stdout. Which Dockerfile, BASE_IMAGE and per-workspace tags each build uses,
+# and the override's local image, are owned by test-launch-git-auth.sh case 7.
 run_launch t7 STUB_PULL_FAIL=1
 assert_true "pull fails: stderr says the image is not available and builds locally" \
     "grep -q 'Pre-built image not available' \"$TMP/t7.err\" && grep -q 'building locally' \"$TMP/t7.err\""
@@ -144,16 +147,8 @@ assert_true "pull fails: exactly two builds" "[ \"\$(printf '%s\n' \"$BUILD_LINE
 FIRST_BUILD="$(printf '%s\n' "$BUILD_LINES" | sed -n 1p)"
 SECOND_BUILD="$(printf '%s\n' "$BUILD_LINES" | sed -n 2p)"
 WS_REAL="$(realpath "$WS")"
-assert_true "pull fails: first build is the base Dockerfile tagged cholobots-devcontainer-base:local" \
-    "case '$FIRST_BUILD' in *'-f $WS_REAL/.devcontainer/Dockerfile '*'-t cholobots-devcontainer-base:local'*) true;; *) false;; esac"
-assert_true "pull fails: second build is Dockerfile.prebuild with the local base as BASE_IMAGE" \
-    "case '$SECOND_BUILD' in *'-f $WS_REAL/.devcontainer/Dockerfile.prebuild '*'--build-arg BASE_IMAGE=cholobots-devcontainer-base:local'*) true;; *) false;; esac"
 assert_true "pull fails: both builds use the devcontainer.json build context (repo root)" \
     "[ \"\${FIRST_BUILD##* }\" = '$WS_REAL' ] && [ \"\${SECOND_BUILD##* }\" = '$WS_REAL' ]"
-LOCAL_IMG="$(jq -r .image "$TMP/t7.json")"
-assert_true "pull fails: config image is the local prebuild tag, not the GHCR name" \
-    "case '$LOCAL_IMG' in cholobots-devcontainer:local*) true;; *) false;; esac"
-assert_true "pull fails: config has no build" "[ \"\$(jq 'has(\"build\")' \"$TMP/t7.json\")\" = false ]"
 assert_true "pull fails: stdout is only the container id line" \
     "[ \"\$(cat \"$TMP/t7.out\")\" = 'CONTAINER_ID=stubcontainer123' ]"
 
@@ -161,12 +156,6 @@ assert_true "pull fails: stdout is only the container id line" \
 run_launch t8 CHOLOBOTS_DEVCONTAINER_IMAGE=foo:bar
 assert_true "override: pulls foo:bar" "grep -qx 'docker pull foo:bar' \"$TMP/t8.log\""
 assert_true "override: config image is foo:bar" "[ \"\$(jq -r .image \"$TMP/t8.json\")\" = foo:bar ]"
-
-# 6. Static: the pull comes before the first non-comment `devcontainer up`.
-PULL_LINE="$(grep -n 'docker pull' "$LAUNCH" | head -1 | cut -d: -f1)"
-UP_LINE="$(grep -n 'devcontainer up' "$LAUNCH" | grep -v '^[0-9]*:[[:space:]]*#' | head -1 | cut -d: -f1)"
-assert_true "docker pull precedes the first non-comment devcontainer up" \
-    "[ -n '$PULL_LINE' ] && [ -n '$UP_LINE' ] && [ '$PULL_LINE' -lt '$UP_LINE' ]"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

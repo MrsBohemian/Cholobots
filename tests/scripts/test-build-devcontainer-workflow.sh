@@ -88,6 +88,8 @@ check("Push to GHCR" not in bld and not any("login-action" in str(s) for s in bu
 need = ["Build base devcontainer image", "Build pre-built devcontainer image", "Check tool versions match the pins", "Push to GHCR"]
 check([n for n in pub if n in need] == need, "publish: base build, prebuild, version check, then push, in order")
 check([n for n in bld if n in need] == need[:3], "build job: base build, prebuild, version check, in order")
+runs = lambda job: {s["name"]: s.get("run") for s in job["steps"] if s.get("name") in need[:3]}
+check(runs(build) == runs(publish), "build job runs the same build and version-check commands as publish")
 login_idx = [i for i, s in enumerate(publish["steps"]) if "docker/login-action" in s.get("uses", "")]
 check(login_idx == [1] and publish["steps"][1]["with"]["password"] == "${{ secrets.GITHUB_TOKEN }}" and publish["steps"][1]["with"]["username"] == "${{ github.actor }}", "publish logs in with github.actor and GITHUB_TOKEN")
 print("\n".join(out))
@@ -103,8 +105,9 @@ done <<< "$STRUCT"
 
 check "prebuild tags :latest and the commit sha" \
     'grep -qF -- "-t \${{ env.REGISTRY }}/\${{ env.IMAGE_NAME }}:latest" <<< "$BODY" && grep -qF -- "-t \${{ env.REGISTRY }}/\${{ env.IMAGE_NAME }}:\${{ github.sha }}" <<< "$BODY"'
-check "push pushes :base, :latest and :sha" \
-    'grep -qF "docker push \${{ env.REGISTRY }}/\${{ env.IMAGE_NAME }}:latest" <<< "$BODY" && grep -qF "docker push \${{ env.REGISTRY }}/\${{ env.IMAGE_NAME }}:\${{ github.sha }}" <<< "$BODY" && grep -qF "docker push \${{ env.REGISTRY }}/\${{ env.IMAGE_NAME }}:base" <<< "$BODY"'
+# The :base push is owned by test-build-devcontainer-cache.sh.
+check "push pushes :latest and :sha" \
+    'grep -qF "docker push \${{ env.REGISTRY }}/\${{ env.IMAGE_NAME }}:latest" <<< "$BODY" && grep -qF "docker push \${{ env.REGISTRY }}/\${{ env.IMAGE_NAME }}:\${{ github.sha }}" <<< "$BODY"'
 check "version check reads the pins from pins.sh" 'grep -qF "eval \"\$(scripts/devcontainer/pins.sh)\"" <<< "$BODY"'
 check "version check exits non-zero on mismatch" 'grep -qF "exit \"\$status\"" <<< "$BODY"'
 check "only secrets.GITHUB_TOKEN is used" '[ "$(grep -o "secrets\.[A-Za-z_]*" <<< "$BODY" | sort -u)" = "secrets.GITHUB_TOKEN" ]'

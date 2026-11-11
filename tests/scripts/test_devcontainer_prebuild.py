@@ -113,10 +113,7 @@ def test_pip_cache_warmed_as_vscode(prebuild):
 
 
 def test_post_create_does_not_bypass_the_pip_cache():
-    path = DEVCONTAINER / "post-create.sh"
-    if not path.exists():
-        pytest.skip("post-create.sh not present")
-    text = path.read_text()
+    text = (DEVCONTAINER / "post-create.sh").read_text()
     assert "--no-cache-dir" not in text
     assert "PIP_NO_CACHE_DIR" not in text
 
