@@ -16,8 +16,6 @@ ORCHESTRATE = os.path.join(REPO_ROOT, "scripts", "devcontainer", "orchestrate_ep
 ORCHESTRATE_BUGS = os.path.join(REPO_ROOT, "scripts", "devcontainer", "orchestrate_bugs.py")
 
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts", "devcontainer"))
-sys.path.insert(0, os.path.join(REPO_ROOT, "scripts", "lib"))
-from dependency_parser import parse_dependency_diagram
 from orchestrate_epic import Orchestrator
 from conftest import make_host_repo
 
@@ -183,6 +181,28 @@ def parse_events(stdout):
         parts = line.split(":", 1)
         events.append((parts[0], parts[1] if len(parts) > 1 else ""))
     return events
+
+
+def read_active_count(state_file):
+    """Number of `active` stories in the state file, or None while it is
+    missing or mid-write."""
+    try:
+        with open(state_file) as f:
+            state = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    return sum(1 for s in state["stories"] if s["status"] == "active")
+
+
+def wait_for_active(state_file, timeout=15):
+    """Poll the state file until a story is `active`; return whether one was
+    seen before the monotonic deadline."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if read_active_count(state_file):
+            return True
+        time.sleep(0.2)
+    return False
 
 
 class TestInitFromStoriesJson:
@@ -426,21 +446,12 @@ class TestSignalHandling:
             text=True, env=env,
         )
 
-        # Wait for the story to launch, then send signal before claude finishes
-        # Poll for the state file to have an active story
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            state_file = tmp_env["state_file"]
-            if os.path.exists(state_file):
-                try:
-                    with open(state_file) as f:
-                        state = json.load(f)
-                    active = [s for s in state["stories"] if s["status"] == "active"]
-                    if active:
-                        break
-                except (json.JSONDecodeError, OSError):
-                    pass
-            time.sleep(0.5)
+        # The signal must land while a story is active, or the test proves nothing.
+        reached_active = wait_for_active(tmp_env["state_file"])
+        if not reached_active:
+            proc.kill()
+            proc.communicate()
+        assert reached_active, "no story became active before SIGTERM"
 
         # Send SIGTERM
         proc.send_signal(signal.SIGTERM)
@@ -456,13 +467,10 @@ class TestSignalHandling:
             f"stdout: {stdout}, stderr: {stderr}"
         )
 
-        # Check state file — active stories should be reset to queued
-        state_file = tmp_env["state_file"]
-        if os.path.exists(state_file):
-            with open(state_file) as f:
-                state = json.load(f)
-            active = [s for s in state["stories"] if s["status"] == "active"]
-            assert len(active) == 0, "Active stories should be reset to queued after SIGTERM"
+        # Active stories must be reset to queued after SIGTERM
+        assert read_active_count(tmp_env["state_file"]) == 0, (
+            "Active stories should be reset to queued after SIGTERM"
+        )
 
 
 class TestConcurrencyLimit:
@@ -498,24 +506,18 @@ class TestConcurrencyLimit:
             text=True, env=env,
         )
 
-        # Wait for initial launches then check state
-        time.sleep(3)
-
-        state_file = tmp_env["state_file"]
-        assert os.path.exists(state_file), "State file should exist"
-
-        with open(state_file) as f:
-            state = json.load(f)
-
-        active = [s for s in state["stories"] if s["status"] == "active"]
-        assert len(active) <= 2, f"Concurrency violated: {len(active)} active (max 2)"
-
-        # Wait for completion
-        try:
-            proc.communicate(timeout=30)
-        except subprocess.TimeoutExpired:
+        # Sample the state file for the whole run instead of one snapshot after a
+        # fixed sleep: the peak must reach N (both slots used) and never exceed it.
+        peak = 0
+        deadline = time.monotonic() + 45
+        while proc.poll() is None and time.monotonic() < deadline:
+            peak = max(peak, read_active_count(tmp_env["state_file"]) or 0)
+            time.sleep(0.2)
+        if proc.poll() is None:
             proc.kill()
-            proc.communicate()
+        proc.communicate()
+
+        assert peak == 2, f"expected exactly 2 stories active at peak (N=2), saw {peak}"
 
 
 class TestSlotFilling:
@@ -1011,89 +1013,6 @@ class TestDependencyGraphLogged:
         assert "101" in stderr and "102" in stderr
 
 
-class TestParseDependencyDiagram:
-    """Test 15: Parse dependency diagram from epic description markdown."""
-
-    def test_parses_epic_710_format(self):
-        """Parse the tree-style dependency diagram from epic #710."""
-        description = """\
-## Goal
-
-Apply the design system.
-
-## Dependency Diagram
-
-```
-#727 (Done)
-  └─► #712 (Status badges — shared StatusBadge.fs)
-        └─► #714, #715, #719 (consumers)
-  └─► #829 (Shared foundations — pageError, loadingSkeleton)
-      └─► #714, #715, #716, #717, #718, #920 (all page stories)
-      └─► #915 (Make pageError icon/CTA configurable)
-            └─► #919 (Consolidate not-found views)
-            └─► #920 Task 4 (error state needs inline pageError)
-  └─► #713 (Navigation chrome — dropdown keyboard handler)
-      └─► #827 (Mobile hamburger — reuses dropdown handler)
-  └─► #828 (Footer — independent)
-
-#716 (Create/edit forms — creates FormField wrapper)
-  └─► #717 (Auth flows — consumes FormField)
-
-#919 (Not-found consolidation) + #719 (Pledge views) — can run in parallel,
-  #719 excludes not-found views (handled by #919)
-```
-
-## Implementation Phases
-
-Some more text.
-"""
-        deps = parse_dependency_diagram(description)
-
-        # #712 depends on #727
-        assert 712 in deps
-        assert 727 in deps[712]
-        # #714 depends on #712 and #829
-        assert 714 in deps
-        assert 712 in deps[714]
-        assert 829 in deps[714]
-        # #715 depends on #712 and #829
-        assert 715 in deps
-        assert 712 in deps[715]
-        assert 829 in deps[715]
-        # #829 depends on #727
-        assert 829 in deps
-        assert 727 in deps[829]
-        # #915 depends on #829
-        assert 915 in deps
-        assert 829 in deps[915]
-        # #919 depends on #915
-        assert 919 in deps
-        assert 915 in deps[919]
-        # #920 depends on #829 and #915
-        assert 920 in deps
-        assert 829 in deps[920]
-        assert 915 in deps[920]
-        # #713 depends on #727
-        assert 713 in deps
-        assert 727 in deps[713]
-        # #827 depends on #713
-        assert 827 in deps
-        assert 713 in deps[827]
-        # #828 depends on #727
-        assert 828 in deps
-        assert 727 in deps[828]
-        # #717 depends on #716 (from second tree) AND on #829 (from first tree)
-        assert 717 in deps
-        assert 716 in deps[717]
-        assert 829 in deps[717]
-
-    # Exhaustive parse_dependency_diagram coverage (no section, no code block,
-    # alternative headings, comma-separated refs, root nodes, empty input) lives in
-    # test_dependency_parser.py, which owns scripts/lib/dependency_parser.py.
-    # orchestrate_epic consumes that function, so only the contract check above
-    # belongs here (testing-strategy.md "Business Rule Ownership").
-
-
 class TestNoWorkCompletion:
     """Test 16: Agent exits with 'complete' phase but no PR — should be error, not complete."""
 
@@ -1309,7 +1228,7 @@ class TestFinalCleanup:
             f"Expected 3 teardown calls (one per story), got {len(calls)}: {calls}"
         )
 
-    def test_final_cleanup_removes_by_container_id(self, tmp_path):
+    def test_final_cleanup_removes_by_container_id(self, tmp_path, monkeypatch):
         """Verify docker rm -f is attempted when story has containerId."""
         stories = [
             {"ref": 101, "id": 1001, "subject": "A"},
@@ -1331,11 +1250,8 @@ class TestFinalCleanup:
                 return subprocess.CompletedProcess(cmd, 0)
             return original_run(cmd, **kwargs)
 
-        subprocess.run = mock_run
-        try:
-            orch._final_cleanup()
-        finally:
-            subprocess.run = original_run
+        monkeypatch.setattr(subprocess, "run", mock_run)
+        orch._final_cleanup()
 
         assert len(docker_rm_calls) == 1, (
             f"Expected 1 docker rm -f call, got {len(docker_rm_calls)}: {docker_rm_calls}"
@@ -1412,20 +1328,12 @@ class TestFinalCleanup:
             text=True, env=env,
         )
 
-        # Wait for story to become active
-        deadline = time.time() + 15
-        state_file = tmp_env["state_file"]
-        while time.time() < deadline:
-            if os.path.exists(state_file):
-                try:
-                    with open(state_file) as f:
-                        state = json.load(f)
-                    active = [s for s in state["stories"] if s["status"] == "active"]
-                    if active:
-                        break
-                except (json.JSONDecodeError, OSError):
-                    pass
-            time.sleep(0.5)
+        # The signal must land while a story is active, or the test proves nothing.
+        reached_active = wait_for_active(tmp_env["state_file"])
+        if not reached_active:
+            proc.kill()
+            proc.communicate()
+        assert reached_active, "no story became active before SIGTERM"
 
         # Send SIGTERM
         proc.send_signal(signal.SIGTERM)

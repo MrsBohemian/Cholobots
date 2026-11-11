@@ -2342,7 +2342,11 @@ class TestRateLimitPauseStartsNoThreads:
 
     def test_no_threads_started_while_paused(self, tmp_path, monkeypatch):
         orch, _ = _make_orchestrator(tmp_path, refs=(101, 102))
-        future = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime(ISO_UTC_FORMAT)
+        # Pin the orchestrator's clock: the hold must be judged against a fixed
+        # instant, not the wall clock (testing-strategy.md rule 3).
+        now = datetime(2031, 1, 15, 16, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr("orchestrate_epic.utcnow_iso", lambda: now.strftime(ISO_UTC_FORMAT))
+        future = (now + timedelta(hours=1)).strftime(ISO_UTC_FORMAT)
         orch.sm.update_story(101, notBefore=future)
         orch.sm.update_story(102, notBefore=future)
 
@@ -2817,24 +2821,34 @@ class TestIsAgentProcess:
     """A relaunched orchestrator finds a still-running agent by its PID, which
     is the exec-skill.sh launcher."""
 
+    # Each child prints a line once it has exec'd, and the test reads it before
+    # checking: right after Popen, /proc/<pid>/cmdline can still be the forked
+    # pytest's argv, which made the positive case fail under load.
+
     def test_exec_skill_process_is_an_agent(self):
         from orchestrate_epic import is_agent_process
         proc = subprocess.Popen(
-            ["bash", "-c", "sleep 30; true", "/some/dir/exec-skill.sh", "/clone", "skill"])
+            ["bash", "-c", "echo ready; sleep 30; true", "/some/dir/exec-skill.sh", "/clone", "skill"],
+            stdout=subprocess.PIPE, text=True)
         try:
+            assert proc.stdout.readline() == "ready\n"
             assert is_agent_process(proc.pid) is True
         finally:
             proc.kill()
             proc.wait()
+            proc.stdout.close()
 
     def test_unrelated_process_is_not_an_agent(self):
         from orchestrate_epic import is_agent_process
-        proc = subprocess.Popen(["sleep", "30"])
+        proc = subprocess.Popen(["bash", "-c", "echo ready; exec sleep 30"],
+                                stdout=subprocess.PIPE, text=True)
         try:
+            assert proc.stdout.readline() == "ready\n"
             assert is_agent_process(proc.pid) is False
         finally:
             proc.kill()
             proc.wait()
+            proc.stdout.close()
 
     def test_dead_pid_is_not_an_agent(self):
         from orchestrate_epic import is_agent_process
