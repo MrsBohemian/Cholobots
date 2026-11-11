@@ -1,21 +1,15 @@
-# ABOUTME: Applies merged supabase/migrations/* files to the hosted Supabase project with `supabase db push` on merge to main.
-# ABOUTME: Ships gated closed: nothing reaches production until SUPABASE_DB_PUSH_ENABLED is 'true' and the supabase-production environment approves.
+# ABOUTME: Applies merged supabase/migrations/* to the hosted Supabase project with `supabase db push` on merge to main.
+# ABOUTME: Gated closed: runs only when SUPABASE_DB_PUSH_ENABLED is 'true' and the supabase-production environment approves.
 #
-# Secrets (environment secrets of the protected `supabase-production`
-# environment that Heaven creates, never repository-wide):
+# Secrets live in the protected `supabase-production` environment, never repository-wide:
 #   SUPABASE_ACCESS_TOKEN  personal access token for the Supabase CLI
 #   SUPABASE_PROJECT_REF   the hosted project's reference id
-#   SUPABASE_DB_PASSWORD   required, the database password for `supabase link` (the runner is
-#                          noninteractive, so a missing password would prompt and hang)
-#
-# Gate: the db-push job runs only when the repository variable
-# SUPABASE_DB_PUSH_ENABLED is 'true' (it does not exist until Jon allows
-# production writes) and a required reviewer approves the environment run.
-# Otherwise gate-closed records a notice. See the go-live checklist in
-# docs/database-migrations.md.
+#   SUPABASE_DB_PASSWORD   database password for `supabase link`; required, since a
+#                          missing one would prompt and hang the noninteractive runner
 #
 # Security: the repo is public and this job holds production credentials, so it
 # must never gain a pull_request or pull_request_target trigger.
+# Go-live and shutdown steps: docs/database-migrations.md.
 name: supabase-db-push
 
 on:

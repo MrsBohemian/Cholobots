@@ -1,6 +1,6 @@
 # Database migrations
 
-The schema of record is `supabase/migrations/`. This page is the workflow for changing it (Taiga story #49).
+The schema of record is `supabase/migrations/`. This page is the workflow for changing it.
 
 ## 1. The rule
 
@@ -41,12 +41,12 @@ Everything the change needs, not only DDL: tables, columns, indexes, constraints
 
 `.github/workflows/supabase-db-push.yml` runs on a push to `main` that touches `supabase/migrations/**`, and on manual dispatch. Its `db-push` job lints the migrations, links the hosted project, runs `supabase db push --dry-run` and pipes the plan through `scripts/supabase_migrations.py check-push-plan`, then runs `supabase db push`. The guard fails the run when the plan would apply the baseline, which would replay the whole schema over production.
 
-`.github/workflows/supabase-migrations-lint.yml` is the PR-side check. It runs on `pull_request` (never `pull_request_target`) on every PR (no path filter, so a required check is never left pending on PRs that do not touch migrations; with no migration changes it passes), holds no secrets and no environment, fetches the PR base and runs the linter as it exists on the base (`git show origin/<base>:scripts/supabase_migrations.py`, written to `$RUNNER_TEMP`) with `lint --base origin/<base>`, so a PR cannot weaken the check by editing the script alongside a migration, and editing, renaming or deleting an already-merged migration fails the PR. Bootstrap exception: when the base has no linter yet (the PR that introduces it), the PR's own copy is used and the job logs a warning; this stops applying once the script is on the base. The workflow file is still the PR's copy, so protect `.github/workflows/supabase-migrations-lint.yml` and `scripts/supabase_migrations.py` with CODEOWNERS or required review. Make it a required status check in branch protection to enforce it.
+`.github/workflows/supabase-migrations-lint.yml` is the PR-side check. It runs on every `pull_request` (never `pull_request_target`, no path filter, no secrets) and runs `lint --base origin/<base>`, so editing, renaming or deleting a merged migration fails the PR. It runs the linter from the base branch, so a PR cannot weaken the check by editing the script alongside a migration; if the base has no linter yet, it falls back to the PR's copy with a warning. The workflow file itself is the PR's copy, so protect it and `scripts/supabase_migrations.py` with CODEOWNERS or required review, and make the check required in branch protection.
 
 The push workflow ships gated closed:
 
-- The `db-push` job runs only when the repository variable `SUPABASE_DB_PUSH_ENABLED` is `true`. The variable does not exist yet; only Heaven, the repo owner, can set it. Otherwise the `gate-closed` job records a notice.
-- The job uses the protected `supabase-production` environment, with Jon as required reviewer. Its secrets (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`, `SUPABASE_DB_PASSWORD`, all required: the runner is noninteractive, so the link step fails fast if the password or ref is missing) are environment secrets, never repository-wide.
+- The `db-push` job runs only when the repository variable `SUPABASE_DB_PUSH_ENABLED` is `true`; otherwise the `gate-closed` job records a notice. The variable does not exist yet; only Heaven, the repo owner, can set it.
+- The job uses the protected `supabase-production` environment, with Jon as required reviewer. Its secrets (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`, `SUPABASE_DB_PASSWORD`) are environment secrets, never repository-wide. All three are required; the link step fails fast if the password or ref is missing.
 - Runs queue (no cancel) so a push in flight is never interrupted.
 - The workflow must never gain a `pull_request` or `pull_request_target` trigger: the repo is public and the job holds production credentials.
 
@@ -54,11 +54,11 @@ Current state: switched off. No production writes until Jon explicitly allows th
 
 `SUPABASE_ACCESS_TOKEN` is a personal Supabase token with account-wide power. It lives only as an environment secret limited to `main` and gated by Jon's approval.
 
-The rehearsal migration `20261110020959_rehearsal_chisme_active_contact_id_idx.sql` (an index on `chisme_active.contact_id`) proved the loop on the local stack. It is the first migration the hosted project will receive.
+The first migration the hosted project will receive is `20261110020959_rehearsal_chisme_active_contact_id_idx.sql`, an index on `chisme_active.contact_id`.
 
 ## 6. Go-live checklist
 
-Tracked in story #178 (tasks #114 to #117), gated on Jon allowing production writes.
+Starts only when Jon allows production writes.
 
 1. Heaven creates the `supabase-production` environment (Jon as required reviewer, deployment limited to `main`) and its secrets.
 2. Jon runs a read-only drift check: a fresh `supabase db dump --linked --schema public` diffed against `20261109194905_remote_baseline.sql`.
