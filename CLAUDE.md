@@ -11,18 +11,23 @@ Work is tracked in Taiga project `cholo-bots` (id 39) on https://backlog.growthg
 ## Running
 
 ```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt      # unpinned: discord.py, python-dotenv, openai, supabase
-python cholobots.py                  # same as the Procfile worker
+make setup      # .venv (Python pinned in .python-version), == pins from requirements*.txt, pre-commit hook, .env from .env.example
+make db-up      # local Supabase stack; make db-reset rebuilds it, make db-env prints the two .env lines, make db-down stops it
+make check      # compile, ruff, pytest tests/unit + tests/scripts, then every tests/scripts/test-*.sh
+make run        # scripts/check_local_env.py, then python cholobots.py (production uses the Procfile)
 ```
 
-`supabase/` holds the Supabase CLI project (`config.toml` and `migrations/`, CLI pinned to 2.121.0). `supabase start` runs a local stack in Docker (API `http://127.0.0.1:54321`, Edge Functions off); point `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` at it from `supabase status -o env` (see README "Local development"). `supabase db reset` (local only) rebuilds it from the migrations plus `supabase/seed.sql`, a fictitious business; the fake-data rules are in README "Seed data" and enforced by `tests/unit/test_seed_contract.py`. Agents never run `supabase login`/`link` or anything against the hosted project.
+`make help` lists the targets; `tests/scripts/test_makefile.py` pins each recipe. `scripts/check_local_env.py` refuses a non-local `SUPABASE_URL`, an empty required secret or a non-integer `TRANSPORTATION_CHANNEL_ID`. Agents never run `make run` or `python cholobots.py` (they start the bot); `make setup`, `make check`, `make -n <target>` and the `db-*` targets against the local Docker stack are fine.
+
+`supabase/` holds the Supabase CLI project (`config.toml` and `migrations/`, CLI pinned to 2.121.0). `supabase start` (`make db-up`) runs a local stack in Docker (API `http://127.0.0.1:54321`, Edge Functions off); point `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` at it from `supabase status -o env` (`make db-env`; see README "Quickstart"). `supabase db reset` (`make db-reset`, local only) rebuilds it from the migrations plus `supabase/seed.sql`, a fictitious business; the fake-data rules are in README "Seed data" and enforced by `tests/unit/test_seed_contract.py`. Agents never run `supabase login`/`link` or anything against the hosted project.
 
 `config.py` runs `load_dotenv(override=True)`, so `.env` wins over the real environment. Required or the process dies at import: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (chismebot, guardabot and crudobot call `create_client` unguarded at module level; vueltabot does the same but is imported inside `on_ready`, so its failure surfaces there instead, see below; obijuan, metichebot and `db/database.py` degrade to a `None` client). `db/database.py` and vueltabot also accept `SUPABASE_KEY` as a fallback name; the other modules do not. Optional: `GUARDABOT_DB` (SQLite path, default `guardabot.db`), `DATA_SERVICE_URL` (dashboard push; when unset every metichebot time block replies "Saved, but dashboard push failed", crudobot's read of it is silent and unused), `TRANSPORTATION_CHANNEL_ID` (parsed with `int()`, default `0`), `DANIEL_MORNING_AUDIO_URL` (YouTube default), `CRUDOBOT_RECEIPT_MODEL` (default `gpt-5-mini`; chismebot's summary model is hardcoded to the same).
 
-`cholobots.py` calls `bot.run()` at module level with no `__main__` guard: importing it starts the bot. For static checks use `python -m py_compile cholobots.py config.py db/database.py bots/*.py`.
+`.env.example` is the env contract (kept in sync by `tests/unit/test_env_example_contract.py`); [docs/test-discord-server.md](docs/test-discord-server.md) covers the test Discord server and running against the local Supabase stack.
 
-There are no tests, linters or CI for the bot itself yet (Taiga stories #33, #34, #35). The schema of record is `supabase/migrations/`, starting from `20261109194905_remote_baseline.sql`, a dump of the hosted project's `public` schema (tables, views, functions, triggers, RLS policies, grants). Read column names and types there, and check every reader before changing a column's meaning. Schema changes go in new migration files (workflow: Taiga story #49); never edit the hosted schema by hand. `python3 scripts/check_schema_coverage.py --mobile-dir <dashboards dir>` checks that every table the bots and dashboards reference is defined there.
+`cholobots.py` calls `bot.run()` only under `if __name__ == "__main__":`, but importing it still imports `config` (which raises without the env vars) and runs `create_client` in three bot modules, so tests never import it. For static checks use `python -m py_compile cholobots.py config.py db/database.py bots/*.py`.
+
+Lint is ruff, configured in `ruff.toml` (rules `E4`, `E7`, `E9`, `F`; per-file exceptions listed there with reasons) and run with `ruff check .` or the pre-commit hook; `ruff format` is not enforced. The bot has no unit tests or CI yet. The schema of record is `supabase/migrations/`, starting from `20261109194905_remote_baseline.sql`, a dump of the hosted project's `public` schema (tables, views, functions, triggers, RLS policies, grants). Read column names and types there, and check every reader before changing a column's meaning. Schema changes go in new migration files (workflow: Taiga story #49); never edit the hosted schema by hand. `python3 scripts/check_schema_coverage.py --mobile-dir <dashboards dir>` checks that every table the bots and dashboards reference is defined there.
 
 ## Agent pipeline
 

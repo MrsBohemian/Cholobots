@@ -13,20 +13,29 @@ A Discord bot that hosts six Spanglish-speaking personas for running a small con
 
 Data lives in Supabase. The companion repo [Cholobots-Mobile](https://github.com/MrsBohemian/Cholobots-Mobile) is a set of static dashboards that read the same Supabase project.
 
-## Local development
+## Quickstart
 
-Run the bot against a Supabase stack on your own machine, never against the hosted project.
+From a fresh clone to the bot answering in your own test Discord server, against a Supabase stack on your machine, never the hosted project. `make help` lists every target.
 
-1. **Prerequisites.**
-   - Python: `python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt`
-   - Docker: Docker Engine on Linux; Docker Desktop (or OrbStack) on macOS; on Windows use WSL2 with Docker Desktop's WSL integration and run everything from the WSL shell.
-   - Supabase CLI 2.121.0: via Node 18+ (`alias supabase='npx --yes supabase@2.121.0'`), or Homebrew (`brew install supabase/tap/supabase`) or Scoop. `supabase --version` should print 2.121.0.
-2. **Start the stack.** `supabase start` (the first run pulls images and takes several minutes). It runs Postgres, Auth, Storage, the REST API and Studio in Docker and prints the API URL (`http://127.0.0.1:54321`), Studio (`http://127.0.0.1:54323`) and the keys; `supabase status -o env` prints them again. Edge Functions are off in `supabase/config.toml` because the repo has none.
-3. **Write `.env`** in the repo root with `SUPABASE_URL=<API_URL>` and `SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY>` copied from `supabase status -o env`, plus `DISCORD_TOKEN` (a **test** bot token, never the production one) and `OPENAI_API_KEY`. `.env` is loaded with `override=True`, so it silently wins over your shell: keep the hosted URL, the hosted service-role key and the production Discord token out of it. A wrong or empty value shows up as a `create_client` error when the process starts.
-4. **Know what is in the database.** The local database has the baseline schema (`supabase/migrations/`) plus the fictitious seed data described under [Seed data](#seed-data). `supabase db reset` rebuilds it from the migrations and the seed.
-5. **Run.** `python cholobots.py` (only with the test token), and `supabase stop` when you are done.
+1. **Prerequisites.** git, GNU make, Python 3.14 (the version in `.python-version`), Docker running (Docker Engine on Linux, Docker Desktop or OrbStack on macOS) and Node 18+ for `npx`. The shell tests also need `jq`, `curl`, GNU `timeout` and `setsid` (`make setup` and `make test` name any that is missing). On macOS: `brew install jq coreutils util-linux`, then put `$(brew --prefix coreutils)/libexec/gnubin` and `$(brew --prefix util-linux)/bin` on your `PATH`. On Debian or Ubuntu: `apt install jq curl coreutils util-linux`. On Windows, use WSL2 with Docker Desktop's WSL integration and run everything from the WSL shell. The Makefile runs the Supabase CLI as `npx --yes supabase@2.121.0`; if you installed that version with Homebrew (`brew install supabase/tap/supabase`) or Scoop, add `SUPABASE=supabase` to each `make db-*` command.
+2. **Install.**
+   ```bash
+   git clone https://github.com/MrsBohemian/Cholobots.git && cd Cholobots
+   make setup
+   ```
+   This creates `.venv`, installs the pinned requirements and the pre-commit hook, and copies [.env.example](.env.example) to `.env` (an existing `.env` is left alone).
+3. **Start the database.** `make db-up` (the first run pulls images and takes several minutes; Studio is at `http://127.0.0.1:54323`), then `make db-reset` to rebuild it from `supabase/migrations/` and the fictitious seed data in `supabase/seed.sql` described under [Seed data](#seed-data).
+4. **Point `.env` at it.** `make db-env` prints a `SUPABASE_URL=` and a `SUPABASE_SERVICE_ROLE_KEY=` line; paste both into `.env`, replacing the lines already there.
+5. **Discord.** Create your own test application, bot and server as [docs/test-discord-server.md](docs/test-discord-server.md) describes. Turn on the bot's **Message Content Intent** (without it no `!` command is seen) and put its token in `DISCORD_TOKEN`. Never the production token.
+6. **OpenAI.** Any non-empty `OPENAI_API_KEY` lets the bot start; receipt scanning and Chismebot summaries need a real key.
+7. **Run.** `make run`. It first checks `.env` and refuses to start, listing each problem, when `SUPABASE_URL` is not the local stack, a required secret is empty, or `TRANSPORTATION_CHANNEL_ID` is not a whole number. The console then shows `✅ Logged in as <your test bot>`. In the test server, `!cholobots` answers with the persona overview, and `!cshow <a seeded contact>` shows a contact card.
+8. **Day to day.** `make check` (compile, `ruff` and the tests) before you push, `make db-down` when you are done.
 
-Required variables: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. The full list, including optional variables and which ones crash the process at import, is in [CLAUDE.md](CLAUDE.md). There is no test suite yet; `python -m py_compile cholobots.py config.py db/database.py bots/*.py` is the only static check.
+Two local quirks: your test accounts are not in the bot's hardcoded user map, so Metichebot files them under Heaven's daily tasks (harmless locally), and once `!mtoday` is set up in a channel, any message there that does not start with `!` becomes a time block.
+
+Required variables: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. The full list, including optional variables and which ones crash the process at import, is in [CLAUDE.md](CLAUDE.md). `.env` is loaded with `override=True`, so it wins over your shell.
+
+**Without make.** The raw commands work too: `python3.14 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt -r requirements-dev.txt && pre-commit install`, `npx --yes supabase@2.121.0 start` / `db reset` / `status -o env` / `stop`, and the static checks `python -m py_compile cholobots.py config.py db/database.py bots/*.py` and `ruff check .`. `python cholobots.py` skips the local-stack check that `make run` does, so double-check `.env` first.
 
 ### Seed data
 
@@ -58,7 +67,7 @@ Owner only, once per machine. `supabase login` stores the access token in the CL
 
 ## Development environment
 
-**Secrets stay out of the repo.** `.env`, `.envrc` and `.envrc.local` are git-ignored. The recommended pattern is [direnv](https://direnv.net/): a project `.envrc` that exports variables from an encrypted store (Growth Garage collaborators use a SOPS/age vault with `scripts/envtool export project/<name>`), so nothing secret is ever written to disk in plaintext inside the checkout. Run `direnv allow` after creating or changing it.
+**Secrets stay out of the repo.** `.env`, `.envrc` and `.envrc.local` are git-ignored; never commit any of them. The bot's variables live in `.env`, which wins over anything your shell or direnv exports. A [direnv](https://direnv.net/) `.envrc` is for shell-only variables, such as the `TAIGA_*` credentials the pipeline scripts read: it can `dotenv_if_exists .env.local` or export from an encrypted store (Growth Garage collaborators use a SOPS/age vault, see [scripts/README.md](scripts/README.md#credentials) for the exact lines), so nothing secret is written to disk in plaintext inside the checkout. Run `direnv allow` after creating or changing it.
 
 **Work tracking.** Issues, stories and epics live in the Taiga project `cholo-bots` on <https://backlog.growthgarage.org>. Start with epic #2 (the 2026-11-06 codebase assessment, with per-bot deep dives in the project wiki), epic #46 (developer experience: local Supabase stack, migrations, CI) and epic #3 (multi-business isolation).
 
@@ -73,7 +82,7 @@ The launcher reads `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` from t
 **Agent pipeline.** `.claude/` contains the skills, agents and shared includes that let Claude Code take a Taiga story or bug through analysis, implementation, PR, review and merge; `.claude/autonomous-pipeline.md` is the overview and `.claude/skills/shared/taiga-project.md` pins this project's Taiga configuration. The supporting scripts live in `scripts/` (see `scripts/README.md`) with tests in `tests/scripts/`:
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt && pre-commit install   # pytest, ruff and the ruff-check commit hook
 python -m pytest tests/scripts -q
 python3 scripts/taiga_project_setup.py --check   # exit 0 when the Taiga project has the statuses and tags the pipeline needs
 ```

@@ -356,9 +356,9 @@ class FakeClient:
             return [{"id": s.id, "name": n, "is_closed": s.is_closed} for n, s in METADATA.statuses.items()]
         if path == "/api/v1/priorities":
             priorities = getattr(self, "priorities", METADATA.priorities)
-            return [{"id": l.id, "name": n, "order": l.order} for n, l in priorities.items()]
+            return [{"id": label.id, "name": n, "order": label.order} for n, label in priorities.items()]
         if path == "/api/v1/severities":
-            return [{"id": l.id, "name": n, "order": l.order} for n, l in METADATA.severities.items()]
+            return [{"id": label.id, "name": n, "order": label.order} for n, label in METADATA.severities.items()]
         if path == "/api/v1/milestones":
             return self.milestones[:TAIGA_DEFAULT_PAGE_SIZE]
         raise AssertionError(f"unexpected path {path}")
@@ -453,7 +453,7 @@ class TestMain:
 
     def test_missing_urgent_priority_is_a_note_not_an_error(self):
         client = FakeClient([make_issue(1), make_issue(2, priority="High")])
-        client.priorities = {n: l for n, l in METADATA.priorities.items() if n != "Urgent"}
+        client.priorities = {n: label for n, label in METADATA.priorities.items() if n != "Urgent"}
         code, out, err = run_main(["--purpose", "fix"], client)
         assert code == 0
         data = json.loads(out)

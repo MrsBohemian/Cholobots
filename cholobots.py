@@ -1,13 +1,4 @@
-import re
-import json
-import sqlite3
 import traceback
-import asyncio
-import random
-from datetime import time, timedelta
-from datetime import datetime
-from dataclasses import dataclass
-from typing import Optional, Dict, Any, List, Tuple
 
 import discord
 from discord.ext import commands
@@ -156,4 +147,5 @@ async def cholobots(ctx):
     """
     await ctx.send(msg)
 
-bot.run(DISCORD_TOKEN)
+if __name__ == "__main__":
+    bot.run(DISCORD_TOKEN)

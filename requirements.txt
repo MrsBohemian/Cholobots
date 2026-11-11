@@ -1,4 +1,4 @@
-discord.py
-python-dotenv
-openai
-supabase
+discord.py==2.7.1
+python-dotenv==1.2.4
+openai==3.46.0
+supabase==2.34.1
