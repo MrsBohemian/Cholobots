@@ -120,8 +120,8 @@ The two merge tags are defined in `.claude/skills/shared/merge-side-effects.md`.
 **Surface** (exactly one per bug): `product` (a bot command or dashboard behaviour; add every
 per-bot tag that applies alongside it, or none with a triage comment saying no bot could be
 determined), `devx` (local setup, venv, env vars, Supabase local stack, seeding), `pipeline`
-(skills, agents, scripts, Taiga and GitHub automation), `ci` (GitHub Actions, once story #35 adds
-them). `ci` and `devx` are the surface tags. The pre-existing topic tag `devex` (different
+(skills, agents, scripts, Taiga and GitHub automation), `ci` (GitHub Actions: the `checks` and `integration`
+workflows). `ci` and `devx` are the surface tags. The pre-existing topic tag `devex` (different
 spelling) and the other topic tags below are kept alongside the surface tag; "drop any second
 surface tag" applies only to `product`, `devx`, `pipeline` and `ci`.
 
@@ -248,4 +248,4 @@ Raw REST callers use `https://backlog.growthgarage.org/api/v1/...` with header
 - Branch names: `feature/<ref>-<slug>`, `fix/<ref>-<slug>`, `epic/<epic>-integration-<story>`.
 - After a merge: `git fetch upstream && git push origin upstream/main:main` fast-forwards the fork and runs the
   Taiga sync (`/merge-train` does it after each merge; never force it).
-- No CI yet (story #35): `gh pr checks` reports no checks, which counts as a pass with a note.
+- CI: `gh pr checks` reports `checks` and `integration` (GitHub Actions, every PR and every push to `main`). A PR whose branch predates the workflows has no runs: it counts as passed after a two-minute grace when its base requires no checks, otherwise it stays `PENDING` until rebased.

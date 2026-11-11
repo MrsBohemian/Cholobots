@@ -58,7 +58,7 @@ If the branch changes anything under `tests/` (`git -C <wt> diff --name-only ups
 
 ## Step 2: Run checks
 
-Cholobots has no CI yet (story #35), so these local checks are the only gate before review. Consult `docs/testing-workflow.md` for routing.
+These local checks run before the push; GitHub Actions then runs the same scope on the PR (`checks`) plus the integration tests (`integration`). Consult `docs/testing-workflow.md` for routing.
 
 Pick the interpreter: `main=$(dirname "$(git -C <wt> rev-parse --path-format=absolute --git-common-dir)"); ls "$main/.venv/bin/python" 2>/dev/null || echo python3`; call the result `<py>`.
 
@@ -117,7 +117,7 @@ Run each as a foreground Bash call with `timeout: 600000`, wrapped in `timeout 5
    - [ ] Manual steps in the test Discord server (#31):
      1. <exact message> → <expected reply>
 
-   **CI:** none configured yet (story #35); the checks above are the only automated gate.
+   **CI:** GitHub Actions runs `checks` (compile, lint, unit and script tests) and `integration` (local Supabase stack, integration tests) on this PR.
 
    ## Known pre-existing failures
 
@@ -146,7 +146,7 @@ Run each as a foreground Bash call with `timeout: 600000`, wrapped in `timeout 5
 Return:
 - PR number and URL
 - The base branch the PR targets
-- Check results (compile, unit tests or "#34", lint or "#33", script tests if run) and the "no CI yet (#35)" note
+- Check results (compile, unit tests or "#34", lint or "#33", script tests if run) and the PR's `checks`/`integration` state at creation (usually pending)
 - Codex review result (the `REVIEW_POSTED`/`REVIEW_SKIPPED`/`REVIEW_PENDING` line)
 - Merge side effects: which labels the PR carries, which fell back to Taiga tags, which tags were removed, and why
 - Story status update confirmation (`Ready for review`, assigned to Jon Roberts)

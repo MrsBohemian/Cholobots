@@ -25,7 +25,7 @@ This skill is a thin wrapper around `scripts/remediate_pr.py`. The Python script
 
 The target repo is `MrsBohemian/Cholobots`; every `gh` call here is prefixed `env -u GH_TOKEN` (the script already does this internally). The PR branch is pushed to `upstream`, the same repo the PR is in.
 
-**No CI yet.** Cholobots has no GitHub Actions workflow that builds or tests (story #35 adds one; `.github/workflows/taiga-sync.yml` only syncs Taiga after a merge). When the script finds no CI checks configured it treats the checks as passed, logs a `NOTE: no CI checks configured` line, records `"note": "no CI checks configured"` in its result, and moves on to review comments and the Codex review. That is stable-with-note, not a failure and not an endless wait. Report the note to the caller so they know "STABLE" did not include a CI verdict.
+**CI.** GitHub Actions runs `checks` (compile, lint, unit and script tests) and `integration` (local Supabase stack) on every PR; `.github/workflows/taiga-sync.yml` only syncs Taiga after a merge. A PR whose branch predates the workflows has no runs: it counts as passed after a two-minute grace when its base requires no checks, otherwise it stays `PENDING` until rebased. Only when the repo has no workflows at all does the script find no CI checks configured; then it treats the checks as passed, logs a `NOTE: no CI checks configured` line, records `"note": "no CI checks configured"` in its result, and moves on to review comments and the Codex review. That is stable-with-note, not a failure and not an endless wait. Report the note to the caller so they know "STABLE" did not include a CI verdict.
 
 ## Step 1: Parse arguments
 
@@ -69,7 +69,7 @@ The PR has merge conflicts and cannot be merged without a rebase.
 
 ### Exit 10 — Build fix needed
 
-The script detected failing CI checks and needs agent intervention. (This cannot happen until story #35 adds CI; the path is kept so it works the day CI lands.)
+The script detected failing CI checks and needs agent intervention. (A red `checks` or `integration` run.)
 
 1. Read the action-request JSON from `/tmp/remediate-pr-<pr-number>-action.json`. It contains:
    - `action` — `"fix_build"`

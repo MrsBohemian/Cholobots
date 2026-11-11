@@ -453,7 +453,7 @@ uncommitted work and it is the evidence for whoever picks the story up.
    The merged-PR group tells Jon which stories still have human steps
    waiting; they block nothing. Each excluded story names the dependency that blocked it and that
    dependency's `reason`. `handed_off` stories had CI unverified at agent exit — the merge train
-   re-validates before merging. Until story #35 adds CI, every PR reports "no checks configured".
+   re-validates before merging. Every PR whose branch has the workflows reports `checks` and `integration`.
 
 ## Event vocabulary
 
