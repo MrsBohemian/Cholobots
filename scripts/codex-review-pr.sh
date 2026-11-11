@@ -578,13 +578,9 @@ mkdir -p "$CODEX_REVIEW_STATE_DIR" || {
 # separate chmod. See job_dir_is_ours(), which the worker and the
 # dead-worker reclaim path both check before trusting anything under here.
 #
-# `mkdir` alone is NOT an atomic claim everywhere: uutils coreutils (the
-# default on Ubuntu 26.04, i.e. the GitHub runners) stats the path and then
-# creates it, and swallows the EEXIST when a racer creates it in between, so
-# BOTH racers see exit 0 and both launch a worker (bug #197: two codex runs,
-# two POSTs, a leaked worktree). The directory is therefore only a place to
-# hold the job; the claim itself is the O_EXCL creation of $JOBDIR/owner (a
-# `noclobber` redirect), which fails for every racer but one on any coreutils.
+# `mkdir` is not an atomic claim everywhere: uutils coreutils (Ubuntu 26.04, the
+# GitHub runners) can report success to two racers. The claim is the O_EXCL
+# (`noclobber`) creation of $JOBDIR/owner, which only one racer wins.
 claim_job_dir() {
     mkdir -m 700 "$JOBDIR" 2>/dev/null || return 1
     ( set -o noclobber; printf '%s\n' "$$" > "$JOBDIR/owner" ) 2>/dev/null
@@ -601,8 +597,7 @@ if ! claim_job_dir; then
         echo "Error: job dir '$JOBDIR' exists but is not owned by the current user" >&2
         exit 1
     fi
-    # Includes the case where mkdir "succeeded" but another invocation holds
-    # the owner file (see claim_job_dir): it is the owner, we are a joiner.
+    # Also reached when mkdir succeeded but another invocation owns the job.
     wait_and_emit
 fi
 

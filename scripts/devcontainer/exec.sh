@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ABOUTME: Runs a command inside a devcontainer via docker exec.
-# ABOUTME: Used by orchestrating agents to execute build/test/CLI commands.
+# ABOUTME: Runs a command inside the devcontainer launched for a checkout.
+# ABOUTME: The container lookup and workspace/venv setup here are mirrored in exec-skill.sh.
 set -euo pipefail
 
 WORKTREE_PATH="${1:?Usage: exec.sh <worktree-path> <command...>}"
@@ -11,7 +11,7 @@ if [ "$#" -eq 0 ]; then
     exit 1
 fi
 
-# Physical path (pwd -P), the same resolution as launch.sh's realpath, so the label matches.
+# pwd -P matches launch.sh's realpath, which is what the container label holds.
 ABS_PATH=$(cd "$WORKTREE_PATH" && pwd -P)
 mapfile -t CONTAINER_IDS < <(docker ps -q --filter "label=devcontainer.local_folder=$ABS_PATH")
 if [ "${#CONTAINER_IDS[@]}" -eq 0 ]; then
@@ -23,8 +23,8 @@ elif [ "${#CONTAINER_IDS[@]}" -gt 1 ]; then
 fi
 CONTAINER_ID="${CONTAINER_IDS[0]}"
 
-# Determine the workspace path inside the container. A worktree is mounted at its path relative to
-# the main checkout, a clone at /workspaces/<name>, so read the mount whose source is this path.
+# Workspace path in the container: a worktree is mounted relative to its main checkout, a clone
+# at /workspaces/<name>, so read the mount whose source is this path.
 REPO_NAME=$(basename "$ABS_PATH")
 WORKSPACE=$(docker inspect --format '{{json .Mounts}}' "$CONTAINER_ID" 2>/dev/null \
     | jq -r --arg p "$ABS_PATH" '[.[] | select(.Source == $p) | .Destination][0] // empty' 2>/dev/null) || WORKSPACE=""

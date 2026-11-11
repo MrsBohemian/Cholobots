@@ -1245,14 +1245,10 @@ else
 fi
 cleanup; MOCK_DIR=""; REPO_DIR=""
 
-# --- Test: the claim holds when `mkdir` swallows EEXIST (bug #197) ---
-# uutils coreutils (Ubuntu 26.04, the GitHub runners) stats the path and then
-# creates it, treating a racer's EEXIST in between as success, so two racing
-# invocations can BOTH see `mkdir` exit 0. That window is far too narrow to hit
-# on demand, so this simulates the swallowed EEXIST deterministically: a `mkdir`
-# in PATH that always succeeds (mkdir -p), run as the loser against a job the
-# first invocation has already claimed. The loser must join, not start a second
-# worker: one codex call, one POST.
+# --- Test: the claim holds when `mkdir` swallows EEXIST ---
+# uutils coreutils can report mkdir success to both racers. A `mkdir -p` stub
+# simulates that for a second invocation against an already-claimed job: it must
+# join, not start a second worker (one codex call, one POST).
 info "Test: a second invocation joins the claim even when mkdir reports success for an existing dir"
 setup_repo
 setup_mock_gh

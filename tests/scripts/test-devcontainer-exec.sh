@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ABOUTME: Behavioural test for exec.sh: container lookup, venv-first PATH and argv handling,
-# ABOUTME: using a stub docker so no real daemon is touched (story #73).
+# ABOUTME: using a stub docker so no real daemon is touched.
 
 set -euo pipefail
 

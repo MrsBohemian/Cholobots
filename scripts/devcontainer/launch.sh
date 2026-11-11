@@ -12,9 +12,8 @@ usage() {
 PATH_ARG="$1"
 shift
 
-# worktree-add.sh resolves a relative path under the source repo, while the
-# later `cd "$PATH_ARG"` resolves it under the caller's CWD. Absolutise here
-# to remove the mismatch.
+# Absolute path: worktree-add.sh would resolve a relative one under the repo
+# root, everything else here under the caller's CWD.
 case "$PATH_ARG" in
     /*) : ;;
     *) PATH_ARG="$(pwd)/$PATH_ARG" ;;
@@ -53,19 +52,16 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Check prerequisites
-# Worktree mode passes --mount-git-worktree-common-dir and the prebuild config
-# override relies on the --config file-naming rules, both of which need this
-# version. An older CLI already on PATH fails inside `devcontainer up` with an
-# unknown-option error that is easy to mistake for an unrelated problem.
+# --mount-git-worktree-common-dir and the --config naming rules need this
+# version; an older CLI fails inside `devcontainer up` with a misleading
+# unknown-option error.
 DEVCONTAINER_MIN_VERSION=0.84.1
 if ! command -v devcontainer &>/dev/null; then
     echo "Error: devcontainer CLI not found. Install with: npm install -g @devcontainers/cli@$DEVCONTAINER_MIN_VERSION" >&2
     exit 1
 fi
-# Compares dot-separated numeric versions, returning 0 when $1 is strictly
-# older than $2. `sort -V` would be shorter but BSD sort has no -V, and this
-# script supports macOS.
+# Returns 0 when version $1 is strictly older than $2. Not `sort -V`: BSD sort
+# (macOS) lacks it.
 version_lt() {
     local lhs rhs i left right
     IFS=. read -r -a lhs <<<"$1"
@@ -133,19 +129,14 @@ if [ ! -e "$PATH_ARG" ]; then
         UPSTREAM_URL="$(git -C "$REPO_ROOT" remote get-url upstream 2>/dev/null || true)"
         echo "Cloning $BRANCH into $PATH_ARG..." >&2
         mkdir -p "$(dirname "$PATH_ARG")"
-        # A clone that fails partway leaves $PATH_ARG behind without the
-        # cholobots-managed-clone marker below, so a retry sees the path already
-        # exists and skips cloning into it. Remove the partial clone before
-        # this `set -e` script exits so a retry starts clean.
+        # Remove a partial clone, or a retry would find the path and skip cloning.
         if ! git clone --depth 1 --branch "$BRANCH" "file://$REPO_ROOT" "$PATH_ARG"; then
             rm -rf "$PATH_ARG"
             exit 1
         fi
-        # Point origin and upstream at GitHub so push works from inside the
-        # container (pipeline branches push to upstream). SSH-style URLs become
-        # HTTPS only when a container token is present: the token cannot
-        # authenticate an SSH URL, while ssh-agent forwarding cannot
-        # authenticate an HTTPS one.
+        # Point origin and upstream at GitHub so pushes work from the container.
+        # SSH URLs become HTTPS only with a container token: a token cannot
+        # authenticate SSH, and the forwarded ssh-agent cannot authenticate HTTPS.
         if [ -n "$ORIGIN_URL" ]; then
             [ -z "$CONTAINER_TOKEN" ] || ORIGIN_URL="$(to_https "$ORIGIN_URL")"
             git -C "$PATH_ARG" remote set-url origin "$ORIGIN_URL"
@@ -154,16 +145,13 @@ if [ ! -e "$PATH_ARG" ]; then
             [ -z "$CONTAINER_TOKEN" ] || UPSTREAM_URL="$(to_https "$UPSTREAM_URL")"
             git -C "$PATH_ARG" remote add upstream "$UPSTREAM_URL"
         fi
-        # Mark this clone as one launch.sh created, so teardown.sh knows it's
-        # safe to rm -rf.
+        # teardown.sh only deletes clones carrying this marker.
         printf 'source=%s\nbranch=%s\n' "$REPO_ROOT" "$BRANCH" >"$PATH_ARG/.git/cholobots-managed-clone"
     fi
 fi
 
-# realpath (not `cd && pwd`) so a symlinked path component or a `..` left
-# over from the caller's argument resolves to the same canonical path Git
-# itself registers as the worktree's gitdir — see worktree-add.sh's own
-# canonicalization for why a mismatch here breaks the relative .git pointer.
+# realpath resolves symlinks and `..` to the canonical path git registers for
+# a worktree; the relative .git pointer breaks on a mismatch.
 WS="$(realpath "$PATH_ARG")"
 
 # Only .claude/worktrees worktrees (.git is a file) and clones this script made
@@ -174,23 +162,16 @@ if [ -d "$WS/.git" ] && [ ! -f "$WS/.git/cholobots-managed-clone" ]; then
     exit 1
 fi
 
-# The checkout type is a property of the path, not of the flags: an existing
-# worktree relaunched without --worktree must still be treated as one, because
-# its .git/config is the main checkout's. Trust the .git file, never the flag.
+# Trust the .git file, not the flag: a worktree relaunched without --worktree
+# still shares the main checkout's .git/config.
 if [ -f "$WS/.git" ]; then
     WORKTREE_MODE=1
 fi
 
-# Propagate host git identity into the clone for headless (non-VS Code) usage.
-# VS Code's devcontainer extension forwards git config automatically, but
-# headless `devcontainer up` does not. In clone mode this writes straight
-# into the clone's own .git/config. Worktree mode can't do the same: .git/config
-# is shared with the main checkout, and writing there would mutate the
-# developer's own repo just to satisfy a container. If the identity only
-# exists in the host's global ~/.gitconfig (never copied into the shared
-# .git/config), the container has no way to see it, so it's propagated into
-# the container's own global config after the container starts (below,
-# alongside the HTTPS URL rewrite) instead.
+# Headless `devcontainer up` does not forward the host git identity. A clone
+# gets it in its own .git/config. A worktree shares .git/config with the main
+# checkout, so its identity goes into the container's global config once the
+# container is up (below).
 if [ "$WORKTREE_MODE" -eq 0 ]; then
     HOST_GIT_NAME="$(git -C "$REPO_ROOT" config user.name 2>/dev/null || true)"
     HOST_GIT_EMAIL="$(git -C "$REPO_ROOT" config user.email 2>/dev/null || true)"
@@ -205,25 +186,20 @@ else
     HOST_GIT_EMAIL="$(git -C "$REPO_ROOT" config user.email 2>/dev/null || true)"
 fi
 
-# A worktree's .git is a file pointing at the shared common dir. When present
-# (whether freshly created above or from a prior launch), make sure the
-# pointer is relative and mount the common dir into the container.
+# A worktree (new or existing): make its .git pointer relative and mount the
+# common git dir.
 UP_FLAGS=()
 if [ -f "$WS/.git" ]; then
     "$SCRIPT_DIR/worktree-add.sh" --relativize "$WS"
     UP_FLAGS+=(--mount-git-worktree-common-dir)
 fi
 
-# Ensure registry mirror is running for DinD image caching
+# Pull-through cache for the in-container Docker; optional.
 "$SCRIPT_DIR/start-registry-mirror.sh" >/dev/null 2>&1 || true
 
-# Use the pre-built GHCR image if available (faster launch). Falls back to a
-# local build of .devcontainer/Dockerfile. The config override is written
-# outside the worktree so the checked-in devcontainer.json is never modified.
+# Prefer the pre-built GHCR image; fall back to building .devcontainer/Dockerfile.
 PREBUILD_IMAGE="${CHOLOBOTS_DEVCONTAINER_IMAGE:-ghcr.io/mrsbohemian/cholobots/devcontainer:latest}"
-# Authenticate to GHCR (host side only) if a GitHub token is available.
-# GH_TOKEN_FOR_PACKAGES is preferred (has read:packages scope);
-# falls back to GH_TOKEN / GITHUB_TOKEN.
+# Host-side GHCR login only. GH_TOKEN_FOR_PACKAGES has read:packages.
 GHCR_TOKEN="${GH_TOKEN_FOR_PACKAGES:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
 if [ -n "$GHCR_TOKEN" ]; then
     if ! echo "$GHCR_TOKEN" | docker login ghcr.io -u oauth2 --password-stdin >/dev/null 2>&1; then
@@ -235,10 +211,8 @@ if docker pull "$PREBUILD_IMAGE" >/dev/null 2>&1; then
     IMAGE="$PREBUILD_IMAGE"
 else
     echo "Pre-built image not available — building locally (this will be slow)..." >&2
-    # One build context for both stages: devcontainer.json's build.context,
-    # resolved against .devcontainer/.
-    # Tags are per workspace: concurrent launches that both fall back must not
-    # share a tag, or one build would retag the image another is about to start.
+    # Per-workspace tags, so concurrent fallback builds never retag each
+    # other's image. Both stages use devcontainer.json's build.context.
     WS_KEY="$(workspace_key "$WS")"
     LOCAL_BASE="cholobots-devcontainer-base:local-$WS_KEY"
     LOCAL_IMAGE="cholobots-devcontainer:local-$WS_KEY"
@@ -247,10 +221,9 @@ else
         /*) CTXDIR="$CTX" ;;
         *) CTXDIR="$(cd "$WS/.devcontainer/$CTX" && pwd)" ;;
     esac
-    # Stage 1: base image from Dockerfile
     docker build -f "$WS/.devcontainer/Dockerfile" \
         -t "$LOCAL_BASE" "$CTXDIR" >&2
-    # Stage 2: prebuild on top of base, when the checkout has one.
+    # Dockerfile.prebuild layers the agent tooling on top, when present.
     if [ -f "$WS/.devcontainer/Dockerfile.prebuild" ]; then
         docker build -f "$WS/.devcontainer/Dockerfile.prebuild" \
             --build-arg BASE_IMAGE="$LOCAL_BASE" \
@@ -261,12 +234,11 @@ else
     IMAGE="$LOCAL_IMAGE"
     echo "Local image built and tagged as $IMAGE" >&2
 fi
-# In both cases, override devcontainer.json to use the image instead of building.
-# devcontainer CLI 0.84+ requires --config files to be named devcontainer.json
-# or .devcontainer.json, so the override gets its own directory. The directory
-# is stable per workspace and kept: the CLI derives devcontainerId (and so the
-# cholobots-venv-* volume) from the config path, so a fresh temp path on every
-# launch would leak a venv volume each time. teardown.sh removes it.
+# Override config pointing at that image, outside the checkout so the tracked
+# devcontainer.json is untouched. It needs its own directory (the CLI requires
+# the name devcontainer.json), and that directory must be stable per workspace:
+# the CLI derives the cholobots-venv-* volume name from the config path.
+# teardown.sh removes it.
 OVERRIDE_DIR="$(override_dir "$WS")"
 mkdir -p "$OVERRIDE_DIR"
 OVERRIDE_JSON="$OVERRIDE_DIR/devcontainer.json"
@@ -284,22 +256,16 @@ if [ -z "$CONTAINER_TOKEN" ] && [ -S "${SSH_AUTH_SOCK:-}" ]; then
     SSH_AGENT_MOUNTED=1
 fi
 
-# Start devcontainer (postStartCommand handles service init)
-# devcontainer up may return non-zero if a lifecycle command fails, but the
-# container itself may still be running and usable. GH_TOKEN is set for this
-# one process only, so the container's containerEnv.GH_TOKEN receives the
-# container token (or an empty value), never the host's token.
+# `devcontainer up` can fail in a lifecycle command yet leave a usable
+# container, so its status is ignored. GH_TOKEN is overridden for this process
+# so containerEnv.GH_TOKEN gets the container token (or empty), never the host's.
 echo "Starting devcontainer..." >&2
 UP_OUTPUT=$(GH_TOKEN="$CONTAINER_TOKEN" devcontainer up --workspace-folder "$WS" --config "$OVERRIDE_JSON" ${UP_FLAGS[@]+"${UP_FLAGS[@]}"} 2>&1) || true
 
-# Extract container ID from devcontainer up JSON output.
-# The output mixes build logs with a JSON result line — find the JSON and parse it.
-# A failed `devcontainer up` leaves no JSON, so `grep` exits non-zero and, under
-# `set -euo pipefail`, would kill the script here — before the label fallback and
-# the diagnostics below that exist to explain exactly that failure.
+# The container id is in the JSON line among the build logs. The `||` keeps a
+# failed up (no JSON) from exiting before the fallback and diagnostics below.
 CONTAINER_ID=$(echo "$UP_OUTPUT" | grep -o '{.*}' | tail -1 | jq -r '.containerId // empty' 2>/dev/null) || CONTAINER_ID=""
 if [ -z "$CONTAINER_ID" ]; then
-    # Fallback: look up container by workspace label
     CONTAINER_ID=$(docker ps -q --filter "label=devcontainer.local_folder=$WS" | head -1) || CONTAINER_ID=""
 fi
 if [ -z "$CONTAINER_ID" ]; then
@@ -308,21 +274,17 @@ if [ -z "$CONTAINER_ID" ]; then
     exit 1
 fi
 
-# Container credentials. The token goes over stdin and into the devcontainer
-# process env only, never into an argv. gh refuses --with-token while GH_TOKEN
-# is set, hence env -u. The stored login is what the skills' gh calls use.
+# Container credentials. The token travels over stdin, never argv. gh refuses
+# --with-token while GH_TOKEN is set, hence env -u.
 if [ -n "$CONTAINER_TOKEN" ]; then
     printf %s "$CONTAINER_TOKEN" | docker exec -i -u vscode "$CONTAINER_ID" \
         env -u GH_TOKEN gh auth login --hostname github.com --with-token \
         >/dev/null 2>&1 || echo "Warning: could not log gh in inside the container; gh calls will fail." >&2
     docker exec -u vscode "$CONTAINER_ID" gh auth setup-git \
         >/dev/null 2>&1 || echo "Warning: could not run gh auth setup-git for vscode; git pushes over HTTPS may fail." >&2
-    # A worktree keeps its scp-style origin (rewriting it would mutate the
-    # shared .git/config of the main checkout), so the HTTPS rewrite happens
-    # inside the container instead, for the user agents run as.
-    # Two values share one multivalue key, so clear it first (idempotent across
-    # relaunches; exit 5 when unset is fine) and then --add each rule. A plain
-    # set would let the second rule replace the first.
+    # A worktree keeps its SSH remotes (its .git/config is shared), so rewrite
+    # them to HTTPS in vscode's global config. Both rules share one multivalue
+    # key: clear it (exit 5 when unset is fine), then --add each.
     docker exec -u vscode "$CONTAINER_ID" \
         git config --global --unset-all url."https://github.com/".insteadOf \
         >/dev/null 2>&1 || true
@@ -341,9 +303,7 @@ else
 fi
 
 if [ "$WORKTREE_MODE" -eq 1 ]; then
-    # The shared .git/config may not carry the identity (it can live only in
-    # the host's global ~/.gitconfig), so configure it for vscode's global
-    # config inside the container.
+    # Worktree git identity (see above).
     if [ -n "$HOST_GIT_NAME" ]; then
         docker exec -u vscode "$CONTAINER_ID" \
             git config --global user.name "$HOST_GIT_NAME" \

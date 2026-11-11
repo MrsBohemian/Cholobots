@@ -9,14 +9,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 docker info >/dev/null 2>&1 || { echo "Error: Docker daemon not reachable" >&2; exit 1; }
 
-# Create a unique path name, then remove the dir so launch.sh can clone into it
+# Reserve a unique path; launch.sh clones into it.
 WORKTREE_PATH="$(mktemp -d "${TMPDIR:-/tmp}/devcontainer-smoke-test-XXXXXX")"
 rmdir "$WORKTREE_PATH"
 FAILURES=0
 
-# launch.sh clones --branch <name>, which a detached HEAD (`rev-parse
-# --abbrev-ref` prints the literal "HEAD") cannot satisfy. On a detached
-# checkout, pin a temporary local branch at HEAD for the clone and drop it on exit.
+# launch.sh clones a named branch, so a detached HEAD gets a temporary branch,
+# deleted on exit.
 SMOKE_BRANCH="$(git -C "$REPO_ROOT" symbolic-ref --short -q HEAD || true)"
 TEMP_BRANCH=""
 if [ -z "$SMOKE_BRANCH" ]; then
@@ -39,8 +38,7 @@ trap cleanup EXIT
 echo "=== Devcontainer Smoke Test ==="
 echo ""
 
-# Launch in clone mode (the branch must exist locally). It may return non-zero if
-# post-start fails, but the container can still be usable.
+# Clone mode. A failed post-start can still leave a usable container.
 echo "Launching devcontainer..."
 "$SCRIPT_DIR/launch.sh" "$WORKTREE_PATH" "$SMOKE_BRANCH" || true
 echo ""
@@ -80,8 +78,7 @@ check_tool "psql" "psql --version"
 check_tool "jq" "jq --version"
 check_tool "git" "git --version"
 
-# Version assertions. The expected values come from the Dockerfile so the test
-# cannot drift from it.
+# Expected versions come from the Dockerfile.
 EXPECTED_SUPABASE_VERSION=$(sed -n 's/^ARG SUPABASE_CLI_VERSION=//p' "$REPO_ROOT/.devcontainer/Dockerfile")
 EXPECTED_NODE_MAJOR=$(sed -n 's#.*deb\.nodesource\.com/setup_\([0-9]*\)\.x.*#\1#p' "$REPO_ROOT/.devcontainer/Dockerfile")
 EXPECTED_PYTHON="/workspaces/$(basename "$WORKTREE_PATH")/.venv/bin/python"

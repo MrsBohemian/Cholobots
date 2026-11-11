@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ABOUTME: Verifies exec-skill.sh dispatch for Claude and Codex, both reading .claude/skills,
-# ABOUTME: with a stub docker so no real container is used (story #73).
+# ABOUTME: with a stub docker so no real container is used.
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)

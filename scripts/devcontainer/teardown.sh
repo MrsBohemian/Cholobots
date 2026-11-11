@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ABOUTME: Stops a devcontainer and removes its cloned directory.
-# ABOUTME: Used by orchestrating agents for cleanup after work completes.
+# ABOUTME: Removes a checkout's devcontainers, their volumes and cached config,
+# ABOUTME: then deletes the checkout if it is a launch.sh clone (never a worktree).
 set -euo pipefail
 
 # Per-workspace key: names the override config directory and the fallback
@@ -22,21 +22,15 @@ WORKTREE_PATH="${1:?Usage: teardown.sh <path> [--keep-clone]}"
 KEEP_CLONE=false
 [[ "${2:-}" == "--keep-clone" ]] && KEEP_CLONE=true
 
-# Physical path (pwd -P), the same resolution as launch.sh's realpath, so the
-# container label and the override-dir hash match what launch.sh used.
+# pwd -P matches launch.sh's realpath, used for the container label and override-dir key.
 ABS_PATH=$(cd "$WORKTREE_PATH" 2>/dev/null && pwd -P || echo "$WORKTREE_PATH")
 
 FAILED=0
 VOLUMES=()
 
-# Find and remove all containers for this workspace. Containers are removed
-# BEFORE the clone is deleted on purpose: removing the clone out from under a
-# live container's bind mount is what left two containers bound to one folder
-# in bug #2465. A bounded stop gives the container a moment to flush, then
-# rm -f guarantees removal regardless of the stop's outcome.
-# A failed `docker ps` (daemon down, permission denied) must not read as "no
-# containers": the ids are captured first so the exit status is not lost to a
-# process substitution, and a failure marks the teardown FAILED.
+# Remove containers before the clone: deleting a live container's bind mount
+# leaves it orphaned. A failed `docker ps` must not read as "no containers", so
+# capture its output (keeping the exit status) instead of a process substitution.
 CONTAINER_IDS=()
 if PS_OUT=$(docker ps -aq --filter "label=devcontainer.local_folder=$ABS_PATH" 2>/dev/null); then
     mapfile -t CONTAINER_IDS <<<"$PS_OUT"
@@ -84,12 +78,10 @@ if [ "$FAILED" -eq 0 ]; then
     docker rmi "cholobots-devcontainer:local-$WS_KEY" "cholobots-devcontainer-base:local-$WS_KEY" >/dev/null 2>&1 || true
 fi
 
-# Remove cloned directory with safety guards. Skipped when a container is still
-# bound to it: deleting a live bind mount is what this script exists to prevent.
+# Delete the clone only once no container is bound to it.
 if [ "$FAILED" -eq 0 ] && [ "$KEEP_CLONE" = false ] && [ -d "$WORKTREE_PATH" ]; then
     RESOLVED_PATH="$(realpath "$WORKTREE_PATH" 2>/dev/null || echo "$WORKTREE_PATH")"
 
-    # Reject obviously dangerous targets
     if [ "$RESOLVED_PATH" = "/" ] || [ "$RESOLVED_PATH" = "$HOME" ]; then
         echo "Refusing to remove '$RESOLVED_PATH': unsafe target." >&2
         exit 1

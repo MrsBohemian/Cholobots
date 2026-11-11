@@ -78,14 +78,9 @@ REL_LINE_2="$(cat "$TMP/wt3/.git")"
 assert_true "--relativize is a no-op on an already-relative pointer" \
   "[ \"\$REL_LINE\" = \"\$REL_LINE_2\" ]"
 
-# 6. Regression guard (you-thon bug #2827, carried over with the port): adding a worktree must not mutate the source
-# repo's `.git/config`. A worktree shares that file with its main checkout, so
-# any write there — including git's own implicit one — permanently alters the
-# developer's repository. `git worktree add --relative-paths` records the
-# `relativeWorktrees` repository-format extension and bumps
-# `core.repositoryformatversion` to 1, which every git older than 2.48 (CI runs
-# 2.47.3) then refuses with "unknown repository extension found". Uses its own
-# repo so the assertion is byte-exact and unaffected by earlier tests.
+# 6. Adding a worktree must not change the source repo's shared `.git/config` (e.g. the
+# relativeWorktrees extension that `--relative-paths` adds, which git < 2.48 refuses).
+# Own repo, so the comparison is byte-exact.
 git init -q -b main "$TMP/cfgrepo"
 git -C "$TMP/cfgrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 CFG_BEFORE="$(cat "$TMP/cfgrepo/.git/config")"
@@ -100,11 +95,7 @@ assert_true "worktree add leaves core.repositoryformatversion at 0" \
 assert_true "git worktree remove succeeds on the config-integrity worktree" \
   "git -C \"$TMP/cfgrepo\" worktree remove \"$TMP/wt-cfg\""
 
-# 7. Regression guard: a worktree path containing `..` must not break the
-# relative gitdir calculation. `git worktree add` registers the worktree
-# under its own canonical resolution of the path, so relpath()'s comparison
-# needs WORKTREE_PATH canonicalized to match — otherwise the two paths are
-# compared textually and diverge whenever `..` or a symlink is involved.
+# 7. A worktree path containing `..` still gets a correct relative gitdir.
 mkdir -p "$TMP/nested/dir"
 DOTDOT_PATH="$TMP/nested/dir/../../wt-dotdot"
 "$WORKTREE_ADD" "$TMP/repo" "$DOTDOT_PATH" feature/dotdot main >/dev/null
@@ -115,21 +106,10 @@ assert_true "worktree created via a path with '..' resolves" \
 assert_true "git worktree remove succeeds on the '..'-created worktree" \
   "git -C \"$TMP/repo\" worktree remove \"$TMP/wt-dotdot\""
 
-# 8. Regression guard (you-thon bug #2830, carried over with the port): a <base> that exists only as a remote-tracking
-# ref must still produce a worktree on the requested branch, and must still leave
-# the main checkout's `.git/config` byte-identical (you-thon story #2745 AC2). Passing such
-# a base straight to `git worktree add -b <branch> <path> <base>` makes git apply
-# DWIM to it, and the symptom is git-version dependent:
-#   - git 2.47.3 (CI's version) silently ignores the explicit `-b`, checks out the
-#     *base* branch instead, exits 0, and appends a `[branch "<base>"]` tracking
-#     stanza to the shared `.git/config`;
-#   - older git (2.34) instead refuses outright with "Not a valid object name".
-# Resolving <base> to a commit SHA before handing it to `git worktree add`
-# suppresses both, so these assertions are meaningful on every git version.
-# The clone below is a plain (non-single-branch) clone because that is what a
-# developer's own checkout — the repo worktree mode actually operates on — looks
-# like: `remote.origin.fetch` covers every branch, so every unfetched-locally
-# branch is present solely as `origin/<branch>` and is DWIM bait.
+# 8. A <base> that exists only as a remote-tracking ref still yields a worktree on the
+# requested branch and leaves `.git/config` byte-identical (see resolve_base_commit in
+# worktree-add.sh for how git's DWIM breaks this). A plain clone, like a developer's
+# checkout, has every unfetched branch only as `origin/<branch>`.
 git init -q -b main "$TMP/dwim-origin"
 git -C "$TMP/dwim-origin" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 git -C "$TMP/dwim-origin" branch base-only main

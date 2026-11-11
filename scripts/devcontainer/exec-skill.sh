@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ABOUTME: Pipes a processed native skill prompt into Claude or Codex inside a devcontainer.
-# ABOUTME: Used by orchestrating skills (fully-fix-bugs) to run sub-skills in isolated containers.
+# ABOUTME: Runs a .claude/skills skill with Claude or Codex inside the devcontainer for a checkout.
+# ABOUTME: Pipes SKILL.md (frontmatter stripped, $ARGUMENTS filled in) to the agent; output goes to a log.
 set -euo pipefail
 
 usage() {
@@ -8,7 +8,6 @@ usage() {
     exit 1
 }
 
-# --- Parse positional arguments ---
 if [ "$#" -lt 3 ]; then
     usage
 fi
@@ -18,7 +17,6 @@ SKILL_NAME="$2"
 ARGUMENTS="$3"
 shift 3
 
-# --- Parse optional flags ---
 LOG_FILE=""
 DRY_RUN=false
 PROVIDER=claude
@@ -52,15 +50,13 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-# --- Resolve clone path to absolute ---
 if [ ! -d "$CLONE_PATH" ]; then
     echo "Error: clone path does not exist: $CLONE_PATH" >&2
     exit 1
 fi
-# Physical path (pwd -P), the same resolution as launch.sh's realpath, so the label matches.
+# Container lookup, workspace path and venv PATH: same as exec.sh, which explains them.
 ABS_PATH=$(cd "$CLONE_PATH" && pwd -P)
 
-# --- Find container ID via Docker label ---
 mapfile -t CONTAINER_IDS < <(docker ps -q --filter "label=devcontainer.local_folder=$ABS_PATH")
 if [ "${#CONTAINER_IDS[@]}" -eq 0 ]; then
     echo "Error: no running container found for $ABS_PATH" >&2
@@ -71,7 +67,6 @@ elif [ "${#CONTAINER_IDS[@]}" -gt 1 ]; then
 fi
 CONTAINER_ID="${CONTAINER_IDS[0]}"
 
-# --- Read and process SKILL.md ---
 SKILL_FILE="$ABS_PATH/.claude/skills/$SKILL_NAME/SKILL.md"
 if [ "$PROVIDER" = codex ]; then
     AGENT_COMMAND="codex exec --dangerously-bypass-approvals-and-sandbox --json -"
@@ -83,7 +78,7 @@ if [ ! -f "$SKILL_FILE" ]; then
     exit 1
 fi
 
-# Strip YAML frontmatter if file starts with --- and has a closing ---
+# Strip YAML frontmatter (a leading --- block).
 DELIM_COUNT=$(grep -c '^---$' "$SKILL_FILE" || true)
 if [ "$DELIM_COUNT" -ge 2 ]; then
     SKILL_TEXT=$(awk '
@@ -105,30 +100,24 @@ else
     SKILL_TEXT=$(cat "$SKILL_FILE")
 fi
 
-# Substitute $ARGUMENTS with the provided arguments string
 SKILL_TEXT="${SKILL_TEXT//\$ARGUMENTS/$ARGUMENTS}"
 if [ "$PROVIDER" = codex ]; then
     SKILL_TEXT="Follow these skill instructions with these arguments: $ARGUMENTS"$'\n\n'"$SKILL_TEXT"
 fi
 
-# docker exec does not apply remoteEnv, so put the workspace venv first on PATH here.
 # shellcheck disable=SC2016 # expands inside the container, not here
 VENV_PREFIX='if [ -x .venv/bin/python ]; then PATH="$PWD/.venv/bin:$PATH"; export PATH; fi; '
 
-# Determine the workspace path inside the container. A worktree is mounted at its path relative to
-# the main checkout, a clone at /workspaces/<name>, so read the mount whose source is this path.
 REPO_NAME=$(basename "$ABS_PATH")
 WORKSPACE=$(docker inspect --format '{{json .Mounts}}' "$CONTAINER_ID" 2>/dev/null \
     | jq -r --arg p "$ABS_PATH" '[.[] | select(.Source == $p) | .Destination][0] // empty' 2>/dev/null) || WORKSPACE=""
 [ -n "$WORKSPACE" ] || WORKSPACE="/workspaces/$REPO_NAME"
 
-# --- Default log file if not provided ---
 if [ -z "$LOG_FILE" ]; then
     TIMESTAMP=$(date +%Y%m%d-%H%M%S)
     LOG_FILE="/tmp/exec-skill-${SKILL_NAME}-${TIMESTAMP}.log"
 fi
 
-# --- Dry run: print command and first 5 lines of prompt ---
 if [ "$DRY_RUN" = true ]; then
     echo "Would execute:"
     echo "  docker exec -i -u vscode -w $WORKSPACE $CONTAINER_ID bash -lc \"${VENV_PREFIX}${AGENT_COMMAND}\""
@@ -140,7 +129,6 @@ if [ "$DRY_RUN" = true ]; then
     exit 0
 fi
 
-# --- Execute the selected agent inside the container ---
 printf '%s' "$SKILL_TEXT" | docker exec -i -u vscode -w "$WORKSPACE" "$CONTAINER_ID" \
     bash -lc "${VENV_PREFIX}${AGENT_COMMAND}" \
     > "$LOG_FILE" 2>&1

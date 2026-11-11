@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ABOUTME: Behavioural test for teardown.sh's refusal to rm -rf a git worktree
-# ABOUTME: or a directory launch.sh did not mark as a managed clone (story #73).
+# ABOUTME: or a directory launch.sh did not mark as a managed clone.
 
 set -euo pipefail
 

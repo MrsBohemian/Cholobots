@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ABOUTME: Prepares a clone directory for in-container claude agent sessions.
-# ABOUTME: Writes settings.local.json (permissions) and .mcp.json (native MCP servers).
+# ABOUTME: Prepares a launched checkout for in-container agent sessions.
+# ABOUTME: Writes .claude/settings.local.json (permissions, pgrep hook) and .mcp.json (MCP servers).
 set -euo pipefail
 
 CLONE_PATH="${1:?Usage: prepare-clone.sh <clone-path>}"
@@ -12,14 +12,10 @@ fi
 
 ABS_CLONE_PATH=$(cd "$CLONE_PATH" && pwd)
 
-# Ensure .claude directory exists
 mkdir -p "$ABS_CLONE_PATH/.claude"
 
-# Write .claude/settings.local.json with permissions and one PreToolUse hook.
-# Agents run inside the container so all tools operate on the container filesystem;
-# the hook blocks pkill/pgrep -f, which self-match the agent's own Bash shell.
-# The heredoc is unquoted so $ABS_CLONE_PATH interpolates into the hook command; every other
-# dollar sign in the body must stay escaped as \$ to survive into the JSON.
+# The hook blocks pkill/pgrep -f, which match the agent's own Bash shell.
+# The heredoc is unquoted so $ABS_CLONE_PATH interpolates; escape every other dollar sign as \$.
 cat > "$ABS_CLONE_PATH/.claude/settings.local.json" <<SETTINGS
 {
   "permissions": {
@@ -64,9 +60,8 @@ cat > "$ABS_CLONE_PATH/.claude/settings.local.json" <<SETTINGS
 }
 SETTINGS
 
-# The browser path comes from the clone's own Dockerfile so .mcp.json cannot
-# drift from the image. prepare-clone.sh runs on the host, so the container's
-# CHROME_PATH env is not visible here; the ENV line is the source of truth.
+# This runs on the host, so read the browser path from the Dockerfile's ENV line
+# rather than the container's environment.
 DOCKERFILE="$ABS_CLONE_PATH/.devcontainer/Dockerfile"
 CHROME_PATH=$(sed -n 's/^ENV CHROME_PATH=//p' "$DOCKERFILE" 2>/dev/null | tail -1)
 if [ -z "$CHROME_PATH" ]; then
@@ -74,8 +69,8 @@ if [ -z "$CHROME_PATH" ]; then
     exit 1
 fi
 
-# The in-image taiga-py workflow server lives under PYTAIGA_MCP_HOME, set in
-# Dockerfile.prebuild (#74). Until that file exists the default location is used.
+# The taiga-py server lives under PYTAIGA_MCP_HOME from Dockerfile.prebuild,
+# else /opt/pytaiga-mcp.
 PREBUILD="$ABS_CLONE_PATH/.devcontainer/Dockerfile.prebuild"
 PYTAIGA_HOME=""
 if [ -f "$PREBUILD" ]; then
@@ -88,11 +83,8 @@ if [ -z "$PYTAIGA_HOME" ]; then
     fi
 fi
 
-# Write .mcp.json for native in-container MCP servers.
-# chrome-devtools runs directly (npm install -g in the image); its --executablePath
-# is derived from CHROME_PATH in the Dockerfile (see above).
-# taiga-py runs the in-image workflow server and inherits TAIGA_API_URL, TAIGA_USERNAME
-# and TAIGA_PASSWORD from the container environment; no credentials are written here.
+# taiga-py reads TAIGA_API_URL, TAIGA_USERNAME and TAIGA_PASSWORD from the container
+# environment; no credentials are written to this file.
 cat > "$ABS_CLONE_PATH/.mcp.json" <<MCPJSON
 {
   "mcpServers": {

@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# ABOUTME: Creates a git worktree whose .git pointer is relative, so the devcontainers CLI can
-# ABOUTME: mount the common dir on any git version. Also supports --relativize on an existing worktree.
+# ABOUTME: Creates a git worktree with a relative .git pointer, so the devcontainer CLI can mount
+# ABOUTME: the common dir on any git version. --relativize fixes an existing worktree.
 set -euo pipefail
 
-# Computes the relative path from $2 (base directory) to $1 (target path)
-# using bash string manipulation only — no python3 or `realpath
-# --relative-to`, neither of which is guaranteed present on every host that
-# still needs this fallback. Both arguments must be absolute, slash-separated
-# paths with no trailing slash.
+# Relative path from $2 (base dir) to $1 (target), in pure bash because python3
+# and `realpath --relative-to` are not on every host. Both must be absolute,
+# with no trailing slash.
 relpath() {
     local target="$1" base="$2"
     local IFS=/
@@ -32,11 +30,8 @@ relpath() {
     printf '%s' "$rel"
 }
 
-# Rewrites <worktree-path>/.git so its `gitdir:` line is relative, if it is
-# currently absolute. A pointer that is already relative is left alone.
-# Returns non-zero on failure instead of exiting, so callers that already
-# registered a worktree (git worktree add succeeded) can clean it up before
-# leaving a broken checkout behind.
+# Makes <worktree-path>/.git's `gitdir:` line relative if it is absolute.
+# Returns non-zero rather than exiting, so the caller can remove the worktree.
 relativize() {
     local worktree_path="$1"
     local git_file="$worktree_path/.git"
@@ -57,19 +52,15 @@ relativize() {
             echo "gitdir: $rel" >"$git_file"
             ;;
         *)
-            # Already relative; nothing to do.
             ;;
     esac
 }
 
-# Resolves <base> to a commit SHA, searching local branches first, then each
-# remote's tracking refs, then any other revision git understands (tag, SHA).
-# Printing a SHA rather than a name is what keeps `git worktree add -b` honest:
-# handed a name that resolves only as a remote-tracking ref, git applies DWIM to
-# it — on git 2.47 it silently discards the explicit `-b`, checks out the *base*
-# branch, exits 0 and appends a `[branch "<base>"]` stanza to the shared
-# `.git/config`; on older git it fails with "Not a valid object name".
-# `--no-guess-remote` does not suppress either; a SHA does (bug #2830).
+# Resolves <base> to a commit SHA: local branch, then each remote's tracking ref,
+# then any revision (tag, SHA). Pass `git worktree add -b` a SHA, never a name
+# that exists only as a remote-tracking ref: git 2.47 then ignores -b, checks out
+# the base branch and writes a [branch] stanza into the shared .git/config; older
+# git fails with "Not a valid object name". --no-guess-remote prevents neither.
 resolve_base_commit() {
     local repo="$1" base="$2" candidate remote sha
     local -a candidates=("refs/heads/$base")
@@ -110,14 +101,9 @@ case "$WORKTREE_PATH_ARG" in
         ;;
 esac
 
-# `git worktree add --relative-paths` (git >= 2.48) is deliberately NOT used.
-# Passing it makes git record the `relativeWorktrees` repository-format
-# extension and bump `core.repositoryformatversion` to 1 in the *shared*
-# `.git/config` — i.e. the main checkout's, since a worktree shares that file.
-# That write is permanent (it survives `git worktree remove`) and makes every
-# git older than 2.48 refuse the repository outright with "unknown repository
-# extension found: relativeworktrees". relativize() below produces the same
-# relative pointer with zero config mutation, so it is always used instead.
+# Not `git worktree add --relative-paths` (git >= 2.48): it permanently adds the
+# relativeWorktrees extension to the main checkout's shared .git/config, and git
+# older than 2.48 then refuses the repository. relativize() changes no config.
 
 if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git -C "$REPO_ROOT" worktree add "$WORKTREE_PATH" "$BRANCH" >&2
@@ -131,21 +117,13 @@ else
     git -C "$REPO_ROOT" worktree add -b "$BRANCH" "$WORKTREE_PATH" >&2
 fi
 
-# `git worktree add` just registered the worktree under its own canonical,
-# absolute resolution of $WORKTREE_PATH — which may differ textually from
-# $WORKTREE_PATH itself if the caller passed a path containing `.`/`..` or a
-# symlinked component (WORKTREE_PATH is never canonicalized above; it's only
-# prefixed with $REPO_ROOT when relative). relpath()'s prefix comparison
-# needs both sides in the same canonical form, so re-resolve WORKTREE_PATH
-# now that the directory exists.
+# git registered the canonical path; relpath() needs the same form, which can
+# differ when the argument holds `..` or a symlink.
 WORKTREE_PATH="$(realpath "$WORKTREE_PATH")"
 
-# The .git pointer git just wrote is absolute. Rewrite only the worktree's own
-# .git file to make it relative — do NOT touch .git/worktrees/<name>/gitdir,
-# since a relative pointer there makes older git consider the worktree prunable
-# and refuse `git worktree remove`. `git worktree add` above already created
-# and registered the worktree, so a failure here must remove it — otherwise a
-# retry finds the path already occupied by a broken checkout.
+# Rewrite only the worktree's .git file, never .git/worktrees/<name>/gitdir:
+# older git treats a relative path there as prunable and refuses
+# `git worktree remove`. On failure, remove the worktree so a retry starts clean.
 if ! relativize "$WORKTREE_PATH"; then
     git -C "$REPO_ROOT" worktree remove --force "$WORKTREE_PATH" 2>/dev/null || rm -rf "$WORKTREE_PATH"
     exit 1
