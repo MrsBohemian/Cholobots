@@ -1,16 +1,15 @@
 -- Local development seed: one obviously fictitious contracting business.
 --
--- Run automatically by `supabase db reset` (supabase/config.toml [db.seed]) after the
--- migrations, against the LOCAL Docker database only. Never run it on the hosted project.
+-- Run by `supabase db reset` (supabase/config.toml [db.seed]) after the migrations,
+-- against the LOCAL Docker database only. Never run it on the hosted project.
 -- Every name ends in " (Test)" or reads "Test <Role>"; phones are in the reserved
 -- 555-0100..0199 range; emails use example.com; Discord IDs are the placeholders
 -- 100000000000000001..100000000000000004 and never a real account.
 --
 -- Shape rules: explicit column lists, ids from the table defaults, foreign keys resolved by
 -- subselect on seeded natural keys, "today" and "this Monday" computed in America/Chicago.
--- Story #45 appends a second fictitious business below, following the same rules.
--- There is no profiles table yet (#40): any test account reaches Metichebot as
--- UNKNOWN:<id>, which reads the `heaven` calendar key, so the daily_tasks below use it.
+-- There is no profiles table yet: any test account reaches Metichebot as UNKNOWN:<id>,
+-- which reads the `heaven` calendar key, so the daily_tasks below use it.
 
 -- Chismebot ---------------------------------------------------------------------------
 insert into public.chisme_contacts

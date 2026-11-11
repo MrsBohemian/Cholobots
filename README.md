@@ -36,7 +36,7 @@ Required variables: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE
 npx --yes supabase@2.121.0 db reset
 ```
 
-It took about 30 s on CLI 2.121.0 (30.5 s and 28.7 s on two consecutive runs). Stop the bot first: its in-memory sessions would point at rows the reset deleted.
+It takes about 30 s. Stop the bot first: its in-memory sessions would point at rows the reset deleted.
 
 What it seeds:
 
@@ -46,11 +46,11 @@ What it seeds:
 - Metichebot: this week's `metiche_weekly` row and three `daily_tasks`.
 - Obi Juan: quest `test-gate-latch` with one assignment. Vueltabot: `Used Ladder (Test)` and a buyer interest in a ladder.
 
-`!mtoday` works out of the box. There are no profiles yet (story #40), so any test account reaches Metichebot as `UNKNOWN:<id>`, which reads the `heaven` calendar key, and the seed puts today's tasks under that key. "Today" is fixed at reset time in America/Chicago, so run the reset again on a new day.
+`!mtoday` works out of the box. There is no profiles table yet, so any test account reaches Metichebot as `UNKNOWN:<id>`, which reads the `heaven` calendar key, and the seed puts today's tasks under that key. "Today" is fixed at reset time in America/Chicago, so run the reset again on a new day.
 
-Editing the seed: names end in ` (Test)`, phones are `210555 01xx`, emails are `@example.com`, Discord IDs are the placeholders `100000000000000001` to `100000000000000004`, and real customers or the production Discord IDs never appear. `tests/unit/test_seed_contract.py` enforces these rules. The second fictitious business arrives with story #45.
+Editing the seed: names end in ` (Test)`, phones are `210555 01xx`, emails are `@example.com`, Discord IDs are the placeholders `100000000000000001` to `100000000000000004`, and real customers or the production Discord IDs never appear. `tests/unit/test_seed_contract.py` enforces these rules.
 
-If a reset fails, it prints the seed statement that broke: the seed has drifted from the migrations, so fix the seed.
+If a reset fails on a seed statement, the seed has drifted from the migrations: fix the seed.
 
 ### Linking to the hosted project (owner only)
 
