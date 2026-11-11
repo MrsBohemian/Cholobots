@@ -148,6 +148,17 @@ else
     fail "unexpected #74 note: $PREP_ERR"
 fi
 
+info "Test 5b: a multi-variable ENV line yields only the PYTAIGA_MCP_HOME value (PR #28 regression)"
+setup_fake_clone
+echo "ENV PYTAIGA_MCP_HOME=/srv/ptm UV_PYTHON_DOWNLOADS=never" > "$TEST_DIR/.devcontainer/Dockerfile.prebuild"
+run_prepare "$TEST_DIR"
+TAIGA_CMD=$(jq -r '.mcpServers["taiga-py"].command' "$TEST_DIR/.mcp.json")
+if [ "$TAIGA_CMD" = "/srv/ptm/.venv/bin/python" ]; then
+    pass "trailing ENV assignments are not part of the path"
+else
+    fail "taiga-py cmd='$TAIGA_CMD'"
+fi
+
 info "Test 6: .mcp.json carries no vault, taiga-mcp or password references"
 BAD=""
 for needle in "taiga-mcp" "jon-dev-env" "TAIGA_PASSWORD"; do

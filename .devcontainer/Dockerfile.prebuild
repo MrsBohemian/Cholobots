@@ -30,7 +30,8 @@ RUN python3 -m pip install --no-cache-dir uv==${UV_VERSION}
 
 # pytaiga-mcp (workflow-mode Taiga server): install.sh owns the commit pin. vscode owns the
 # install so agents can re-run it to repair a stale checkout.
-ENV PYTAIGA_MCP_HOME=/opt/pytaiga-mcp UV_PYTHON_DOWNLOADS=never
+ENV PYTAIGA_MCP_HOME=/opt/pytaiga-mcp
+ENV UV_PYTHON_DOWNLOADS=never
 COPY tools/pytaiga-mcp/install.sh /tmp/pytaiga-mcp/install.sh
 RUN /tmp/pytaiga-mcp/install.sh && rm -rf /tmp/pytaiga-mcp \
     && chown -R vscode:vscode /opt/pytaiga-mcp
