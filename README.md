@@ -13,16 +13,24 @@ A Discord bot that hosts six Spanglish-speaking personas for running a small con
 
 Data lives in Supabase. The companion repo [Cholobots-Mobile](https://github.com/MrsBohemian/Cholobots-Mobile) is a set of static dashboards that read the same Supabase project.
 
-## Running locally
+## Local development
 
-```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # once it exists; see the env list in CLAUDE.md
-python cholobots.py
-```
+Run the bot against a Supabase stack on your own machine, never against the hosted project.
 
-Required: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. The full list, including optional variables and which ones crash the process at import, is in [CLAUDE.md](CLAUDE.md). `.env` is loaded with `override=True`, so it wins over your shell. There is no test suite yet; `python -m py_compile cholobots.py config.py db/database.py bots/*.py` is the only static check.
+1. **Prerequisites.**
+   - Python 3.14 (the version in `.python-version`): `python3.14 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt`
+   - Docker: Docker Engine on Linux; Docker Desktop (or OrbStack) on macOS; on Windows use WSL2 with Docker Desktop's WSL integration and run everything from the WSL shell.
+   - Supabase CLI 2.121.0: via Node 18+ (`alias supabase='npx --yes supabase@2.121.0'`), or Homebrew (`brew install supabase/tap/supabase`) or Scoop. `supabase --version` should print 2.121.0.
+2. **Start the stack.** `supabase start` (the first run pulls images and takes several minutes). It runs Postgres, Auth, Storage, the REST API and Studio in Docker and prints the API URL (`http://127.0.0.1:54321`), Studio (`http://127.0.0.1:54323`) and the keys; `supabase status -o env` prints them again. Edge Functions are off in `supabase/config.toml` because the repo has none.
+3. **Write `.env`** in the repo root with `SUPABASE_URL=<API_URL>` and `SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY>` copied from `supabase status -o env`, plus `DISCORD_TOKEN` (a **test** bot token, never the production one) and `OPENAI_API_KEY`. `.env` is loaded with `override=True`, so it silently wins over your shell: keep the hosted URL, the hosted service-role key and the production Discord token out of it. A wrong or empty value shows up as a `create_client` error when the process starts.
+4. **Know what is in the database.** The local database has the baseline schema (`supabase/migrations/`) and no data, so commands that read rows find nothing. `supabase db reset` rebuilds it from the migrations.
+5. **Run.** `python cholobots.py` (only with the test token), and `supabase stop` when you are done.
+
+Required variables: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. To try commands without touching production, follow [docs/test-discord-server.md](docs/test-discord-server.md) (test Discord server and local Supabase). The full list, including optional variables and which ones crash the process at import, is in [CLAUDE.md](CLAUDE.md). Static checks: `python -m py_compile cholobots.py config.py db/database.py bots/*.py` and `ruff check .`.
+
+### Linking to the hosted project (owner only)
+
+Owner only, once per machine. `supabase login` stores the access token in the CLI's own home-directory or keychain storage (or export `SUPABASE_ACCESS_TOKEN` through direnv); it never goes in the repo. Then `supabase link --project-ref <hosted project ref>` (it prompts for the database password). The link state lives in `supabase/.temp/`, which is git-ignored. Do not run `supabase db push` or any other write against the hosted project.
 
 ## Development environment
 
@@ -41,7 +49,7 @@ The launcher reads `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` from t
 **Agent pipeline.** `.claude/` contains the skills, agents and shared includes that let Claude Code take a Taiga story or bug through analysis, implementation, PR, review and merge; `.claude/autonomous-pipeline.md` is the overview and `.claude/skills/shared/taiga-project.md` pins this project's Taiga configuration. The supporting scripts live in `scripts/` (see `scripts/README.md`) with tests in `tests/scripts/`:
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt && pre-commit install   # pytest, ruff and the ruff-check commit hook
 python -m pytest tests/scripts -q
 python3 scripts/taiga_project_setup.py --check   # exit 0 when the Taiga project has the statuses and tags the pipeline needs
 ```
