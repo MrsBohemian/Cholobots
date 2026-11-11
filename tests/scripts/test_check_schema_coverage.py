@@ -1,4 +1,4 @@
-# ABOUTME: Pytest tests for scripts/check_schema_coverage.py, the baseline-vs-code table coverage checker.
+# ABOUTME: Tests for scripts/check_schema_coverage.py.
 # ABOUTME: Covers the reference extractors, the DDL parser (kinds, RLS, policies) and the CLI exit codes.
 import json
 import subprocess
