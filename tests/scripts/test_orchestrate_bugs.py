@@ -526,6 +526,10 @@ class TestLaunchTimeoutConfiguration:
             script_dir=str(tmp_path),
             state_dir=str(tmp_path),
             base_branch="main",
+            # launch_bug fetches the base from `upstream` first; a sandbox
+            # host repo keeps that offline instead of hitting the developer's
+            # real clone (or failing where no `upstream` remote exists, as in CI).
+            repo_root=make_host_repo(tmp_path / "host-repo", remote="upstream"),
         )
 
     def test_default_is_1800(self, tmp_path, monkeypatch):
