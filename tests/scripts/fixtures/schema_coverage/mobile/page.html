@@ -1,0 +1,7 @@
+<!-- Fixture for test_check_schema_coverage: dashboard reads and writes. -->
+<script>
+  const { data } = await sb.from("alpha").select("*");
+  await sb
+    .from("dash_view")
+    .update({ hot: true });
+</script>
