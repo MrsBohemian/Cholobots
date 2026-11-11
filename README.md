@@ -63,7 +63,35 @@ If a reset fails on a seed statement, the seed has drifted from the migrations: 
 
 ### Linking to the hosted project (owner only)
 
-Owner only, once per machine. `supabase login` stores the access token in the CLI's own home-directory or keychain storage (or export `SUPABASE_ACCESS_TOKEN` through direnv); it never goes in the repo. Then `supabase link --project-ref <hosted project ref>` (it prompts for the database password). The link state lives in `supabase/.temp/`, which is git-ignored. Do not run `supabase db push` or any other write against the hosted project.
+Owner only, once per machine. `supabase login` stores the access token in the CLI's own home-directory or keychain storage (or export `SUPABASE_ACCESS_TOKEN` through direnv); it never goes in the repo. Then `supabase link --project-ref <hosted project ref>` (it prompts for the database password). The link state lives in `supabase/.temp/`, which is git-ignored. Do not run `supabase db push` or any other write against the hosted project; migrations reach it only through the gated workflow in [docs/database-migrations.md](docs/database-migrations.md).
+
+## Running the bot
+
+`make run` checks that `.env` points at the local Supabase stack (`scripts/check_local_env.py`), then starts the bot; `python cholobots.py` skips the check. Either way it connects to Discord with the token in `.env`, so use your own test bot and never point a local `.env` at the hosted Supabase project or the production Discord token. Coding agents never start the bot.
+
+## Resetting data
+
+`make db-reset` (or `npx --yes supabase@2.121.0 db reset`) rebuilds the local database from `supabase/migrations/` and reloads the fictitious [seed data](#seed-data). It only touches the local Docker stack. Stop the bot first.
+
+## Running tests
+
+Pick what to run from [docs/testing-workflow.md](docs/testing-workflow.md); which level a test belongs at is in [docs/testing-strategy.md](docs/testing-strategy.md).
+
+| Command | Runs |
+|---|---|
+| `make check` | compile check, `ruff check .`, then `make test` |
+| `make test` | `pytest tests/unit tests/scripts` and every `tests/scripts/test-*.sh` |
+| `make test-integration` | `tests/integration` against the local stack (`make db-up` first); refuses any non-local Supabase URL |
+| `python -m pytest tests/unit -q` | fast contract and guard tests; no network, no Supabase |
+| `python -m pytest tests/scripts -q` | tests for the pipeline scripts in `scripts/` |
+| `python -m py_compile cholobots.py config.py db/database.py bots/*.py` | compile check of the bot modules |
+| `ruff check .` | lint (configured in `ruff.toml`) |
+
+The bots' command logic has no unit tests yet; `tests/integration` drives commands against the local stack.
+
+## Work tracking
+
+Issues, stories and epics live in the Taiga project `cholo-bots` (id 39) at <https://backlog.growthgarage.org/project/cholo-bots>. Start with epic #2 (the codebase assessment, with per-bot deep dives in the project wiki), epic #46 (developer experience: local Supabase stack, migrations, CI) and epic #3 (multi-business isolation). The roadmap is [Cholobots_48_Hour_Development_Plan.md](Cholobots_48_Hour_Development_Plan.md).
 
 ## Development environment
 
@@ -71,9 +99,7 @@ Owner only, once per machine. `supabase login` stores the access token in the CL
 
 **Schema changes.** Never edit the database schema in the Supabase dashboard or SQL editor. Every change is a new file under `supabase/migrations/` (`supabase migration new <name>`) reviewed in a PR; the production push is gated off. See [docs/database-migrations.md](docs/database-migrations.md).
 
-**Work tracking.** Issues, stories and epics live in the Taiga project `cholo-bots` on <https://backlog.growthgarage.org>. Start with epic #2 (the 2026-11-06 codebase assessment, with per-bot deep dives in the project wiki), epic #46 (developer experience: local Supabase stack, migrations, CI) and epic #3 (multi-business isolation).
-
-**Claude Code.** `CLAUDE.md` holds the architecture notes a session needs. To let Claude read and update Taiga from this checkout, register the Taiga MCP server at project scope so it targets the Growth Garage instance rather than any personal default:
+**Claude Code and Codex.** `CLAUDE.md` holds the architecture notes a session needs; Codex reads it through the `AGENTS.md` symlink. To let Claude read and update Taiga from this checkout, register the Taiga MCP server at project scope so it targets the Growth Garage instance rather than any personal default:
 
 ```bash
 claude mcp add -s local taiga-py -- <path-to-taiga-mcp-launcher> workflow project/taiga-growthgarage-slave1-codex
@@ -91,7 +117,9 @@ python3 scripts/taiga_project_setup.py --check   # exit 0 when the Taiga project
 
 The setup script is run once by a project admin with `--apply`. Like the other helper scripts it reads the `TAIGA_*` variables from the shell, which direnv loads from Jon's dev-env vault; `scripts/README.md` has the admin command.
 
-**Contributing.** See [CONTRIBUTING.md](CONTRIBUTING.md) for access and the pull-request flow.
+## Contributing
+
+Access, the branch and pull-request flow, database changes, the command checklist and commit attribution are in [CONTRIBUTING.md](CONTRIBUTING.md). Ownership and licensing terms are still pending. Architecture notes and known hazards are in [CLAUDE.md](CLAUDE.md).
 
 ## Layout
 
@@ -100,4 +128,10 @@ The setup script is run once by a project admin with `--apply`. Like the other h
 - `db/database.py` — legacy SQLite helpers plus the Supabase `metiche_weekly` accessors
 - `config.py` — env loading and the shared OpenAI client
 - `supabase/` — Supabase CLI project: `config.toml` for the local stack and `migrations/`, the database schema of record, starting from a baseline dumped from the hosted project
+- `Makefile` — setup, local stack, run, check and test targets (`make help`)
+- `tests/` — `unit/` (no network), `integration/` (local Supabase stack), `scripts/` (pipeline script tests)
+- `scripts/` — Taiga and GitHub helper scripts for the agent pipeline, plus `check_local_env.py` and the schema checks
+- `.claude/` — Claude Code skills, agents and shared includes for the agent pipeline
+- `CLAUDE.md` — architecture notes for people and coding agents; `AGENTS.md` is a symlink to it
+- `CONTRIBUTING.md` — how changes get to `main`
 - `docs/` — assessments and design notes; `Cholobots_48_Hour_Development_Plan.md` is the current roadmap
