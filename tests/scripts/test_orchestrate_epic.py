@@ -3138,6 +3138,30 @@ class TestUsage:
             env={**os.environ, "ORCHESTRATE_STATE_DIR": str(tmp_path)},
         )
 
+    def _run_with_n(self, tmp_path, n):
+        stories = tmp_path / "stories.json"
+        stories.write_text("[]")
+        return subprocess.run(
+            [sys.executable, os.path.join(REPO_ROOT, "scripts", "devcontainer", "orchestrate_epic.py"),
+             "99999", str(n), str(stories)],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "ORCHESTRATE_STATE_DIR": str(tmp_path)},
+        )
+
+    def test_concurrency_above_five_is_rejected_before_any_state_exists(self, tmp_path):
+        result = self._run_with_n(tmp_path, 6)
+
+        assert result.returncode == 1
+        assert "concurrency must be 1-5" in result.stderr
+        assert not (tmp_path / "implement-epic-99999.json").exists()
+
+    def test_implement_epic_skill_documents_the_entrypoints_concurrency_range(self):
+        """The skill is what operators read; it must name the 1-5 limit the
+        entrypoint enforces so `n=6` is caught before the orchestrator starts."""
+        skill = Path(REPO_ROOT, ".claude", "skills", "implement-epic", "SKILL.md").read_text()
+
+        assert "1-5" in skill.split("## Step 0", 1)[1].split("## Step 1", 1)[0]
+
     def test_unknown_extra_argument_is_usage_error(self, tmp_path):
         result = self._run(tmp_path, "--bogus")
         assert result.returncode == 1

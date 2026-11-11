@@ -85,6 +85,11 @@ The run's **mode** is `worktree` when `<n>` = 1 or `--worktrees` is present, oth
 `--dry-run` is only valid in container mode (`<n>` > 1, no `--worktrees`); with `<n>` = 1 or with
 `--worktrees`, stop and say so.
 
+In container mode `<n>` must be in the range **1-5**: `scripts/devcontainer/orchestrate_epic.py` exits
+with "concurrency must be 1-5" for anything larger, before it creates any state. Validate that here
+and stop with the same message rather than launching the orchestrator to fail. Worktree mode has no
+such cap.
+
 If `<n>` > 3, warn:
 > "Warning: N=<n> may exceed account rate limits. Recommended max is 3."
 
