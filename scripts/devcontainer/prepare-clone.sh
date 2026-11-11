@@ -74,7 +74,7 @@ fi
 PREBUILD="$ABS_CLONE_PATH/.devcontainer/Dockerfile.prebuild"
 PYTAIGA_HOME=""
 if [ -f "$PREBUILD" ]; then
-    PYTAIGA_HOME=$(sed -n 's/^ENV PYTAIGA_MCP_HOME=//p' "$PREBUILD" | tail -1)
+    PYTAIGA_HOME=$(sed -n 's/^ENV PYTAIGA_MCP_HOME=\([^[:space:]]*\).*/\1/p' "$PREBUILD" | tail -1)
 fi
 if [ -z "$PYTAIGA_HOME" ]; then
     PYTAIGA_HOME="/opt/pytaiga-mcp"

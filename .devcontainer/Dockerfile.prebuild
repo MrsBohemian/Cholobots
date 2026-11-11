@@ -1,0 +1,54 @@
+# ABOUTME: Pre-built devcontainer image: the base image plus the volatile tools and a warm pip cache.
+# ABOUTME: CI publishes it to GHCR; scripts/devcontainer/launch.sh pulls it or builds both stages locally.
+#
+# Two-stage build:
+#   1. docker build -f .devcontainer/Dockerfile -t devcontainer-base .
+#   2. docker build -f .devcontainer/Dockerfile.prebuild --build-arg BASE_IMAGE=devcontainer-base -t ghcr.io/mrsbohemian/cholobots/devcontainer:latest .
+
+ARG BASE_IMAGE=devcontainer-base
+FROM ${BASE_IMAGE}
+
+# Links the GHCR package to the repo so it inherits the repo's access.
+LABEL org.opencontainers.image.source="https://github.com/MrsBohemian/Cholobots"
+
+# Volatile tool pins, declared only here (scripts/devcontainer/pins.sh reads them). Exact versions;
+# claude-code and codex need Node >=22.
+ARG CLAUDE_CODE_VERSION=2.1.310
+ARG CODEX_VERSION=0.164.0
+ARG CHROME_DEVTOOLS_MCP_VERSION=1.12.0
+ARG UV_VERSION=0.13.5
+
+RUN npm install -g \
+        chrome-devtools-mcp@${CHROME_DEVTOOLS_MCP_VERSION} \
+        @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+        @openai/codex@${CODEX_VERSION}
+
+# Fail the build if a tool did not install a runnable binary.
+RUN claude --version && codex --version && chrome-devtools-mcp --help >/dev/null
+
+RUN python3 -m pip install --no-cache-dir uv==${UV_VERSION}
+
+# pytaiga-mcp (workflow-mode Taiga server); install.sh holds the commit pin. Owned by vscode so
+# agents can re-run install.sh to repair a stale checkout.
+ENV PYTAIGA_MCP_HOME=/opt/pytaiga-mcp
+ENV UV_PYTHON_DOWNLOADS=never
+COPY tools/pytaiga-mcp/install.sh /tmp/pytaiga-mcp/install.sh
+RUN /tmp/pytaiga-mcp/install.sh && rm -rf /tmp/pytaiga-mcp \
+    && chown -R vscode:vscode /opt/pytaiga-mcp
+
+# The registry mirror proxies Docker Hub only, and the Supabase CLI defaults to public.ecr.aws.
+# Pull Supabase images from Docker Hub so the mirror can serve them. They can't be pre-pulled:
+# there is no DinD daemon at build time and its data root is a per-container volume.
+ENV SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io
+
+# Warm vscode's pip cache for post-create.sh's `pip install`. The venv is thrown away; the wheels
+# stay in /home/vscode/.cache/pip (no --no-cache-dir on purpose).
+WORKDIR /tmp/prebuild
+COPY requirements.txt requirements-dev.txt ./
+RUN chown -R vscode:vscode /tmp/prebuild
+USER vscode
+RUN python3 -m venv /tmp/prebuild/venv \
+    && /tmp/prebuild/venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+USER root
+RUN rm -rf /tmp/prebuild
+WORKDIR /

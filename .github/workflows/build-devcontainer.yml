@@ -1,0 +1,197 @@
+# ABOUTME: Builds the devcontainer image and checks its tool versions; publishes to GHCR on push to main only.
+# ABOUTME: Only the publish job logs in or holds packages: write. No pull_request_target, no secrets beyond GITHUB_TOKEN.
+#
+# Not a required check, so the paths filters are safe.
+name: build-devcontainer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.devcontainer/**'
+      - 'requirements*.txt'
+      - 'tools/pytaiga-mcp/**'
+      - '.dockerignore'
+      - '.github/workflows/build-devcontainer.yml'
+  pull_request:
+    paths:
+      - '.devcontainer/**'
+      - 'requirements*.txt'
+      - 'tools/pytaiga-mcp/**'
+      - '.dockerignore'
+      - '.github/workflows/build-devcontainer.yml'
+  schedule:
+    # Weekly build-only run to catch base image or pin breakage early.
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-devcontainer-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  # Lowercase (github.repository is not); must match the image reference in launch.sh.
+  IMAGE_NAME: mrsbohemian/cholobots/devcontainer
+
+jobs:
+  build-devcontainer:
+    name: build-devcontainer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Anonymous pulls; a miss only costs a cold build.
+      - name: Seed build cache from the last published images
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:base || true
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest || true
+
+      # BUILDKIT_INLINE_CACHE embeds cache keys in the pushed image for the next
+      # run's --cache-from. Each build records keys only for its own layers, so the
+      # base needs its own export and its own :base tag; seeding it from :latest
+      # misses every base layer, and then every prebuild layer too.
+      - name: Build base devcontainer image
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+            -f .devcontainer/Dockerfile \
+            --pull \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --cache-from ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:base \
+            -t devcontainer-base \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:base \
+            .
+
+      - name: Build pre-built devcontainer image
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+            -f .devcontainer/Dockerfile.prebuild \
+            --build-arg BASE_IMAGE=devcontainer-base \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --cache-from ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            .
+
+      - name: Check tool versions match the pins
+        run: |
+          eval "$(scripts/devcontainer/pins.sh)"
+          out=$(docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest sh -c '
+            echo "supabase=$(supabase --version | tr -d "[:space:]")"
+            echo "node_major=$(node --version | sed "s/^v\([0-9]*\).*/\1/")"
+            echo "claude=$(claude --version | awk "{print \$1}")"
+            echo "codex=$(codex --version | awk "{print \$2}")"
+            echo "chrome_devtools_mcp=$(npm ls -g chrome-devtools-mcp --json | jq -r ".dependencies[\"chrome-devtools-mcp\"].version")"
+            echo "uv=$(uv --version | awk "{print \$2}")"
+            echo "pytaiga_marker=$(cat "${PYTAIGA_MCP_HOME:-/opt/pytaiga-mcp}/.installed")"
+          ')
+          echo "$out"
+          status=0
+          check() {
+            local name="$1" expected="$2" actual
+            actual=$(sed -n "s/^$3=//p" <<< "$out")
+            if [ "$actual" = "$expected" ]; then
+              echo "ok: $name $actual"
+            else
+              echo "MISMATCH: $name expected '$expected' got '$actual'" >&2
+              status=1
+            fi
+          }
+          check supabase "$SUPABASE_CLI_VERSION" supabase
+          check "node major" "$NODE_MAJOR" node_major
+          check claude "$CLAUDE_CODE_VERSION" claude
+          check codex "$CODEX_VERSION" codex
+          check chrome-devtools-mcp "$CHROME_DEVTOOLS_MCP_VERSION" chrome_devtools_mcp
+          check uv "$UV_VERSION" uv
+          check "pytaiga-mcp marker" "$PYTAIGA_MCP_MARKER" pytaiga_marker
+          exit "$status"
+
+  publish:
+    name: publish
+    needs: build-devcontainer
+    # PRs, the schedule and manual dispatch run only the build job.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Seed build cache from the last published images
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:base || true
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest || true
+
+      - name: Build base devcontainer image
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+            -f .devcontainer/Dockerfile \
+            --pull \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --cache-from ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:base \
+            -t devcontainer-base \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:base \
+            .
+
+      - name: Build pre-built devcontainer image
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+            -f .devcontainer/Dockerfile.prebuild \
+            --build-arg BASE_IMAGE=devcontainer-base \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --cache-from ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            .
+
+      - name: Check tool versions match the pins
+        run: |
+          eval "$(scripts/devcontainer/pins.sh)"
+          out=$(docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest sh -c '
+            echo "supabase=$(supabase --version | tr -d "[:space:]")"
+            echo "node_major=$(node --version | sed "s/^v\([0-9]*\).*/\1/")"
+            echo "claude=$(claude --version | awk "{print \$1}")"
+            echo "codex=$(codex --version | awk "{print \$2}")"
+            echo "chrome_devtools_mcp=$(npm ls -g chrome-devtools-mcp --json | jq -r ".dependencies[\"chrome-devtools-mcp\"].version")"
+            echo "uv=$(uv --version | awk "{print \$2}")"
+            echo "pytaiga_marker=$(cat "${PYTAIGA_MCP_HOME:-/opt/pytaiga-mcp}/.installed")"
+          ')
+          echo "$out"
+          status=0
+          check() {
+            local name="$1" expected="$2" actual
+            actual=$(sed -n "s/^$3=//p" <<< "$out")
+            if [ "$actual" = "$expected" ]; then
+              echo "ok: $name $actual"
+            else
+              echo "MISMATCH: $name expected '$expected' got '$actual'" >&2
+              status=1
+            fi
+          }
+          check supabase "$SUPABASE_CLI_VERSION" supabase
+          check "node major" "$NODE_MAJOR" node_major
+          check claude "$CLAUDE_CODE_VERSION" claude
+          check codex "$CODEX_VERSION" codex
+          check chrome-devtools-mcp "$CHROME_DEVTOOLS_MCP_VERSION" chrome_devtools_mcp
+          check uv "$UV_VERSION" uv
+          check "pytaiga-mcp marker" "$PYTAIGA_MCP_MARKER" pytaiga_marker
+          exit "$status"
+
+      - name: Push to GHCR
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:base
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
