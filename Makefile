@@ -1,7 +1,6 @@
-# Local development task runner for Cholobots. `make` (or `make help`) lists the targets.
+# Local development task runner. `make` (or `make help`) lists the targets.
 # Keep it GNU make 3.81 compatible (the macOS default): plain sh recipes, no .ONESHELL.
-# Every Supabase target works on the local Docker stack only; nothing here talks to the
-# hosted project, and `make run` refuses a non-local SUPABASE_URL (scripts/check_local_env.py).
+# Nothing here talks to the hosted Supabase project; the db-* targets use the local Docker stack.
 
 SUPABASE_CLI_VERSION := 2.121.0
 # Homebrew or Scoop installs of the same version: make SUPABASE=supabase <target>
@@ -15,7 +14,7 @@ VENV_PY := .venv/bin/python
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "%-17s %s\n", $$1, $$2}'
 
-setup: check-tools ## Check shell-test tools, create .venv, install the pinned requirements and the pre-commit hook, create .env
+setup: check-tools ## Create .venv, install requirements and the pre-commit hook, create .env
 	$(PYTHON) -m venv .venv
 	$(VENV_PY) -m pip install -r requirements.txt -r requirements-dev.txt
 	$(VENV_PY) -m pre_commit install
@@ -57,7 +56,7 @@ compile: ## Byte-compile the bot modules
 lint: ## Run ruff
 	$(VENV_PY) -m ruff check .
 
-test: check-tools ## Run the unit tests, the script pytest tests and every tests/scripts/test-*.sh
+test: check-tools ## Run pytest (unit + scripts) and every tests/scripts/test-*.sh
 	$(VENV_PY) -m pytest -q tests/unit tests/scripts
 	for t in tests/scripts/test-*.sh; do echo "== $$t"; bash "$$t" || exit 1; done
 

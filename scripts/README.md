@@ -88,7 +88,7 @@ for a scope that does not exist.
 
 | Script | Purpose |
 |---|---|
-| `check_local_env.py [--env-file F]` | Preflight `make run` calls before `cholobots.py`. Resolves `.env` over the shell the way `config.py` does (`override=True`) and exits 1, one line per problem on stderr, unless `SUPABASE_URL` is on `127.0.0.1`, `localhost` or `::1` and `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY` are non-empty and `TRANSPORTATION_CHANNEL_ID` (when set) is an integer. No override: production runs through the `Procfile`, not `make`. Unlike the pipeline scripts it needs python-dotenv, so it runs with the bot venv (`.venv/bin/python`) |
+| `check_local_env.py [--env-file F]` | Preflight `make run` calls before `cholobots.py`. Resolves `.env` over the shell like `config.py` and exits 1, one line per problem on stderr, unless `SUPABASE_URL` is on `127.0.0.1`, `localhost` or `::1`, `DISCORD_TOKEN`, `OPENAI_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are non-empty, and `TRANSPORTATION_CHANNEL_ID` (when set) is an integer. Has no override flag. Needs python-dotenv, so it runs with `.venv/bin/python` |
 
 ## Tests
 

@@ -1,4 +1,4 @@
-# ABOUTME: Pins the Makefile's target recipes with `make -n`, so a dry run shows each command without running it.
+# ABOUTME: Pins the Makefile's target recipes with `make -n` (dry run, nothing executes).
 # ABOUTME: Also guards the operator rule that no target touches the hosted Supabase project.
 import os
 import re
