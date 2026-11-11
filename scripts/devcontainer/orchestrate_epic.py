@@ -464,6 +464,29 @@ class StateManager:
             self.save()
 
 
+# Where Linux exposes process command lines; overridable so tests can exercise
+# the non-Linux path.
+PROC_ROOT = "/proc"
+
+
+def valid_pr_number(pr):
+    """Return `pr` as a string when it is a positive integer, else None.
+
+    A state file's prNumber can be null, 0, "", a stale string or a bool; none
+    of those is a reviewable PR, and treating one as success would unblock
+    dependents (or count a bug as fixed) with nothing to review.
+    """
+    if isinstance(pr, bool):
+        return None
+    if isinstance(pr, int):
+        return str(pr) if pr > 0 else None
+    if isinstance(pr, str):
+        text = pr.strip()
+        if text.isascii() and text.isdigit() and int(text) > 0:
+            return str(int(text))
+    return None
+
+
 def is_agent_process(pid):
     """Check if a PID is alive and is an exec-skill.sh process (the agent launcher)."""
     try:
@@ -472,7 +495,7 @@ def is_agent_process(pid):
         return False
 
     # Linux-specific: check /proc/<pid>/cmdline
-    cmdline_path = f"/proc/{pid}/cmdline"
+    cmdline_path = f"{PROC_ROOT}/{pid}/cmdline"
     if os.path.exists(cmdline_path):
         try:
             with open(cmdline_path, "rb") as f:
@@ -486,8 +509,20 @@ def is_agent_process(pid):
         except (OSError, PermissionError):
             return False
 
-    # Non-Linux fallback: trust the PID
-    return True
+    # No /proc (macOS, BSD): a live PID alone proves nothing, since a dead
+    # agent's PID can be reused by an unrelated process and the story would
+    # then stay active forever. Ask ps for the command line, and treat a PID
+    # whose command cannot be verified as dead (the resume then requeues it).
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    if result.returncode != 0:
+        return False
+    return any(os.path.basename(t) == "exec-skill.sh" for t in (result.stdout or "").split())
 
 
 def _classify_phase(phase, pr):
@@ -547,8 +582,7 @@ def determine_outcome(ref, log_file, container_id=None, state_dir=None):
                 pr = story_state.get("prNumber")
                 branch = story_state.get("featureBranch")
 
-                if pr is not None and str(pr) != "null":
-                    pr_number = str(pr)
+                pr_number = valid_pr_number(pr) or "none"
 
                 classified, reason = _classify_phase(phase, pr)
                 if classified is not None:
@@ -576,8 +610,7 @@ def determine_outcome(ref, log_file, container_id=None, state_dir=None):
                 pr = story_state.get("prNumber")
                 branch = story_state.get("featureBranch")
 
-                if pr is not None and str(pr) != "null":
-                    pr_number = str(pr)
+                pr_number = valid_pr_number(pr) or "none"
 
                 classified, reason = _classify_phase(phase, pr)
                 if classified is not None:
@@ -665,7 +698,134 @@ def detect_transient_exit(log_file, now=None):
     return True, format_utc(not_before)
 
 
-class Orchestrator:
+class HostRepoBaseMixin:
+    """Resolve a base branch in the host repo before launch.sh clones from it.
+
+    Shared by both orchestrators. The host class provides `repo_root` (a Path)
+    and `git_lock` (a threading.Lock serialising git runs against that repo).
+    """
+
+    def _run_git(self, *args, timeout=15):
+        """Run a git command against the host repo (not a story's clone) and
+        return the CompletedProcess. Broken out from _ensure_base_reachable so
+        tests can stub the git runner without a real subprocess/network call.
+
+        The repo is self.repo_root (see __init__).
+        """
+        # Same host repo, same refs and FETCH_HEAD as _run_cmd — share its lock
+        # so concurrent launches cannot race on git's own index/ref locks.
+        with self.git_lock:
+            return subprocess.run(
+                ["git", "-C", str(self.repo_root)] + list(args),
+                capture_output=True, text=True, timeout=timeout,
+            )
+
+    def _ensure_base_reachable(self, base):
+        """Guarantee `base` resolves as a local head in the host repo that
+        matches the remote, before launch.sh clones from it.
+
+        A dependency's `feature/<slug>-<ref>` branch is created and pushed to
+        GitHub from inside that story's own container, so the host repo —
+        where launch.sh's `git clone --branch` runs — has never seen it.
+        `git clone --branch` resolves against refs/heads/ and refs/tags/
+        only, so a bare `git fetch <remote> <base>` (which only writes
+        refs/remotes/<remote>/<base>) would not be enough; the fetch below
+        creates a local head instead.
+
+        The local head this leaves behind in the operator's host repo is not
+        evidence that the base is current: a relaunch, a re-run of the epic,
+        or a `gh pr checkout` can all leave a head at an older commit, and
+        merge-train force-pushes mean the stale head may not even be an
+        ancestor of the remote tip. So the head is always re-fetched with a
+        forced refspec, which resets it to the remote tip rather than failing
+        the fast-forward. That is safe because the orchestrator, not a human,
+        owns these heads.
+
+        The heads the orchestrator must not rewrite are the ones checked out
+        in the host repo or in one of its linked worktrees (worktree mode
+        leaves a base branch checked out in one) — git refuses to fetch into
+        them anyway. Those are verified instead: the remote tip must already be
+        contained in the local head, otherwise the launch fails loudly rather
+        than cloning a stale base.
+
+        Returns True if `base` is (or was made) reachable and current, False
+        otherwise.
+        """
+        checked_out = self._checked_out_branches()
+        if checked_out is None:
+            return False
+
+        if base in checked_out:
+            return self._verify_checked_out_base(base)
+
+        try:
+            fetch = self._run_git("fetch", REMOTE, f"+{base}:{base}", timeout=60)
+        except (subprocess.TimeoutExpired, OSError) as e:
+            log(f"Could not fetch base branch {base}: {e}")
+            return False
+        if fetch.returncode != 0:
+            log(f"Could not fetch base branch {base}: {(fetch.stderr or '').strip()}")
+            return False
+        return True
+
+    def _checked_out_branches(self):
+        """Return the set of branches checked out in the host repo or any of
+        its linked worktrees, or None if git could not be queried.
+
+        `symbolic-ref HEAD` would only report the main worktree's branch, but
+        git refuses to fetch into a branch checked out in *any* worktree, and
+        worktree mode routinely leaves a base branch checked out in a linked
+        one.
+        """
+        try:
+            listing = self._run_git("worktree", "list", "--porcelain")
+        except (subprocess.TimeoutExpired, OSError) as e:
+            log(f"Could not list the host repo's worktrees: {e}")
+            return None
+        if listing.returncode != 0:
+            log(f"Could not list the host repo's worktrees: {(listing.stderr or '').strip()}")
+            return None
+
+        branches = set()
+        for line in (listing.stdout or "").splitlines():
+            if line.startswith("branch refs/heads/"):
+                branches.add(line[len("branch refs/heads/"):].strip())
+        return branches
+
+    def _verify_checked_out_base(self, base):
+        """Confirm a checked-out `base` already contains <remote>/<base>. Used
+        instead of a fetch, which git refuses for a branch checked out in the
+        host repo or any of its worktrees. Returns True if it is current,
+        False otherwise.
+        """
+        try:
+            fetch = self._run_git("fetch", REMOTE, base, timeout=60)
+        except (subprocess.TimeoutExpired, OSError) as e:
+            log(f"Could not fetch base branch {base}: {e}")
+            return False
+        if fetch.returncode != 0:
+            log(f"Could not fetch base branch {base}: {(fetch.stderr or '').strip()}")
+            return False
+
+        try:
+            contains = self._run_git(
+                "merge-base", "--is-ancestor", "FETCH_HEAD", f"refs/heads/{base}"
+            )
+        except (subprocess.TimeoutExpired, OSError) as e:
+            log(f"Could not compare base branch {base} with {REMOTE}: {e}")
+            return False
+        if contains.returncode != 0:
+            log(
+                f"Base branch {base} is checked out in the host repo (or one of "
+                f"its worktrees) and does not "
+                f"contain {REMOTE}/{base}; refusing to launch from a stale base. "
+                f"Check out a different branch, or update {base}, and re-run."
+            )
+            return False
+        return True
+
+
+class Orchestrator(HostRepoBaseMixin):
     """Main orchestrator state machine."""
 
     def __init__(self, epic_ref, concurrency, stories_file, script_dir, state_dir, base_branch,
@@ -787,8 +947,12 @@ class Orchestrator:
         for story in self.sm.stories_with_status("active"):
             ref = story["ref"]
             clone_path = story["clonePath"]
-            self._teardown(clone_path)
-            self.sm.update_story(ref, status="queued", pid=None, holdsPreservedWork=False)
+            # A resumed story's clone holds the rate-limited run's unpushed
+            # work: the container goes, the clone and its marker stay so the
+            # next run can still resume from them.
+            preserved = self._holds_preserved_work(story)
+            self._teardown(clone_path, keep_clone=preserved)
+            self.sm.update_story(ref, status="queued", pid=None, holdsPreservedWork=preserved)
 
     def _cleanup_launching(self):
         """Stop in-flight launches and reset those stories to queued.
@@ -1418,8 +1582,9 @@ class Orchestrator:
                 self._finish_story(story, "error", pr, outcome_label="no_pr_created")
             else:
                 # Transient error (e.g., process crashed): reset to queued for retry
-                self._teardown(story["clonePath"])
-                self.sm.update_story(ref, status="queued", pid=None, holdsPreservedWork=False)
+                preserved = self._holds_preserved_work(story)
+                self._teardown(story["clonePath"], keep_clone=preserved)
+                self.sm.update_story(ref, status="queued", pid=None, holdsPreservedWork=preserved)
                 log(f"Story {ref} reset to queued")
 
         # Check launching stories
@@ -1602,125 +1767,6 @@ class Orchestrator:
         log(f"Container {container_id} is not running; launching a new one")
         return None
 
-    def _run_git(self, *args, timeout=15):
-        """Run a git command against the host repo (not a story's clone) and
-        return the CompletedProcess. Broken out from _ensure_base_reachable so
-        tests can stub the git runner without a real subprocess/network call.
-
-        The repo is self.repo_root (see __init__).
-        """
-        # Same host repo, same refs and FETCH_HEAD as _run_cmd — share its lock
-        # so concurrent launches cannot race on git's own index/ref locks.
-        with self.git_lock:
-            return subprocess.run(
-                ["git", "-C", str(self.repo_root)] + list(args),
-                capture_output=True, text=True, timeout=timeout,
-            )
-
-    def _ensure_base_reachable(self, base):
-        """Guarantee `base` resolves as a local head in the host repo that
-        matches the remote, before launch.sh clones from it.
-
-        A dependency's `feature/<slug>-<ref>` branch is created and pushed to
-        GitHub from inside that story's own container, so the host repo —
-        where launch.sh's `git clone --branch` runs — has never seen it.
-        `git clone --branch` resolves against refs/heads/ and refs/tags/
-        only, so a bare `git fetch <remote> <base>` (which only writes
-        refs/remotes/<remote>/<base>) would not be enough; the fetch below
-        creates a local head instead.
-
-        The local head this leaves behind in the operator's host repo is not
-        evidence that the base is current: a relaunch, a re-run of the epic,
-        or a `gh pr checkout` can all leave a head at an older commit, and
-        merge-train force-pushes mean the stale head may not even be an
-        ancestor of the remote tip. So the head is always re-fetched with a
-        forced refspec, which resets it to the remote tip rather than failing
-        the fast-forward. That is safe because the orchestrator, not a human,
-        owns these heads.
-
-        The heads the orchestrator must not rewrite are the ones checked out
-        in the host repo or in one of its linked worktrees (worktree mode
-        leaves a base branch checked out in one) — git refuses to fetch into
-        them anyway. Those are verified instead: the remote tip must already be
-        contained in the local head, otherwise the launch fails loudly rather
-        than cloning a stale base.
-
-        Returns True if `base` is (or was made) reachable and current, False
-        otherwise.
-        """
-        checked_out = self._checked_out_branches()
-        if checked_out is None:
-            return False
-
-        if base in checked_out:
-            return self._verify_checked_out_base(base)
-
-        try:
-            fetch = self._run_git("fetch", REMOTE, f"+{base}:{base}", timeout=60)
-        except (subprocess.TimeoutExpired, OSError) as e:
-            log(f"Could not fetch base branch {base}: {e}")
-            return False
-        if fetch.returncode != 0:
-            log(f"Could not fetch base branch {base}: {(fetch.stderr or '').strip()}")
-            return False
-        return True
-
-    def _checked_out_branches(self):
-        """Return the set of branches checked out in the host repo or any of
-        its linked worktrees, or None if git could not be queried.
-
-        `symbolic-ref HEAD` would only report the main worktree's branch, but
-        git refuses to fetch into a branch checked out in *any* worktree, and
-        worktree mode routinely leaves a base branch checked out in a linked
-        one.
-        """
-        try:
-            listing = self._run_git("worktree", "list", "--porcelain")
-        except (subprocess.TimeoutExpired, OSError) as e:
-            log(f"Could not list the host repo's worktrees: {e}")
-            return None
-        if listing.returncode != 0:
-            log(f"Could not list the host repo's worktrees: {(listing.stderr or '').strip()}")
-            return None
-
-        branches = set()
-        for line in (listing.stdout or "").splitlines():
-            if line.startswith("branch refs/heads/"):
-                branches.add(line[len("branch refs/heads/"):].strip())
-        return branches
-
-    def _verify_checked_out_base(self, base):
-        """Confirm a checked-out `base` already contains <remote>/<base>. Used
-        instead of a fetch, which git refuses for a branch checked out in the
-        host repo or any of its worktrees. Returns True if it is current,
-        False otherwise.
-        """
-        try:
-            fetch = self._run_git("fetch", REMOTE, base, timeout=60)
-        except (subprocess.TimeoutExpired, OSError) as e:
-            log(f"Could not fetch base branch {base}: {e}")
-            return False
-        if fetch.returncode != 0:
-            log(f"Could not fetch base branch {base}: {(fetch.stderr or '').strip()}")
-            return False
-
-        try:
-            contains = self._run_git(
-                "merge-base", "--is-ancestor", "FETCH_HEAD", f"refs/heads/{base}"
-            )
-        except (subprocess.TimeoutExpired, OSError) as e:
-            log(f"Could not compare base branch {base} with {REMOTE}: {e}")
-            return False
-        if contains.returncode != 0:
-            log(
-                f"Base branch {base} is checked out in the host repo (or one of "
-                f"its worktrees) and does not "
-                f"contain {REMOTE}/{base}; refusing to launch from a stale base. "
-                f"Check out a different branch, or update {base}, and re-run."
-            )
-            return False
-        return True
-
     def _launch_container(self, ref, clone_path, base):
         """Run launch.sh and return (container_id, failure_reason).
 
@@ -1854,7 +1900,15 @@ class Orchestrator:
             if resuming:
                 # Whatever is still bound to the folder (a stopped container after
                 # a host restart) would sit next to the new one; sweep it first.
-                self._teardown(clone_path, story.get("containerId"), keep_clone=True)
+                if not self._teardown(clone_path, story.get("containerId"), keep_clone=True):
+                    # A leftover container would sit next to the new one on the
+                    # same folder; launch nothing until the sweep succeeds.
+                    # _handle_launch_failure retries the cleanup and makes the
+                    # story terminal if it still cannot be confirmed.
+                    log(f"Story {ref}: could not remove the previous container; not relaunching")
+                    return self._handle_launch_failure(
+                        ref, clone_path, "previous container cleanup failed",
+                        story.get("containerId"), keep_clone=True)
             container_id, launch_reason = self._launch_container(ref, clone_path, base)
             if not container_id:
                 # A shutdown killed launch.sh's process group; that is not the

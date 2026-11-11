@@ -46,6 +46,29 @@ class TestCompleteOutcome:
         assert reason is None
 
 
+class TestUnreviewablePrNumberIsNone:
+    """Only a positive integer is a reviewable PR; anything else reads as no PR,
+    so a "complete" with it is downgraded instead of unblocking dependents."""
+
+    @pytest.mark.parametrize("pr", [0, "0", "", " ", "abc", -3, "-3", 1.5, True])
+    def test_complete_with_invalid_pr_reports_none(self, tmp_path, pr):
+        (tmp_path / "fully-implement-102.json").write_text(
+            json.dumps({"phase": "complete", "prNumber": pr}))
+        outcome, got, _reason, _branch = determine_outcome(
+            102, None, container_id=None, state_dir=str(tmp_path),
+        )
+        assert outcome == "complete"
+        assert got == "none"
+
+    def test_numeric_string_pr_is_kept(self, tmp_path):
+        (tmp_path / "fully-implement-102.json").write_text(
+            json.dumps({"phase": "complete", "prNumber": "42"}))
+        _outcome, got, _reason, _branch = determine_outcome(
+            102, None, container_id=None, state_dir=str(tmp_path),
+        )
+        assert got == "42"
+
+
 class TestFeatureBranchRecording:
     """The 4th determine_outcome element carries the story's feature branch."""
 
@@ -1289,6 +1312,25 @@ class TestLaunchStoryResume:
 
         assert self._argv(orch, args_file)[1:3] == ["fully-implement-story", "101 main --resume"]
 
+    def test_failed_sweep_of_a_stopped_container_aborts_the_relaunch(
+            self, tmp_path, monkeypatch, capsys):
+        """The recorded container is stopped, so launch.sh would start a second
+        one. If the sweep that removes the stopped one fails, nothing may be
+        launched on the same folder (a leftover container would sit next to the
+        new one)."""
+        orch, calls, args_file = self._orchestrator(tmp_path, monkeypatch, inspect_running=False)
+        self._preserved_clone(orch)
+        _write_script(orch.script_dir / "teardown.sh",
+                      f'echo "teardown $*" >> "{calls}"\nexit 1\n')
+
+        assert orch.launch_story(101) is False
+
+        assert "launch " not in calls.read_text()
+        assert not args_file.exists()
+        story = orch.sm.get_story(101)
+        assert story["status"] != "active"
+        assert os.path.isdir(story["clonePath"])
+
     def test_missing_skill_file_fails_the_launch_without_starting_the_agent(
             self, tmp_path, monkeypatch, capsys):
         orch, _, args_file = self._orchestrator(tmp_path, monkeypatch, inspect_running=True)
@@ -1774,6 +1816,37 @@ class TestKeepCloneContract:
         os.makedirs(clone)
         orch.sm.update_story(101, containerId=None, **fields)
         return orch, teardown_log, clone
+
+    def test_cleanup_active_keeps_preserved_clone_and_marker(self, tmp_path, monkeypatch):
+        """SIGTERM while a resumed story is active: the container goes, the
+        clone and its marker stay, so the next run can still recover the work."""
+        monkeypatch.setattr("orchestrate_epic.time.sleep", lambda s: None)
+        orch, teardown_log, clone = self._story_with_clone(
+            tmp_path, status="active", transientRetries=1, holdsPreservedWork=True)
+        orch._cleanup_active()
+        assert teardown_log.read_text().strip() == f"{clone} --keep-clone"
+        story = orch.sm.get_story(101)
+        assert story["status"] == "queued"
+        assert story["holdsPreservedWork"] is True
+
+    def test_cleanup_active_removes_clone_without_preserved_work(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("orchestrate_epic.time.sleep", lambda s: None)
+        orch, teardown_log, clone = self._story_with_clone(tmp_path, status="active")
+        orch._cleanup_active()
+        assert teardown_log.read_text().strip() == clone
+        assert orch.sm.get_story(101)["holdsPreservedWork"] is False
+
+    def test_resume_of_a_dead_agent_keeps_preserved_clone_and_marker(self, tmp_path, monkeypatch):
+        """An orchestrator restart finds the resumed agent dead with no usable
+        outcome: requeueing it must not delete the preserved clone either."""
+        monkeypatch.setattr("orchestrate_epic.is_agent_process", lambda pid: False)
+        orch, teardown_log, clone = self._story_with_clone(
+            tmp_path, status="active", transientRetries=1, holdsPreservedWork=True)
+        orch._resume()
+        assert teardown_log.read_text().strip() == f"{clone} --keep-clone"
+        story = orch.sm.get_story(101)
+        assert story["status"] == "queued"
+        assert story["holdsPreservedWork"] is True
 
     def test_final_cleanup_keeps_parked_clone(self, tmp_path):
         orch, teardown_log, clone = self._story_with_clone(
@@ -2849,6 +2922,35 @@ class TestIsAgentProcess:
             proc.kill()
             proc.wait()
             proc.stdout.close()
+
+    def test_non_linux_trusts_the_process_command_not_just_the_pid(self, tmp_path, monkeypatch):
+        """Without /proc a live PID is not enough: a recycled PID belonging to an
+        unrelated process must not keep a dead agent's story active forever."""
+        import orchestrate_epic
+        monkeypatch.setattr(orchestrate_epic, "PROC_ROOT", str(tmp_path / "no-proc"))
+        monkeypatch.setattr(orchestrate_epic.os, "kill", lambda pid, sig: None)
+
+        def ps(command):
+            return subprocess.CompletedProcess([], 0, stdout=command + "\n", stderr="")
+
+        monkeypatch.setattr(orchestrate_epic.subprocess, "run",
+                            lambda *a, **kw: ps("/usr/sbin/cron -f"))
+        assert orchestrate_epic.is_agent_process(4242) is False
+
+        monkeypatch.setattr(orchestrate_epic.subprocess, "run",
+                            lambda *a, **kw: ps("bash /repo/scripts/devcontainer/exec-skill.sh /c skill"))
+        assert orchestrate_epic.is_agent_process(4242) is True
+
+    def test_non_linux_unverifiable_pid_is_treated_as_dead(self, tmp_path, monkeypatch):
+        import orchestrate_epic
+        monkeypatch.setattr(orchestrate_epic, "PROC_ROOT", str(tmp_path / "no-proc"))
+        monkeypatch.setattr(orchestrate_epic.os, "kill", lambda pid, sig: None)
+
+        def no_ps(*a, **kw):
+            raise FileNotFoundError("ps")
+
+        monkeypatch.setattr(orchestrate_epic.subprocess, "run", no_ps)
+        assert orchestrate_epic.is_agent_process(4242) is False
 
     def test_dead_pid_is_not_an_agent(self):
         from orchestrate_epic import is_agent_process

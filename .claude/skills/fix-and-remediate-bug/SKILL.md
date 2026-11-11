@@ -1,7 +1,7 @@
 ---
 name: fix-and-remediate-bug
 description: Fix a single bug with TDD, create PR, then monitor and remediate until stable or escalated. Used by parallel-fix-bugs orchestrator.
-argument-hint: "<bug-ref>"
+argument-hint: "<bug-ref> [<base-branch>]"
 allowed-tools:
   - mcp__taiga-py__*
   - Bash(python -m py_compile *)
@@ -58,7 +58,7 @@ If you would write any other phase (e.g., `"remediating"`, `"fixing"`, `"pr-crea
 
 ## Step 1: Initialize state file
 
-Extract the bug ref from `$ARGUMENTS` (e.g., `12`).
+Extract the bug ref from `$ARGUMENTS` (e.g., `12`). An optional second word is the **base branch** (e.g., `12 epic/46-x`): the branch the fix is cut from, rebased onto and opened against. Without it the base is `main`. Below, `<base>` means that value. `orchestrate_bugs.py` always passes it, because the bugs' base can differ from `main` (`BASE_BRANCH`).
 
 Write the initial state file at `/tmp/fix-and-remediate-<ref>.json`:
 ```json
@@ -88,8 +88,8 @@ If the bug lives only in `../Cholobots-Mobile` and this repo has no `mobile/` di
 
 Never create `.claude/worktrees/...` here: the orchestrator already provided the checkout (a worktree in worktree mode; in container mode the clone itself, whose `upstream` remote points at `MrsBohemian/Cholobots`).
 
-1. `git fetch upstream`
-2. If the current branch is already `fix/<ref>-*`, keep it (resume). Otherwise create the branch from the fetched tip: `git switch -c fix/<ref>-<short-slug> upstream/main` (slug from the issue subject, 3-4 words).
+1. `git fetch upstream <base>` (a single-branch clone only tracks the branch it was cloned from, so name it)
+2. If the current branch is already `fix/<ref>-*`, keep it (resume). Otherwise create the branch from the fetched tip: `git switch -c fix/<ref>-<short-slug> upstream/<base>` (slug from the issue subject, 3-4 words).
 3. Set the issue to `In progress`: `update_issue(project=39, ref=<ref>, status="In progress")`
 
 ### 2c. Investigate and fix
@@ -133,7 +133,7 @@ Fix every failure, then re-run. For a failure you believe is unrelated, follow `
 2. Push the branch to upstream: `git push -u upstream fix/<ref>-<slug>`
 3. Create a PR:
    ```
-   env -u GH_TOKEN gh pr create --repo MrsBohemian/Cholobots --base main --head <branch> --title "fix(#<ref>): <bug subject>" --body-file <body> [--label mark-done-on-merge]
+   env -u GH_TOKEN gh pr create --repo MrsBohemian/Cholobots --base <base> --head <branch> --title "fix(#<ref>): <bug subject>" --body-file <body> [--label mark-done-on-merge]
    ```
    - Always pass `--head <branch>`: in a `launch.sh` clone `git push` may record no tracking ref, and `gh pr create` without `--head` then fails.
    - Add `--label mark-done-on-merge` iff the bug's plan says `**Closes on merge:** eligible` (a missing line counts as not eligible). This skill runs only under the unattended `/parallel-fix-bugs`, so it needs no flag to opt in. See [`../shared/merge-side-effects.md`](../shared/merge-side-effects.md). If the repo rejects the label, create the PR without it.
@@ -219,10 +219,10 @@ Build failure count reached threshold (5+ failures).
 
 #### Exit 13: NEEDS_REBASE
 
-1. Rebase the branch onto upstream main:
+1. Rebase the branch onto the upstream base:
    ```bash
-   git fetch upstream main
-   git rebase upstream/main
+   git fetch upstream <base>
+   git rebase upstream/<base>
    git push --force-with-lease upstream HEAD
    ```
    If rebase conflicts are too complex to resolve, update state to `{"phase": "escalated", "escalationReason": "rebase conflict"}` and go to Step 4.

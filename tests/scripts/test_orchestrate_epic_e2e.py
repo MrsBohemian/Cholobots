@@ -1759,6 +1759,6 @@ class TestBugsOrchestrator:
         assert events[-1] == ("DONE", "2:0:0"), f"Events: {events}\nStderr: {result.stderr}"
         with open(tmp_env["calls_log"]) as f:
             calls = sorted(line.strip() for line in f if line.strip())
-        assert calls == ["fix-and-remediate-bug|201", "fix-and-remediate-bug|202"]
+        assert calls == ["fix-and-remediate-bug|201 main", "fix-and-remediate-bug|202 main"]
         with open(os.path.join(tmp_env["tmp_path"], "parallel-fix-bugs.json")) as f:
             assert json.load(f)["mode"] == "container"

@@ -6,6 +6,8 @@ import sys
 import pytest
 from pathlib import Path
 
+from conftest import make_host_repo
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts", "devcontainer"))
@@ -193,6 +195,40 @@ class TestCompleteOutcomeFromStateFile:
         assert reason is None
 
 
+class TestUnreviewablePrNumberIsNone:
+    """Only a positive integer is a reviewable PR; anything else reads as no PR."""
+
+    @pytest.mark.parametrize("pr", [0, "0", "", " ", "abc", -3, "-3", 1.5, True])
+    def test_complete_with_invalid_pr_reports_none(self, tmp_path, pr):
+        (tmp_path / "fix-and-remediate-102.json").write_text(
+            json.dumps({"phase": "complete", "prNumber": pr}))
+        outcome, got, _reason = determine_outcome(
+            102, None, container_id=None, state_dir=str(tmp_path))
+        assert outcome == "complete"
+        assert got == "none"
+
+    def test_numeric_string_pr_is_kept(self, tmp_path):
+        (tmp_path / "fix-and-remediate-102.json").write_text(
+            json.dumps({"phase": "complete", "prNumber": "42"}))
+        _outcome, got, _reason = determine_outcome(
+            102, None, container_id=None, state_dir=str(tmp_path))
+        assert got == "42"
+
+    def test_zero_pr_complete_is_an_error_not_a_success(self, tmp_path, monkeypatch):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+        orch.sm.update_bug(101, status="active", pid=None)
+        (tmp_path / "fix-and-remediate-101.json").write_text(
+            json.dumps({"phase": "complete", "prNumber": 0}))
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
+        monkeypatch.setattr("orchestrate_bugs.is_agent_process", lambda pid: False)
+
+        orch.check_completions()
+
+        bug = orch.sm.get_bug(101)
+        assert bug["status"] == "error"
+        assert bug["outcome"] == "no_pr_created"
+
+
 class TestEscalatedOutcomeFromStateFile:
     """Reads state file with phase: escalated."""
 
@@ -339,7 +375,7 @@ class TestLaunchFailureRetry:
         orch.sm.init_from_bugs(2, make_bugs([101]), orch.base_dir)
 
         # Mock _teardown to be a no-op
-        monkeypatch.setattr(orch, "_teardown", lambda path: None)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
 
         clone_path = orch.sm.get_bug(101)["clonePath"]
 
@@ -375,7 +411,7 @@ class TestResumeResetDeadProcesses:
             "orchestrate_bugs.is_agent_process", lambda pid: False,
         )
         # Mock _teardown
-        monkeypatch.setattr(orch, "_teardown", lambda path: None)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
         # Mock determine_outcome to return error
         monkeypatch.setattr(
             "orchestrate_bugs.determine_outcome",
@@ -507,7 +543,7 @@ class TestLaunchTimeoutConfiguration:
 
         orch = self._make_orch(tmp_path)
         orch.sm.init_from_bugs(2, make_bugs([801]), orch.base_dir)
-        monkeypatch.setattr(orch, "_teardown", lambda path: None)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
 
         seen = {}
 
@@ -587,7 +623,7 @@ class TestHandleLaunchFailurePersistsContainerIdOnRetry:
             base_branch="main",
         )
         orch.sm.init_from_bugs(2, make_bugs([601]), orch.base_dir)
-        monkeypatch.setattr(orch, "_teardown", lambda path: None)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
 
         clone_path = orch.sm.get_bug(601)["clonePath"]
         orch._handle_launch_failure(
@@ -608,7 +644,7 @@ class TestHandleLaunchFailurePersistsContainerIdOnRetry:
             base_branch="main",
         )
         orch.sm.init_from_bugs(2, make_bugs([602]), orch.base_dir)
-        monkeypatch.setattr(orch, "_teardown", lambda path: None)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
 
         clone_path = orch.sm.get_bug(602)["clonePath"]
         # Simulate attempts already at MAX - 1, then fail once more
@@ -640,6 +676,9 @@ def make_orch(tmp_path, refs, concurrency):
         script_dir=str(tmp_path),
         state_dir=str(tmp_path),
         base_branch="main",
+        # A sandbox host repo whose `main` is current keeps the launch's
+        # base-branch fetch offline and off the developer's own clone.
+        repo_root=make_host_repo(tmp_path / "host-repo", remote="upstream"),
     )
     orch.sm.init_from_bugs(concurrency, make_bugs(refs), orch.base_dir)
     return orch
@@ -695,7 +734,7 @@ class TestCompletionsReapedDuringInFlightLaunch:
 
         orch.child_procs[101] = FinishedProc()
 
-        monkeypatch.setattr(orch, "_teardown", lambda path: None)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
         monkeypatch.setattr(
             orchestrate_bugs, "determine_outcome",
             lambda ref, log_file, container_id=None, state_dir="/tmp": ("complete", "55", None),
@@ -761,7 +800,7 @@ class TestLaunchWorkerClearsThreadRegistryOnException:
 
         orch = make_orch(tmp_path, [101], concurrency=1)
         orch.sm.update_bug(101, status="launching")
-        monkeypatch.setattr(orch, "_teardown", lambda path: None)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
 
         def exploding_launch(ref):
             raise RuntimeError("boom")
@@ -786,7 +825,7 @@ class TestCleanupLaunchingKillsInFlightLaunchProcess:
 
         orch = make_orch(tmp_path, [101], concurrency=1)
         orch.sm.update_bug(101, status="launching")
-        monkeypatch.setattr(orch, "_teardown", lambda path: None)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
 
         proc = sp.Popen(["sleep", "60"], start_new_session=True)
         orch.launch_procs[101] = proc
@@ -896,7 +935,7 @@ class TestWorkerDoesNotDeregisterARetryThread:
     def test_retry_thread_survives_old_workers_finally(self, tmp_path, monkeypatch):
         orch = make_orch(tmp_path, [101], concurrency=1)
         orch.sm.update_bug(101, status="launching")
-        monkeypatch.setattr(orch, "_teardown", lambda path: None)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
 
         retry_thread = object()  # stand-in for the retry's Thread
 
@@ -945,7 +984,7 @@ class TestShutdownDoesNotDeadlockOnProcLock:
     def test_cleanup_runs_while_lock_is_held(self, tmp_path, monkeypatch):
         orch = make_orch(tmp_path, [101], concurrency=1)
         orch.sm.update_bug(101, status="launching")
-        monkeypatch.setattr(orch, "_teardown", lambda path: None)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
 
         # Holding proc_lock is exactly the state the main thread is in when a
         # signal arrives mid-registration; cleanup must still acquire it.
@@ -967,7 +1006,7 @@ class TestCleanupJoinsSkipUnstartedThreads:
 
         orch = make_orch(tmp_path, [101], concurrency=1)
         orch.sm.update_bug(101, status="launching")
-        monkeypatch.setattr(orch, "_teardown", lambda path: None)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
 
         # Registered by fill_slots, signal arrived before t.start().
         orch.launch_threads[101] = threading.Thread(target=lambda: None)
@@ -985,7 +1024,7 @@ class TestCleanupSweepsWorkersThatTurnActiveDuringShutdown:
 
         orch = make_orch(tmp_path, [101], concurrency=1)
         orch.sm.update_bug(101, status="launching")
-        monkeypatch.setattr(orch, "_teardown", lambda path: None)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
 
         killed = []
 
@@ -1052,7 +1091,7 @@ class TestOrchestratorReadsHostStateFromStateDir:
         monkeypatch.setattr(
             "orchestrate_bugs.is_agent_process", lambda pid: False,
         )
-        monkeypatch.setattr(orch, "_teardown", lambda path: None)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
         return orch
 
     def test_check_completions_reads_completion_file_from_state_dir(
@@ -1171,6 +1210,9 @@ class TestBugAgentRunsThroughExecSkill:
             return ("CONTAINER_ID=abc123\n", 0) if script_name == "launch.sh" else ("", 0)
 
         monkeypatch.setattr(orch, "_run_script", scripts)
+        # subprocess.Popen is stubbed globally below, which would also catch the
+        # base-branch git calls; they have their own tests.
+        monkeypatch.setattr(orch, "_ensure_base_reachable", lambda base: True)
         popen_calls = []
 
         class FakeProc:
@@ -1186,6 +1228,200 @@ class TestBugAgentRunsThroughExecSkill:
 
         assert popen_calls == [[
             str(tmp_path / "exec-skill.sh"), bug["clonePath"],
-            "fix-and-remediate-bug", "101", "--log", bug["logFile"],
+            "fix-and-remediate-bug", "101 main", "--log", bug["logFile"],
         ]]
         assert orch.sm.get_bug(101)["containerId"] == "abc123"
+
+
+# ── PR #29 review: base branch, teardown failures, resume mapping ──
+
+
+def _git(cwd, *args):
+    import subprocess
+
+    result = subprocess.run(
+        ["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid", *args],
+        cwd=str(cwd), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"git {' '.join(args)}: {result.stderr}"
+    return result.stdout.strip()
+
+
+class TestBaseBranchIsFetchedAndPropagated:
+    """launch.sh clones the host's local branch, so the orchestrator has to make
+    that branch current (or exist at all) first, then tell the worker its base."""
+
+    def _launch_stubs(self, orch, monkeypatch):
+        ran = []
+
+        def scripts(script_name, *args, timeout=60, ref=None):
+            ran.append(script_name)
+            return ("CONTAINER_ID=abc123\n", 0) if script_name == "launch.sh" else ("", 0)
+
+        monkeypatch.setattr(orch, "_run_script", scripts)
+        return ran
+
+    def test_unreachable_base_fails_the_launch_before_launch_sh(self, tmp_path, monkeypatch):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+        orch.sm.update_bug(101, status="launching")
+        ran = self._launch_stubs(orch, monkeypatch)
+        monkeypatch.setattr(orch, "_ensure_base_reachable", lambda base: False)
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
+
+        assert orch.launch_bug(101) is False
+
+        assert ran == []
+        bug = orch.sm.get_bug(101)
+        assert bug["status"] == "queued"
+        assert bug["launchAttempts"] == 1
+
+    def test_the_configured_base_is_what_gets_checked_and_cloned(self, tmp_path, monkeypatch):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+        orch.base_branch = "epic/46-x"
+        orch.sm.update_bug(101, status="launching")
+        checked, launch_args = [], []
+
+        def scripts(script_name, *args, timeout=60, ref=None):
+            if script_name == "launch.sh":
+                launch_args.append(args)
+                return "CONTAINER_ID=abc123\n", 0
+            return "", 0
+
+        monkeypatch.setattr(orch, "_run_script", scripts)
+        monkeypatch.setattr(orch, "_ensure_base_reachable", lambda base: checked.append(base) or True)
+        bug = orch.sm.get_bug(101)
+        skill = Path(bug["clonePath"]) / ".claude/skills/fix-and-remediate-bug/SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("skill")
+        popen_calls = []
+
+        class FakeProc:
+            pid = 4242
+
+        monkeypatch.setattr(
+            "orchestrate_bugs.subprocess.Popen",
+            lambda cmd, **kw: popen_calls.append(cmd) or FakeProc(),
+        )
+
+        assert orch.launch_bug(101) is True
+
+        assert checked == ["epic/46-x"]
+        assert launch_args == [(bug["clonePath"], "epic/46-x")]
+        # The worker's second argument is the base, so it branches and opens
+        # its PR against it instead of falling back to upstream/main.
+        assert popen_calls[0][3] == "101 epic/46-x"
+
+    def test_a_stale_local_base_is_refreshed_from_the_remote(self, tmp_path):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+        host = orch.repo_root
+        remote_url = _git(host, "remote", "get-url", "upstream")
+        # The branch exists only on the remote; the host has never seen it.
+        seed = tmp_path / "seed2"
+        _git(tmp_path, "clone", "--quiet", remote_url, str(seed))
+        _git(seed, "switch", "-c", "epic/46-x")
+        _git(seed, "commit", "--allow-empty", "-m", "epic work")
+        _git(seed, "push", "--quiet", "origin", "epic/46-x")
+
+        assert orch._ensure_base_reachable("epic/46-x") is True
+        assert _git(host, "rev-parse", "refs/heads/epic/46-x") == _git(seed, "rev-parse", "HEAD")
+
+        # The remote moves on; the local head must follow, not stay stale.
+        _git(seed, "commit", "--allow-empty", "-m", "more epic work")
+        _git(seed, "push", "--quiet", "origin", "epic/46-x")
+        assert orch._ensure_base_reachable("epic/46-x") is True
+        assert _git(host, "rev-parse", "refs/heads/epic/46-x") == _git(seed, "rev-parse", "HEAD")
+
+    def test_a_base_missing_from_the_remote_is_not_reachable(self, tmp_path):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+
+        assert orch._ensure_base_reachable("no/such-branch") is False
+
+    def test_a_stale_checked_out_base_is_refused(self, tmp_path):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+        orch.repo_root = make_host_repo(tmp_path / "stale", stale_main=True, remote="upstream")
+
+        assert orch._ensure_base_reachable("main") is False
+
+
+class TestTeardownReportsSuccess:
+    def test_teardown_returns_false_when_the_script_fails(self, tmp_path):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+        script = tmp_path / "teardown.sh"
+        script.write_text("#!/usr/bin/env bash\nexit 1\n")
+        script.chmod(0o755)
+
+        assert orch._teardown(str(tmp_path / "clone")) is False
+
+    def test_teardown_returns_true_when_the_script_succeeds(self, tmp_path):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+        script = tmp_path / "teardown.sh"
+        script.write_text("#!/usr/bin/env bash\nexit 0\n")
+        script.chmod(0o755)
+
+        assert orch._teardown(str(tmp_path / "clone")) is True
+
+
+class TestFailedTeardownBlocksARetry:
+    """A retry over an uncleaned clone binds a second container to the same
+    folder, so a launch failure whose cleanup failed is terminal."""
+
+    def test_launch_failure_with_failed_cleanup_is_not_requeued(self, tmp_path, monkeypatch):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+        orch.sm.update_bug(101, status="launching")
+        clone = orch.sm.get_bug(101)["clonePath"]
+        monkeypatch.setattr(orch, "_teardown", lambda path: False)
+
+        orch._handle_launch_failure(101, clone, "boom", container_id="abc123")
+
+        bug = orch.sm.get_bug(101)
+        assert bug["status"] == "error"
+        assert bug["outcome"] == "launch_failed"
+        # Kept so the final cleanup can still force-remove the leak.
+        assert bug["containerId"] == "abc123"
+        assert bug["clonePath"] == clone
+        assert orch.sm.next_queued_ref() is None
+
+    def test_resume_of_a_dead_agent_with_failed_cleanup_is_not_requeued(self, tmp_path, monkeypatch):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+        orch.sm.update_bug(101, status="active", pid=99999, containerId="abc123")
+        monkeypatch.setattr("orchestrate_bugs.is_agent_process", lambda pid: False)
+        monkeypatch.setattr(
+            "orchestrate_bugs.determine_outcome",
+            lambda ref, log_file, container_id=None, state_dir="/tmp": ("error", "none", None),
+        )
+        monkeypatch.setattr(orch, "_teardown", lambda path: False)
+
+        orch._resume()
+
+        assert orch.sm.get_bug(101)["status"] == "error"
+        assert orch.sm.next_queued_ref() is None
+
+    def test_resume_of_a_launching_bug_with_failed_cleanup_is_not_requeued(self, tmp_path, monkeypatch):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+        orch.sm.update_bug(101, status="launching")
+        monkeypatch.setattr(orch, "_teardown", lambda path: False)
+
+        orch._resume()
+
+        assert orch.sm.get_bug(101)["status"] == "error"
+        assert orch.sm.next_queued_ref() is None
+
+
+class TestResumeMapsAlreadyClosedToComplete:
+    def test_already_closed_on_resume_counts_as_complete(self, tmp_path, monkeypatch):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+        orch.sm.update_bug(101, status="active", pid=99999)
+        monkeypatch.setattr("orchestrate_bugs.is_agent_process", lambda pid: False)
+        monkeypatch.setattr(
+            "orchestrate_bugs.determine_outcome",
+            lambda ref, log_file, container_id=None, state_dir="/tmp":
+                ("already_closed", "none", None),
+        )
+        monkeypatch.setattr(orch, "_teardown", lambda path: True)
+
+        orch._resume()
+
+        bug = orch.sm.get_bug(101)
+        assert bug["status"] == "complete"
+        assert bug["outcome"] == "already_closed"
+        assert orch.sm.count_status("complete") == 1

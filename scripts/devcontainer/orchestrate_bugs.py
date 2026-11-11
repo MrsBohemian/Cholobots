@@ -16,7 +16,8 @@ Environment variables:
   ORCHESTRATE_STATE_DIR   Override directory for the bug state file and the host-side
                           per-bug fix-and-remediate-<ref>.json files (default: /tmp)
   POLL_INTERVAL           Seconds between poll cycles (default: 30)
-  BASE_BRANCH             Branch to clone for each bug devcontainer (default: main)
+  BASE_BRANCH             Branch to clone for each bug devcontainer and open PRs against (default: main);
+                          fetched from the remote before each launch and passed to the worker
   ORCHESTRATE_LAUNCH_TIMEOUT  Seconds allowed for launch.sh before giving up
                           (default: 1800 — a cold Docker-in-Docker launch pulls
                           images and provisions services, which exceeds 600s)
@@ -183,9 +184,10 @@ class StateManager:
             self.save()
 
 
-# Re-export is_agent_process from orchestrate_epic (same logic, avoids duplication)
+# Shared with orchestrate_epic (same logic, avoids duplication): the PID check,
+# PR-number validation and the host-repo base-branch resolution.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from orchestrate_epic import is_agent_process  # noqa: E402
+from orchestrate_epic import HostRepoBaseMixin, is_agent_process, valid_pr_number  # noqa: E402
 
 
 def _classify_phase(phase, pr):
@@ -234,8 +236,7 @@ def determine_outcome(ref, log_file, container_id=None, state_dir="/tmp"):
                 phase = bug_state.get("phase", "")
                 pr = bug_state.get("prNumber")
 
-                if pr is not None and str(pr) != "null":
-                    pr_number = str(pr)
+                pr_number = valid_pr_number(pr) or "none"
 
                 classified, reason = _classify_phase(phase, pr)
                 if classified is not None:
@@ -260,8 +261,7 @@ def determine_outcome(ref, log_file, container_id=None, state_dir="/tmp"):
                 phase = bug_state.get("phase", "")
                 pr = bug_state.get("prNumber")
 
-                if pr is not None and str(pr) != "null":
-                    pr_number = str(pr)
+                pr_number = valid_pr_number(pr) or "none"
 
                 classified, reason = _classify_phase(phase, pr)
                 if classified is not None:
@@ -289,15 +289,20 @@ def determine_outcome(ref, log_file, container_id=None, state_dir="/tmp"):
     return outcome, pr_number, escalation_reason
 
 
-class Orchestrator:
+class Orchestrator(HostRepoBaseMixin):
     """Main orchestrator state machine for parallel bug fixing."""
 
-    def __init__(self, concurrency, bugs_file, script_dir, state_dir, base_branch):
+    def __init__(self, concurrency, bugs_file, script_dir, state_dir, base_branch,
+                 repo_root=None):
         self.concurrency = concurrency
         self.bugs_file = bugs_file
         self.script_dir = Path(script_dir)
         self.state_dir = Path(state_dir)
         self.base_branch = base_branch
+        # The host repo launch.sh clones from (and _run_git targets): by
+        # default the checkout this script lives in, not the cwd.
+        self.repo_root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
+        self.git_lock = threading.RLock()
         self.launch_timeout = int(os.environ.get("ORCHESTRATE_LAUNCH_TIMEOUT", "1800"))
         self.shutting_down = False
         self.child_procs = {}     # ref -> Popen object (the agent)
@@ -393,8 +398,10 @@ class Orchestrator:
         for bug in self.sm.bugs_with_status("active"):
             ref = bug["ref"]
             clone_path = bug["clonePath"]
-            self._teardown(clone_path)
-            self.sm.update_bug(ref, status="queued", pid=None)
+            # On a failed cleanup the bug keeps its status: the next run's
+            # _resume sweeps it again instead of launching over the leftover.
+            if self._teardown(clone_path):
+                self.sm.update_bug(ref, status="queued", pid=None)
 
     def _cleanup_launching(self):
         """Stop in-flight launches and reset those bugs to queued.
@@ -427,18 +434,51 @@ class Orchestrator:
         for bug in self.sm.bugs_with_status("launching"):
             ref = bug["ref"]
             clone_path = bug["clonePath"]
-            self._teardown(clone_path)
-            self.sm.update_bug(ref, status="queued")
+            if self._teardown(clone_path):
+                self.sm.update_bug(ref, status="queued")
 
     def _teardown(self, clone_path):
-        """Run teardown.sh for a clone path, ignoring errors."""
+        """Run teardown.sh for a clone path. Returns True when it succeeded.
+
+        A failure is logged, not raised, but callers must not requeue a bug
+        whose cleanup failed: a retry would bind a second container to the
+        same clone folder.
+        """
         try:
-            subprocess.run(
+            result = subprocess.run(
                 [str(self.script_dir / "teardown.sh"), clone_path],
-                capture_output=True, timeout=30,
+                capture_output=True, text=True, timeout=30,
             )
-        except (subprocess.TimeoutExpired, OSError):
-            pass
+        except subprocess.TimeoutExpired:
+            log(f"WARNING: teardown.sh timed out for {clone_path}")
+            return False
+        except OSError as e:
+            log(f"WARNING: teardown.sh could not be run for {clone_path}: {e}")
+            return False
+        if result.returncode != 0:
+            log(f"WARNING: teardown.sh failed for {clone_path} "
+                f"(exit {result.returncode}): {(result.stderr or '').strip()}")
+            return False
+        return True
+
+    def _requeue_after_teardown(self, ref, clone_path, **fields):
+        """Tear the clone down and requeue the bug, only if the cleanup worked.
+
+        On a failed cleanup the bug becomes a terminal `teardown_failed` error
+        instead, keeping its clone path and container id so the final cleanup
+        can still force-remove the leak. Returns True when it was requeued.
+        """
+        if self._teardown(clone_path):
+            self.sm.update_bug(ref, status="queued", **fields)
+            return True
+        log(f"Bug {ref}: cleanup of {clone_path} failed; not requeueing "
+            f"(a retry would bind a second container to the same folder)")
+        self.sm.update_bug(
+            ref, status="error", outcome="teardown_failed",
+            completedAt=utcnow_iso(), pid=None,
+        )
+        emit(f"COMPLETED:{ref}:teardown_failed:none")
+        return False
 
     def _final_cleanup(self):
         """Defense-in-depth: iterate ALL bugs and ensure their containers are stopped/removed."""
@@ -591,9 +631,12 @@ class Orchestrator:
                 except (ValueError, TypeError):
                     log(f"Bug {ref}: non-integer prNumber '{pr}', treating as None")
                     pr_value = None
+                # already_closed is terminal success (no PR needed): status
+                # "complete" so it counts in the totals, outcome kept distinct.
+                status = "complete" if outcome == "already_closed" else outcome
                 self.sm.update_bug(
                     ref,
-                    status=outcome, outcome=outcome,
+                    status=status, outcome=outcome,
                     completedAt=utcnow_iso(), prNumber=pr_value, pid=None,
                 )
                 self._teardown(bug["clonePath"])
@@ -606,16 +649,13 @@ class Orchestrator:
                 )
                 self._teardown(bug["clonePath"])
                 emit(f"COMPLETED:{ref}:error:{pr}")
-            else:
-                self._teardown(bug["clonePath"])
-                self.sm.update_bug(ref, status="queued", pid=None)
+            elif self._requeue_after_teardown(ref, bug["clonePath"], pid=None):
                 log(f"Bug {ref} reset to queued")
 
         for bug in list(self.sm.bugs_with_status("launching")):
             ref = bug["ref"]
-            self._teardown(bug["clonePath"])
-            self.sm.update_bug(ref, status="queued")
-            log(f"Bug {ref} (launching) reset to queued")
+            if self._requeue_after_teardown(ref, bug["clonePath"]):
+                log(f"Bug {ref} (launching) reset to queued")
 
         active = self.sm.count_status("active")
         queued = self.sm.count_status("queued")
@@ -628,14 +668,21 @@ class Orchestrator:
         """Handle a launch failure: retry if under limit, otherwise mark as terminal error."""
         bug = self.sm.get_bug(ref)
         attempts = bug.get("launchAttempts", 0) + 1
-        self._teardown(clone_path)
+        cleaned = self._teardown(clone_path)
 
         # Persist containerId whenever we have one so _final_cleanup can
         # force-remove the leak if teardown.sh silently failed. Applies to
         # both retry and terminal-error paths.
         extra = {"containerId": container_id} if container_id else {}
 
-        if attempts < MAX_LAUNCH_ATTEMPTS:
+        if not cleaned:
+            # A container may still be bound to this clone. A retry would bind
+            # a second one to the same folder, so the bug is terminal and the
+            # clone path and container id are kept for the final cleanup.
+            log(f"Cleanup failed for bug {ref}; not retrying, clone kept at {clone_path}")
+            reason = f"{reason}; cleanup failed, container may still be running"
+
+        if cleaned and attempts < MAX_LAUNCH_ATTEMPTS:
             log(f"Launch attempt {attempts}/{MAX_LAUNCH_ATTEMPTS} failed for bug {ref}, will retry")
             self.sm.update_bug(ref, status="queued", launchAttempts=attempts, **extra)
         else:
@@ -660,6 +707,17 @@ class Orchestrator:
         bug = self.sm.get_bug(ref)
         clone_path = bug["clonePath"]
         log_file = bug["logFile"]
+
+        # launch.sh clones the host repo's local `<base>` head as-is, so make it
+        # current (or create it, for a branch that only exists on the remote)
+        # first; otherwise the bug runs against stale code or every launch fails.
+        if not self._ensure_base_reachable(self.base_branch):
+            # A shutdown can abort the fetch mid-call; that is not the bug's fault.
+            if self.shutting_down:
+                return False
+            return self._handle_launch_failure(
+                ref, clone_path, f"base branch {self.base_branch} not reachable",
+            )
 
         # Launch devcontainer
         try:
@@ -728,7 +786,9 @@ class Orchestrator:
 
         cmd = [
             str(Path(self.script_dir) / "exec-skill.sh"), clone_path,
-            "fix-and-remediate-bug", str(ref), "--log", log_file,
+            # The second word is the base the worker branches from and opens its
+            # PR against; without it the skill falls back to upstream/main.
+            "fix-and-remediate-bug", f"{ref} {self.base_branch}", "--log", log_file,
         ]
         try:
             proc = subprocess.Popen(
@@ -925,7 +985,10 @@ def main():
     state_dir = os.environ.get("ORCHESTRATE_STATE_DIR", "/tmp")
     base_branch = os.environ.get("BASE_BRANCH", "main")
 
-    orchestrator = Orchestrator(concurrency, bugs_file, script_dir, state_dir, base_branch)
+    orchestrator = Orchestrator(
+        concurrency, bugs_file, script_dir, state_dir, base_branch,
+        repo_root=os.environ.get("ORCHESTRATE_REPO_ROOT"),
+    )
     orchestrator.run()
 
 

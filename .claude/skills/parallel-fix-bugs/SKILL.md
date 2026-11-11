@@ -180,7 +180,7 @@ When no bug is `queued`, `launching` or `active`: set `phase = "complete"` and p
 
 1. `mkdir -p /tmp/parallel-fix-bugs`.
 2. Write `selected` to `/tmp/parallel-fix-bugs/bugs-input.json` as a JSON array of `{"ref", "id", "subject"}` objects, in `selected` order. The orchestrator launches queued bugs in input order, so the array order is the only priority signal it receives. Also write `/tmp/parallel-fix-bugs/sweep-options.json` as `{"options", "rawFlags", "urgentRefs"}`.
-3. Run the orchestrator **detached via nohup** so it survives session timeouts. Export `BASE_BRANCH=<branch>` first when the bugs' base is not `main`:
+3. Run the orchestrator **detached via nohup** so it survives session timeouts. Export `BASE_BRANCH=<branch>` first when the bugs' base is not `main` (the orchestrator fetches it from `upstream` into the host repo before each launch, refuses a stale checked-out copy, and passes it to every worker as the second argument of `fix-and-remediate-bug`):
    ```bash
    nohup python3 scripts/devcontainer/orchestrate_bugs.py <N> /tmp/parallel-fix-bugs/bugs-input.json \
      > /tmp/parallel-fix-bugs/orchestrator.log 2>&1 &
