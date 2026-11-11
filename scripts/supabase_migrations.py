@@ -78,10 +78,7 @@ def lint_against_base(changes, base_names):
 
 
 def lint_modes(entries):
-    """Errors for tracked migration entries that are not regular files.
-
-    `entries` are (mode, name) pairs; any mode other than a regular file's is an error.
-    """
+    """Errors for (mode, name) entries that are not regular files."""
     return [
         f"{name}: must be a regular file (mode {mode}), not a symlink, directory or submodule"
         for mode, name in entries
@@ -129,7 +126,6 @@ def cmd_lint(args):
         changes = [tuple(line.split("\t")) for line in diff.stdout.splitlines() if line.strip()]
         errors += lint_against_base(changes, base_names)
 
-    # Migration entries must be regular files, not symlinks, directories or submodules.
     entries = []
     for name in os.listdir(args.dir):
         mode = os.lstat(os.path.join(args.dir, name)).st_mode
