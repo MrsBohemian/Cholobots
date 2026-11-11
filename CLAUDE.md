@@ -21,7 +21,7 @@ python cholobots.py                  # same as the Procfile worker
 
 `cholobots.py` calls `bot.run()` only under `if __name__ == "__main__":`, but importing it still imports `config` (which raises without the env vars) and runs `create_client` in three bot modules, so tests never import it. For static checks use `python -m py_compile cholobots.py config.py db/database.py bots/*.py`.
 
-Lint is ruff, configured in `ruff.toml` (rules `E4`, `E7`, `E9`, `F`; per-file exceptions listed there with reasons) and run with `ruff check .` or the pre-commit hook; `ruff format` is not enforced. The bot unit-test harness (#34) and CI (#35) are still missing. The Supabase schema is not in the repo; column names must be inferred from the queries in each bot module.
+Lint is ruff, configured in `ruff.toml` (rules `E4`, `E7`, `E9`, `F`; per-file exceptions listed there with reasons) and run with `ruff check .` or the pre-commit hook; `ruff format` is not enforced. The bot has no unit tests or CI yet. The Supabase schema is not in the repo; column names must be inferred from the queries in each bot module.
 
 ## Agent pipeline
 

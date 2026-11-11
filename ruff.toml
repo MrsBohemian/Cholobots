@@ -1,14 +1,14 @@
-# Lint baseline for Cholobots (story #33). Formatting (ruff format) is not enforced yet.
+# Lint rules for Cholobots. `ruff format` is not enforced.
 target-version = "py314"
 
 [lint]
-# Explicit, because ruff 0.17's built-in default is far broader (715 findings on this repo).
+# Explicit, because ruff's built-in default is much broader.
 select = ["E4", "E7", "E9", "F"]
 
 [lint.per-file-ignores]
 # Imports config after building the Supabase client; reordering would load .env first and change credentials.
 "db/database.py" = ["E402"]
-# One-line if/semicolon statements in the lead-capture block; split them in a later chismebot change.
+# One-line if/semicolon statements in the lead-capture block.
 "bots/chismebot.py" = ["E701", "E702"]
 # Script tests put scripts/ on sys.path before importing the module under test.
 "tests/scripts/*.py" = ["E402"]

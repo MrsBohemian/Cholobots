@@ -1,5 +1,5 @@
 # ABOUTME: Static checks on the cholobots.py entry point, without importing it.
-# ABOUTME: Importing cholobots connects to Discord, so these tests read its AST instead.
+# ABOUTME: Importing cholobots needs config env vars and builds Supabase clients, so read its AST.
 import ast
 from pathlib import Path
 
