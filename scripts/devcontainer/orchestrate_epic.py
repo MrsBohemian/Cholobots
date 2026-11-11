@@ -744,9 +744,9 @@ class HostRepoBaseMixin:
         The heads the orchestrator must not rewrite are the ones checked out
         in the host repo or in one of its linked worktrees (worktree mode
         leaves a base branch checked out in one) — git refuses to fetch into
-        them anyway. Those are verified instead: the remote tip must already be
-        contained in the local head, otherwise the launch fails loudly rather
-        than cloning a stale base.
+        them anyway. Those are verified instead: the local head must equal the
+        remote tip, otherwise the launch fails loudly rather than cloning a
+        stale base or unpushed host commits.
 
         Returns True if `base` is (or was made) reachable and current, False
         otherwise.
@@ -793,7 +793,7 @@ class HostRepoBaseMixin:
         return branches
 
     def _verify_checked_out_base(self, base):
-        """Confirm a checked-out `base` already contains <remote>/<base>. Used
+        """Confirm a checked-out `base` is exactly at <remote>/<base>. Used
         instead of a fetch, which git refuses for a branch checked out in the
         host repo or any of its worktrees. Returns True if it is current,
         False otherwise.
@@ -807,19 +807,24 @@ class HostRepoBaseMixin:
             log(f"Could not fetch base branch {base}: {(fetch.stderr or '').strip()}")
             return False
 
+        # launch.sh clones the local head, so the head must be exactly the
+        # remote tip. Containing it is not enough: a host branch with
+        # local-only commits would carry that unpushed work into every
+        # generated branch, while the PR targets the remote base.
         try:
-            contains = self._run_git(
-                "merge-base", "--is-ancestor", "FETCH_HEAD", f"refs/heads/{base}"
-            )
+            remote_tip = self._run_git("rev-parse", "FETCH_HEAD")
+            local_tip = self._run_git("rev-parse", f"refs/heads/{base}")
         except (subprocess.TimeoutExpired, OSError) as e:
             log(f"Could not compare base branch {base} with {REMOTE}: {e}")
             return False
-        if contains.returncode != 0:
+        if (remote_tip.returncode != 0 or local_tip.returncode != 0
+                or (remote_tip.stdout or "").strip() != (local_tip.stdout or "").strip()):
             log(
                 f"Base branch {base} is checked out in the host repo (or one of "
-                f"its worktrees) and does not "
-                f"contain {REMOTE}/{base}; refusing to launch from a stale base. "
-                f"Check out a different branch, or update {base}, and re-run."
+                f"its worktrees) and is not at {REMOTE}/{base} (behind it, or "
+                f"ahead with unpushed commits); refusing to launch from a base "
+                f"that differs from the remote. Check out a different branch, "
+                f"or bring {base} level with {REMOTE}/{base}, and re-run."
             )
             return False
         return True

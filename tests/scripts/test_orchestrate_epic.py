@@ -1709,7 +1709,8 @@ class TestBaseReachability:
         assert orch._ensure_base_reachable("main") is True
         assert ("fetch", "upstream", "main") in calls
         assert not any(call[:3] == ("fetch", "upstream", "+main:main") for call in calls)
-        assert ("merge-base", "--is-ancestor", "FETCH_HEAD", "refs/heads/main") in calls
+        assert ("rev-parse", "FETCH_HEAD") in calls
+        assert ("rev-parse", "refs/heads/main") in calls
 
     def test_base_checked_out_in_a_linked_worktree_is_verified_not_fetched_into(
         self, tmp_path, monkeypatch
@@ -1727,21 +1728,26 @@ class TestBaseReachability:
             call[:3] == ("fetch", "upstream", "+feature/foo-101:feature/foo-101")
             for call in calls
         )
-        assert (
-            "merge-base", "--is-ancestor", "FETCH_HEAD", "refs/heads/feature/foo-101"
-        ) in calls
+        assert ("rev-parse", "FETCH_HEAD") in calls
+        assert ("rev-parse", "refs/heads/feature/foo-101") in calls
 
     def test_stale_checked_out_base_fails_the_launch(self, tmp_path, monkeypatch, capsys):
         """when the base is checked out and behind upstream we cannot
         refresh it, so the launch fails loudly instead of cloning a stale base."""
         orch, _ = _make_orchestrator(tmp_path, refs=(101,), base_branch="main")
-        self._stub_git(
-            orch, monkeypatch, checked_out=("main",),
-            results={"merge-base": SimpleNamespace(returncode=1, stdout="", stderr="")},
-        )
+        self._stub_git(orch, monkeypatch, checked_out=("main",))
+        stub = orch._run_git
+
+        def differing_tips(*args, timeout=15):
+            if args[0] == "rev-parse":
+                tip = "a" * 40 if args[1] == "FETCH_HEAD" else "b" * 40
+                return SimpleNamespace(returncode=0, stdout=tip + "\n", stderr="")
+            return stub(*args, timeout=timeout)
+
+        monkeypatch.setattr(orch, "_run_git", differing_tips)
 
         assert orch._ensure_base_reachable("main") is False
-        assert "refusing to launch from a stale base" in capsys.readouterr().err
+        assert "refusing to launch from a base that differs" in capsys.readouterr().err
 
     def test_unfetchable_base_fails_the_launch(self, tmp_path, monkeypatch, capsys):
         orch, mock_bin = _make_orchestrator(tmp_path, refs=(101, 102), base_branch="main")
@@ -1786,6 +1792,16 @@ class TestHostRepoRoot:
         orch, _ = _make_orchestrator(tmp_path, refs=(101,), base_branch="main")
 
         assert orch._ensure_base_reachable("main") is True
+
+    def test_checked_out_base_ahead_of_upstream_is_refused(self, tmp_path):
+        """launch.sh clones the local head, so a host branch carrying commits
+        upstream does not have would leak them into every generated branch."""
+        from conftest import _git
+
+        orch, _ = _make_orchestrator(tmp_path, refs=(101,), base_branch="main")
+        _git("commit", "--quiet", "--allow-empty", "-m", "unpushed host work", cwd=orch.repo_root)
+
+        assert orch._ensure_base_reachable("main") is False
 
     def test_stale_checked_out_base_in_repo_root_is_refused(self, tmp_path):
         orch, _ = _make_orchestrator(tmp_path, refs=(101,), base_branch="main")
