@@ -41,4 +41,4 @@ A non-zero exit means nothing was posted. Report the exit code and the stderr me
 
 ## Note
 
-The pass cap and the one-review-per-head-SHA guard live inside `scripts/codex-review-pr.sh`; callers must not track passes themselves. Codex is the only reviewer: GitHub runs no review or CI on push yet (CI arrives with story #35).
+The pass cap and the one-review-per-head-SHA guard live inside `scripts/codex-review-pr.sh`; callers must not track passes themselves. Codex is the only reviewer; GitHub Actions runs the `checks` and `integration` workflows on the PR, but no review.

@@ -27,7 +27,9 @@ tests/
 
 Importing the wrong thing has side effects:
 
-- `cholobots.py` calls `bot.run()` at import. **Never import it in a test.**
+- `cholobots.py` guards `bot.run()` with `if __name__ == "__main__":`, but importing it still imports
+  `config` and every bot module and builds the bot. **Never import it in a test**; read its source
+  with `ast` instead (`tests/unit/test_cholobots_entrypoint.py`).
 - `config.py` runs `load_dotenv(override=True)`, so a developer's `.env` beats the test
   environment, and it raises without `DISCORD_TOKEN`/`OPENAI_API_KEY`.
 - `bots/chismebot.py`, `bots/guardabot.py` and `bots/crudobot.py` call `create_client` at import;
@@ -59,11 +61,29 @@ The client is synchronous and every call is a builder chain ending in `.execute(
 
 ## Integration against local Supabase
 
-- Requires the local stack from story #47 (`supabase start`) and the baseline migration (#32).
-  Tests are marked `@pytest.mark.integration` and skip with a clear reason when
-  `SUPABASE_URL` does not point at `localhost`/`127.0.0.1`, so production can never be hit.
-- Seed through fixtures (story #48) that insert rows and delete them on teardown; give every seeded
-  row a unique marker (for example a `test-<uuid>` name) so cleanup cannot touch other data.
+- Needs the local stack with migrations and seed (`make db-up`). Run `make test-integration`: it
+  exports `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_DB_URL` from `supabase status`
+  (values you already exported win), sets `CHOLOBOTS_INTEGRATION_REQUIRED=1` and runs
+  `pytest -m integration tests/integration`.
+- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are required; `SUPABASE_DB_URL` defaults to
+  `postgresql://postgres:postgres@127.0.0.1:54322/postgres`. `tests/integration/local_guard.py`
+  refuses any non-loopback host, so the hosted project is never reached. Without the env the tests
+  skip; with `CHOLOBOTS_INTEGRATION_REQUIRED=1` a missing env or non-local URL fails the session.
+- Before each test the harness truncates every `public` table (`RESTART IDENTITY CASCADE`) over a
+  direct Postgres connection and replays `supabase/seed.sql`, so tests do not clean up after
+  themselves. Create the rows a test needs with the `factories` fixture; do not rely on seed rows
+  beyond what the smoke test pins.
+- An autouse fixture monkeypatches the `supabase` attribute of each bot module and `db.database`
+  to one local-stack client. Bot modules are imported with dummy `DISCORD_TOKEN`/`OPENAI_API_KEY`,
+  `dotenv.load_dotenv` is a no-op, `urllib.request.urlopen` raises, and OpenAI is faked by
+  patching `crudobot.parse_receipt_with_openai`.
+- `metichebot.local_now` is fixed to 2031-01-15 10:00 America/Chicago so seeded "today" rows never
+  collide; call the `chicago_clock` fixture with another datetime to move it.
+- Open bugs are strict xfails: `@pytest.mark.xfail(strict=True, raises=AssertionError,
+  reason="bug #N open: ...")`. The fix makes the test XPASS and fail, so the fix PR removes the
+  marker. `raises=AssertionError` keeps harness errors from being counted as the expected failure.
+  Each module also has a non-xfail contract test so a broken harness cannot hide behind xfails.
+- Helpers are in `tests/integration/fakes.py`.
 
 ## Driving a discord.py command without a gateway
 
@@ -71,14 +91,18 @@ The client is synchronous and every call is a builder chain ending in `.execute(
   `commands.Bot(command_prefix="!", intents=discord.Intents.default())`, call the register
   function, then fetch the command with `bot.get_command("crudoclose")` and await its callback:
   `await cmd.callback(ctx, *args)`. Never call `bot.run()` or `bot.start()`.
-- `ctx` is a fake with `author` (with `id`, `name`), `channel` (with `id`), `guild`, and an async
-  `send()` that records messages and embeds. `ctx.bot` is the test bot.
-- Prompts that call `bot.wait_for("message", check=...)`: monkeypatch `bot.wait_for` with an async
-  function that pops scripted replies (fake messages with `content`, `author`, `channel`,
-  `attachments=[]`) and applies the `check` to each, so a reply from the wrong user or channel is
-  rejected as it would be live.
-- Listeners (`on_message`) are tested by calling the registered listener coroutine with a fake
-  message. Overlap between listeners stays a manual-test concern until story #23.
+- `ctx` is a `FakeContext` (from the `make_ctx(author_id, channel_id)` fixture) with `author`,
+  `channel`, `guild` and an async `send()` that records messages and embeds. Vueltabot is a Cog:
+  `await bot.add_cog(VueltaBot(bot))`, then `cmd.callback(cog, ctx, ...)`.
+- For prompts that call `bot.wait_for("message", check=...)`, `script_replies(bot, ctx, ["done", "7"])`
+  replaces `bot.wait_for` with a queue of fake replies and applies `check` to each, so a reply from
+  the wrong user or channel is rejected as it would be live. Contract tests assert the returned
+  queue is empty. A prompt with no reply left raises `UnscriptedPrompt`, not `TimeoutError`
+  (Vueltabot's `ask_user` swallows that) nor `AssertionError` (a strict xfail would). Script
+  `fakes.TIMEOUT` to test a timeout path; it is refused when `wait_for` has no timeout.
+- Listeners (`on_message`) are tested by calling the coroutine from
+  `get_listener(bot, "<function name>")` with a fake message. Overlap between listeners is tested
+  manually.
 
 ## Time and timezones
 
@@ -91,8 +115,8 @@ The client is synchronous and every call is a builder chain ending in `.execute(
 
 ## Async tests
 
-- Use `pytest-asyncio` (added with story #34) in `auto` mode; command callbacks are plain
-  `async def` tests.
+- Use `pytest-asyncio`. Integration tests use strict mode (`pytest.mark.asyncio`,
+  `pytest_asyncio.fixture`); if a root pytest config sets `asyncio_mode = auto`, follow it.
 - Slow work offloaded with `asyncio.to_thread` runs for real in tests; fake the function it calls.
 - Never `asyncio.sleep` for real; patch it or the scheduler interval.
 

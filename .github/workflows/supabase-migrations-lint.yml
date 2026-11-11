@@ -1,0 +1,43 @@
+# ABOUTME: Lints supabase/migrations/* on every PR against the PR base, so merged migrations stay append-only.
+# ABOUTME: No secrets, no environment, read-only; never talks to Supabase.
+#
+# Kept separate from supabase-db-push.yml, which holds production credentials
+# and must never run on pull_request. This one is safe on pull_request (never
+# pull_request_target) because it holds nothing a fork PR could steal.
+name: supabase-migrations-lint
+
+on:
+  # No path filter: a filtered required check stays pending forever on PRs
+  # that do not touch migrations.
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Fetch the PR base
+        run: git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+      # Run the base ref's linter so a PR cannot weaken the check by editing
+      # scripts/supabase_migrations.py alongside a migration. If the base has no
+      # linter yet, fall back to the PR's copy. This workflow file is still the
+      # PR's copy; protect it with CODEOWNERS or required review.
+      - name: Lint migrations against the base
+        run: |
+          trusted="${RUNNER_TEMP}/supabase_migrations_base.py"
+          if git show "origin/${BASE_REF}:scripts/supabase_migrations.py" > "$trusted" 2>/dev/null; then
+            echo "Using the linter from origin/${BASE_REF}"
+          else
+            echo "::warning::origin/${BASE_REF} has no scripts/supabase_migrations.py (bootstrap); using the PR copy"
+            cp scripts/supabase_migrations.py "$trusted"
+          fi
+          python3 "$trusted" lint --base "origin/${BASE_REF}"
+        env:
+          BASE_REF: ${{ github.base_ref }}

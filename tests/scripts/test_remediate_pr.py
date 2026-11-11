@@ -3,7 +3,6 @@
 import json
 import os
 import sys
-import tempfile
 
 import pytest
 
@@ -233,16 +232,11 @@ class TestStableAfterMonitoring:
     """Returns exit 0 when monitor reports STABLE."""
 
     def test_stable_returns_zero(self, monkeypatch, tmp_path):
-        state_path = str(tmp_path / "state.json")
-
         monkeypatch.setattr(
             "remediate_pr.run_cmd",
             lambda cmd, check=True, capture=True: (0, "STABLE", ""),
         )
         monkeypatch.setattr("sys.argv", ["remediate_pr.py", "42"])
-
-        # Override state file path so it uses tmp_path
-        original_main = main.__wrapped__ if hasattr(main, "__wrapped__") else None
 
         # We need to patch the state file path. The script hardcodes /tmp/remediate-pr-{n}.json
         # so we monkeypatch StateManager to capture it.
@@ -371,9 +365,7 @@ class TestBuildFixFlow:
         assert state["buildFailureCount"] == 1
         assert state["phase"] == "awaiting_fix"
 
-        # Verify action request was written
-        action_path = str(tmp_path / "remediate-pr-42-action.json")
-        # The action path is hardcoded to /tmp, so we check state instead
+        # The action request path is hardcoded to /tmp, so check state instead
         assert state["lastResult"]["failing_checks"] == ["build", "test-unit"]
 
 

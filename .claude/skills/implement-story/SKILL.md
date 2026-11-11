@@ -79,6 +79,6 @@ When all tasks are done:
 3. Assign the story to Jon for review if finalize did not: `assign_item(project=39, ref=<ref>, username="Jon Roberts", entity_type="story")`.
 4. **Do NOT set the story to `Done`** yourself. Done happens either by Jon after merging the PR, or by the post-merge sync when the PR carries `mark-done-on-merge` (or the story keeps that tag); see [`../shared/merge-side-effects.md`](../shared/merge-side-effects.md).
 5. Remove the worktree; the branch is pushed and stays: `git worktree remove <wt>`.
-6. Report what was completed, the PR link, the merge-side-effect labels or tags, the Codex review line (`REVIEW_POSTED`/`REVIEW_SKIPPED`/`REVIEW_PENDING`), the `GATED:` lines, and the "no CI yet (#35)" note.
+6. Report what was completed, the PR link, the merge-side-effect labels or tags, the Codex review line (`REVIEW_POSTED`/`REVIEW_SKIPPED`/`REVIEW_PENDING`), the `GATED:` lines, and the PR's CI state (`checks`, `integration`).
 
 Remind the user to run `/clear` before invoking `/implement-story` again, to avoid context pollution from the previous story.

@@ -164,7 +164,7 @@ python3 scripts/remediate_pr.py <prNumber> --max-failures 5 --taiga-id <ref> --t
 
 Run this as a normal foreground Bash call with `timeout: 600000`. **NEVER use `run_in_background`**: in headless mode, ending your turn kills background tasks, leaving the state file at a non-terminal phase that the orchestrator downgrades to escalated. The script bounds its own CI wait and returns exit 14 (PENDING) well within the Bash timeout; re-invoke on 14 instead of backgrounding.
 
-There is no CI configured yet (story #35). The script treats "no checks configured" as a pass-with-note, so a PR with only review comments or a clean merge state still reaches exit 0 or 11. Do not treat missing checks as a failure and do not wait for them.
+GitHub Actions runs `checks` and `integration` on the PR and the script waits for them. A PR whose branch predates the workflows has no runs: it counts as passed after a two-minute grace when its base requires no checks, otherwise it stays `PENDING` until rebased. Do not treat missing checks as a failure and do not wait for them.
 
 Capture the exit code.
 

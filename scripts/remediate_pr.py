@@ -27,8 +27,8 @@ SHAs itself. A non-zero exit from the review script -- or a failure to launch it
 all, such as the script being absent or non-executable -- is logged but never fatal;
 the stability check always proceeds regardless of the review outcome.
 
-No CI configured: the target repo (MrsBohemian/Cholobots) has no workflows yet (story #35
-adds them). monitor-pr-stability.sh then reports STABLE and writes a
+No CI configured: when the target repo has no workflows at all,
+monitor-pr-stability.sh reports STABLE and writes a
 "NOTE: no CI checks configured ..." line to stderr; this script logs that note, records
 it as lastResult.note in the state file and exits 0 as for any other STABLE result.
 """
@@ -294,7 +294,7 @@ def main():
             None,
         )
         if no_ci_note:
-            log(f"{no_ci_note} (story #35 adds CI); PR #{pr_number} counts as stable with no checks run.")
+            log(f"{no_ci_note}; PR #{pr_number} counts as stable with no checks run.")
             result["note"] = "no CI checks configured"
             sm.update(lastResult=result)
         log(f"PR #{pr_number} is stable. All checks passing, no unresolved comments.")

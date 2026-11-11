@@ -6,23 +6,26 @@ When each test level runs and the exact commands. Placement rules are in
 
 ## Guiding principle
 
-Run the narrowest check that covers your change, every time, before you push. Today that is mostly
-the compile check, because the bot has no test suite (#34), no linter (#33) and no CI (#35). As
-each lands, its row below stops being conditional.
+Run the narrowest check that covers your change, every time, before you push. The floor is the
+compile check and `ruff check .`; the bot has no full unit suite yet (#34). CI then runs the
+whole scope on the PR: workflow `checks` (compile, lint, unit and script tests, the same scope as
+`make check`) and workflow `integration` (`make test-integration` on a fresh local Supabase stack).
 
 ## Commands
 
-| Check | Command | Status |
-|---|---|---|
-| Compile | `python -m py_compile cholobots.py config.py db/database.py bots/*.py` | Always. The floor for every change |
-| Unit | `python -m pytest tests/unit -q` | Once `tests/unit/` exists (#34); before that record "no test suite yet (#34)" |
-| Integration | `python -m pytest tests/integration -q -m integration` | Once the local Supabase stack (#47) and harness (#51) exist; needs `supabase start` |
-| Script tests | `python -m pytest tests/scripts -q` and `bash tests/scripts/test-<name>.sh` | Exist today |
-| Lint | `ruff check .` | Once configured (#33); before that skip without comment |
-| Whole suite | `python -m pytest -q` | Once #34 lands |
+| Check | Command | `make` | Status |
+|---|---|---|---|
+| Compile | `python -m py_compile cholobots.py config.py db/database.py bots/*.py` | `make compile` | Always. The floor for every change |
+| Unit | `python -m pytest tests/unit -q` | (in `make test`) | Once `tests/unit/` exists (#34); before that record "no test suite yet (#34)" |
+| Integration | `python -m pytest tests/integration -q -m integration` | `make test-integration` (the raw pytest command needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` exported) | When a change touches a command, listener or query; needs `make db-up`; local stack only |
+| Script tests | `python -m pytest tests/scripts -q` and `bash tests/scripts/test-<name>.sh` | (in `make test`, which stops at the first failing `.sh`) | Exist today |
+| Lint | `ruff check .` (also the pre-commit hook) | `make lint` | Always. Config and exceptions in `ruff.toml` |
+| Unit + script tests | `python -m pytest -q tests/unit tests/scripts`, then `for t in tests/scripts/test-*.sh; do bash "$t" || exit 1; done` | `make test` | Same scope as CI's `Unit tests` and `Script tests` steps |
+| Compile, lint, test | | `make check` | Before every push |
+| Whole suite | `python -m pytest -q` | | Once #34 lands |
 
-Set up the environment once: `python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt`.
-Never run `python cholobots.py` from an automated run.
+Set up the environment once with `make setup`. The `make` targets call `.venv/bin/python` directly, so no activation is needed.
+Never run `python cholobots.py` or `make run` from an automated run.
 
 ## What to run after a change
 
@@ -34,18 +37,18 @@ Never run `python cholobots.py` from an automated run.
 | `scripts/**` | `python -m pytest tests/scripts -q` plus the matching `bash tests/scripts/test-*.sh` |
 | `tests/**` | The tests you changed |
 | `.claude/**`, `docs/**` | Nothing to run |
-| `requirements.txt` | Fresh venv, compile, whole suite once it exists |
+| `requirements.txt`, `requirements-dev.txt`, `.python-version` | Fresh venv, compile, `ruff check .`, script tests, whole suite once it exists |
 
 ## When each level runs
 
 | Moment | What runs |
 |---|---|
 | During implementation (`implement-task`, `fix-single-bug`, `fix-story-bug`) | The affected rows above, after each change |
-| Pre-push (`finalize-story-pr`, any skill that pushes) | Compile always; unit and lint when they exist; script tests if `scripts/` changed |
-| In the PR | Codex review (`.claude/skills/shared/codex-review.md`). CI from #35 will run compile, lint and unit tests; until then `gh pr checks` reports no checks, which skills treat as a pass with a note, never a failure and never an endless wait |
+| Pre-push (`finalize-story-pr`, any skill that pushes) | Compile and lint always; unit when it exists; script tests if `scripts/` changed |
+| In the PR | Codex review (`.claude/skills/shared/codex-review.md`) and GitHub Actions: `checks` (steps `Compile`, `Lint`, `Unit tests`, `Script tests`) and `integration` (steps `Start local Supabase`, `Integration tests`), reported by `gh pr checks`. A PR whose branch predates the workflows has no runs: the monitor counts that as passed after its two-minute run-registration grace when its base requires no checks; otherwise missing required runs stay `PENDING` until the branch is rebased onto a base that has the workflows |
 | Failing check on a PR (`fix-build-failure`) | Reproduce the one failing check locally, fix, re-run it |
 | Rebase (`rebase-branch`) | Compile, plus the tests for files with conflicts |
-| Post-merge | Manual scripts (`docs/manual-tests/`, #36) for the commands the PR touched, in the test Discord server (#31), by the manual-testing agent or a person. Integration tests in CI once #35 and #51 land |
+| Post-merge | Manual scripts (`docs/manual-tests/`, #36) for the commands the PR touched, in the test Discord server (#31), by the manual-testing agent or a person. The push to `main` reruns `checks` and `integration` |
 
 ## Reading results
 
