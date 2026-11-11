@@ -101,12 +101,13 @@ class StateManager:
     def exists(self):
         return os.path.exists(self.state_file)
 
-    def init_from_bugs(self, concurrency, bugs, base_dir):
+    def init_from_bugs(self, concurrency, bugs, base_dir, base_branch="main"):
         """Initialize state from a list of bug dicts."""
         with self._lock:
             self._state = {
                 "mode": STATE_MODE,
                 "concurrency": concurrency,
+                "baseBranch": base_branch,
                 "phase": "running",
                 "baseDir": str(base_dir),
                 "bugs": [
@@ -584,6 +585,20 @@ class Orchestrator(HostRepoBaseMixin):
                         f"using stored concurrency={stored_concurrency}"
                     )
                     self.concurrency = stored_concurrency
+                # baseBranch is stored at init so a resume with BASE_BRANCH
+                # unset (or different) still clones and opens PRs against the
+                # run's real base instead of silently falling back to "main".
+                stored_base_branch = self.sm.state.get("baseBranch", self.base_branch)
+                if stored_base_branch != self.base_branch:
+                    log(
+                        f"Ignoring BASE_BRANCH={self.base_branch}; "
+                        f"using stored baseBranch={stored_base_branch}"
+                    )
+                    self.base_branch = stored_base_branch
+                # Backfill the key for state files written before it existed.
+                if self.sm.state.get("baseBranch") != stored_base_branch:
+                    self.sm.state["baseBranch"] = stored_base_branch
+                    self.sm.save()
                 self._resume()
                 return
 
@@ -596,7 +611,7 @@ class Orchestrator(HostRepoBaseMixin):
             bugs = json.load(f)
 
         self.base_dir.mkdir(parents=True, exist_ok=True)
-        self.sm.init_from_bugs(self.concurrency, bugs, self.base_dir)
+        self.sm.init_from_bugs(self.concurrency, bugs, self.base_dir, self.base_branch)
         total = len(bugs)
         emit(f"INIT:{total}:{self.concurrency}")
 

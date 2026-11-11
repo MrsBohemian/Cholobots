@@ -1199,6 +1199,46 @@ class TestStateRecordsMode:
         assert again.sm.get_bug(101) is not None
 
 
+class TestBaseBranchPersistence:
+    """The run's base branch is stored at init and wins over BASE_BRANCH on resume."""
+
+    def _orch(self, tmp_path, base_branch):
+        return Orchestrator(
+            1, str(tmp_path / "bugs.json"), str(tmp_path), str(tmp_path), base_branch)
+
+    def test_init_stores_run_base_branch(self, tmp_path):
+        (tmp_path / "bugs.json").write_text(json.dumps(make_bugs([101])))
+        orch = self._orch(tmp_path, "feature/x")
+
+        orch.init_or_resume()
+
+        assert orch.sm.state["baseBranch"] == "feature/x"
+        assert json.loads(Path(orch.sm.state_file).read_text())["baseBranch"] == "feature/x"
+
+    def test_stored_base_branch_beats_env_on_resume(self, tmp_path, capsys):
+        (tmp_path / "bugs.json").write_text(json.dumps(make_bugs([101])))
+        self._orch(tmp_path, "feature/x").init_or_resume()
+
+        again = self._orch(tmp_path, "main")
+        again.init_or_resume()
+
+        assert again.base_branch == "feature/x"
+        assert "using stored baseBranch=feature/x" in capsys.readouterr().err
+
+    def test_state_file_without_base_branch_is_backfilled_from_env(self, tmp_path):
+        (tmp_path / "bugs.json").write_text(json.dumps(make_bugs([101])))
+        first = self._orch(tmp_path, "feature/x")
+        first.init_or_resume()
+        del first.sm.state["baseBranch"]
+        first.sm.save()
+
+        again = self._orch(tmp_path, "develop")
+        again.init_or_resume()
+
+        assert again.base_branch == "develop"
+        assert json.loads(Path(again.sm.state_file).read_text())["baseBranch"] == "develop"
+
+
 class TestBugAgentRunsThroughExecSkill:
     def test_bug_agent_runs_through_exec_skill(self, tmp_path, monkeypatch):
         orch = make_orch(tmp_path, [101], concurrency=1)
