@@ -51,7 +51,7 @@ def test_claude_md_does_not_mention_queso():
     assert "queso" not in _text("CLAUDE.md")
 
 
-# "## Ownership and license" is added by story #58 once Heaven settles it (task #122), not here.
+# No "Ownership and license" section yet: those terms are still undecided.
 CONTRIBUTING_SECTIONS = [
     "Access",
     "How a change gets to main",

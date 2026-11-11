@@ -67,11 +67,11 @@ Owner only, once per machine. `supabase login` stores the access token in the CL
 
 ## Running the bot
 
-`make run` starts the bot after `scripts/check_local_env.py` confirms `.env` points at the local Supabase stack (step 7 of the Quickstart). `python cholobots.py` starts it without that check. Either way it connects to Discord with the token in `.env`, so use your own test bot and never point a local `.env` at the hosted Supabase project or the production Discord token. Coding agents never start the bot.
+`make run` checks that `.env` points at the local Supabase stack (`scripts/check_local_env.py`), then starts the bot; `python cholobots.py` skips the check. Either way it connects to Discord with the token in `.env`, so use your own test bot and never point a local `.env` at the hosted Supabase project or the production Discord token. Coding agents never start the bot.
 
 ## Resetting data
 
-`make db-reset` (or `npx --yes supabase@2.121.0 db reset`) rebuilds the local database from `supabase/migrations/` and reloads the fictitious seed data. Stop the bot first. What the seed contains and how to edit it is under [Seed data](#seed-data). The reset only ever touches the local Docker stack.
+`make db-reset` (or `npx --yes supabase@2.121.0 db reset`) rebuilds the local database from `supabase/migrations/` and reloads the fictitious [seed data](#seed-data). It only touches the local Docker stack. Stop the bot first.
 
 ## Running tests
 
@@ -87,11 +87,11 @@ Pick what to run from [docs/testing-workflow.md](docs/testing-workflow.md); whic
 | `python -m py_compile cholobots.py config.py db/database.py bots/*.py` | compile check of the bot modules |
 | `ruff check .` | lint (configured in `ruff.toml`) |
 
-`tests/unit` holds contract tests today; unit tests for the bots' command logic arrive with story #34. Pull requests run `checks` and `integration` in GitHub Actions.
+`tests/unit` holds contract tests only; the bots' command logic has no unit tests yet.
 
 ## Work tracking
 
-Issues, stories and epics live in the Taiga project `cholo-bots` (id 39) at <https://backlog.growthgarage.org/project/cholo-bots>. Start with epic #2 (the 2026-11-06 codebase assessment, with per-bot deep dives in the project wiki), epic #46 (developer experience: local Supabase stack, migrations, CI) and epic #3 (multi-business isolation). The roadmap is [Cholobots_48_Hour_Development_Plan.md](Cholobots_48_Hour_Development_Plan.md).
+Issues, stories and epics live in the Taiga project `cholo-bots` (id 39) at <https://backlog.growthgarage.org/project/cholo-bots>. Start with epic #2 (the codebase assessment, with per-bot deep dives in the project wiki), epic #46 (developer experience: local Supabase stack, migrations, CI) and epic #3 (multi-business isolation). The roadmap is [Cholobots_48_Hour_Development_Plan.md](Cholobots_48_Hour_Development_Plan.md).
 
 ## Development environment
 
@@ -99,7 +99,7 @@ Issues, stories and epics live in the Taiga project `cholo-bots` (id 39) at <htt
 
 **Schema changes.** Never edit the database schema in the Supabase dashboard or SQL editor. Every change is a new file under `supabase/migrations/` (`supabase migration new <name>`) reviewed in a PR; the production push is gated off. See [docs/database-migrations.md](docs/database-migrations.md).
 
-**Claude Code and Codex.** `CLAUDE.md` holds the architecture notes a session needs; `AGENTS.md` is a symlink to it, so Codex reads the same file. To let Claude read and update Taiga from this checkout, register the Taiga MCP server at project scope so it targets the Growth Garage instance rather than any personal default:
+**Claude Code and Codex.** `CLAUDE.md` holds the architecture notes a session needs; Codex reads it through the `AGENTS.md` symlink. To let Claude read and update Taiga from this checkout, register the Taiga MCP server at project scope so it targets the Growth Garage instance rather than any personal default:
 
 ```bash
 claude mcp add -s local taiga-py -- <path-to-taiga-mcp-launcher> workflow project/taiga-growthgarage-slave1-codex
@@ -119,7 +119,7 @@ The setup script is run once by a project admin with `--apply`. Like the other h
 
 ## Contributing
 
-Access, the branch and pull-request flow, database changes, the command checklist and commit attribution are in [CONTRIBUTING.md](CONTRIBUTING.md). Ownership and licensing are being settled under Taiga story #58. Architecture notes and known hazards are in [CLAUDE.md](CLAUDE.md) (also readable as `AGENTS.md`).
+Access, the branch and pull-request flow, database changes, the command checklist and commit attribution are in [CONTRIBUTING.md](CONTRIBUTING.md). Ownership and licensing are not settled yet (Taiga story #58). Architecture notes and known hazards are in [CLAUDE.md](CLAUDE.md).
 
 ## Layout
 

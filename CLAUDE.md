@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-This file guides coding agents (Claude Code and Codex) and human contributors working in this repository. `AGENTS.md` is a symlink to this file so Codex reads the same notes; edit `CLAUDE.md`, never `AGENTS.md`.
+Guidance for coding agents (Claude Code and Codex) and people working in this repository. `AGENTS.md` is a symlink to this file for Codex; edit `CLAUDE.md`, never `AGENTS.md`.
 
-Branch and pull-request flow, database migrations, the command checklist and commit attribution for everyone (people and agents) are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Branch and pull-request flow, database migrations, the command checklist and commit attribution, for people and agents alike, are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## What this is
 
