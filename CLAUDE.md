@@ -11,8 +11,9 @@ Work is tracked in Taiga project `cholo-bots` (id 39) on https://backlog.growthg
 ## Running
 
 ```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt      # unpinned: discord.py, python-dotenv, openai, supabase
+python3.14 -m venv .venv && . .venv/bin/activate   # Python pinned in .python-version
+pip install -r requirements.txt      # == pins: discord.py, python-dotenv, openai, supabase
+pip install -r requirements-dev.txt && pre-commit install   # dev: pytest, ruff, the ruff-check hook
 python cholobots.py                  # same as the Procfile worker
 ```
 
@@ -20,9 +21,9 @@ python cholobots.py                  # same as the Procfile worker
 
 `.env.example` is the env contract (kept in sync by `tests/unit/test_env_example_contract.py`); [docs/test-discord-server.md](docs/test-discord-server.md) covers the test Discord server and running against the local Supabase stack.
 
-`cholobots.py` calls `bot.run()` at module level with no `__main__` guard: importing it starts the bot. For static checks use `python -m py_compile cholobots.py config.py db/database.py bots/*.py`.
+`cholobots.py` calls `bot.run()` only under `if __name__ == "__main__":`, but importing it still imports `config` (which raises without the env vars) and runs `create_client` in three bot modules, so tests never import it. For static checks use `python -m py_compile cholobots.py config.py db/database.py bots/*.py`.
 
-There are no tests, linters or CI for the bot itself yet (Taiga stories #33, #34, #35). The Supabase schema is not in the repo; column names must be inferred from the queries in each bot module.
+Lint is ruff, configured in `ruff.toml` (rules `E4`, `E7`, `E9`, `F`; per-file exceptions listed there with reasons) and run with `ruff check .` or the pre-commit hook; `ruff format` is not enforced. The bot has no unit tests or CI yet. The Supabase schema is not in the repo; column names must be inferred from the queries in each bot module.
 
 ## Agent pipeline
 
