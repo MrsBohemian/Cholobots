@@ -60,7 +60,11 @@ test: check-tools ## Run pytest (unit + scripts) and every tests/scripts/test-*.
 	$(VENV_PY) -m pytest -q tests/unit tests/scripts
 	for t in tests/scripts/test-*.sh; do echo "== $$t"; bash "$$t" || exit 1; done
 
-test-integration: ## Run the integration tests against the local stack
-	@if [ -d tests/integration ]; then $(VENV_PY) -m pytest -q -m integration tests/integration; else echo "No integration tests yet (#51)."; fi
+test-integration: ## Run the integration tests against the local stack (make db-up first)
+	@if [ -d tests/integration ]; then \
+		env_lines="$$($(SUPABASE) status -o env --override-name api.url=SUPABASE_URL --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY --override-name db.url=SUPABASE_DB_URL)" || exit 1; \
+		eval "$$(printf '%s\n' "$$env_lines" | grep -E '^SUPABASE_(URL|SERVICE_ROLE_KEY|DB_URL)=' | sed -E 's/^([A-Z_]+)="?([^"]*)"?$$/: "$${\1:=\2}"; export \1/')"; \
+		CHOLOBOTS_INTEGRATION_REQUIRED=1 $(VENV_PY) -m pytest -q -m integration tests/integration; \
+	else echo "No integration tests yet (#51)."; fi
 
 check: compile lint test ## Run compile, lint and test

@@ -131,6 +131,31 @@ def test_integration_target_reports_missing_harness(tmp_path):
     assert result.stdout.strip() == "No integration tests yet (#51)."
 
 
+def test_integration_target_exports_local_stack_env_and_requires_it():
+    out = dry_run("test-integration")
+    assert "supabase@" in out
+    assert "--override-name api.url=SUPABASE_URL" in out
+    assert "--override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY" in out
+    assert "--override-name db.url=SUPABASE_DB_URL" in out
+    assert "|| exit 1" in out
+    assert (
+        "CHOLOBOTS_INTEGRATION_REQUIRED=1 .venv/bin/python -m pytest -q -m integration tests/integration"
+        in out
+    )
+    assert out.index("|| exit 1") < out.index("-m pytest")
+
+
+def test_integration_target_keeps_env_the_caller_already_exported():
+    # ':=' only assigns an unset or empty variable, so an exported SUPABASE_URL survives.
+    assert '${\\1:=\\2}' in dry_run("test-integration")
+
+
+def test_integration_target_fails_without_running_pytest_when_the_stack_is_down():
+    result = make("test-integration", "SUPABASE=false", "VENV_PY=echo")
+    assert result.returncode != 0
+    assert "pytest" not in result.stdout
+
+
 def test_cli_version_matches_readme():
     version = re.search(r"^SUPABASE_CLI_VERSION := (\S+)$", MAKEFILE.read_text(), re.M).group(1)
     assert f"supabase@{version}" in (ROOT / "README.md").read_text(encoding="utf-8")

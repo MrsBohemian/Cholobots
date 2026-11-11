@@ -14,6 +14,7 @@ Work is tracked in Taiga project `cholo-bots` (id 39) on https://backlog.growthg
 make setup      # .venv (Python pinned in .python-version), == pins from requirements*.txt, pre-commit hook, .env from .env.example
 make db-up      # local Supabase stack; make db-reset rebuilds it, make db-env prints the two .env lines, make db-down stops it
 make check      # compile, ruff, pytest tests/unit + tests/scripts, then every tests/scripts/test-*.sh
+make test-integration  # pytest tests/integration against the local stack (needs make db-up)
 make run        # scripts/check_local_env.py, then python cholobots.py (production uses the Procfile)
 ```
 
@@ -28,6 +29,8 @@ make run        # scripts/check_local_env.py, then python cholobots.py (producti
 `cholobots.py` calls `bot.run()` only under `if __name__ == "__main__":`, but importing it still imports `config` (which raises without the env vars) and runs `create_client` in three bot modules, so tests never import it. For static checks use `python -m py_compile cholobots.py config.py db/database.py bots/*.py`.
 
 Lint is ruff, configured in `ruff.toml` (rules `E4`, `E7`, `E9`, `F`; per-file exceptions listed there with reasons) and run with `ruff check .` or the pre-commit hook; `ruff format` is not enforced. The bot has no unit tests or CI yet. The schema of record is `supabase/migrations/`, starting from `20261109194905_remote_baseline.sql`, a dump of the hosted project's `public` schema (tables, views, functions, triggers, RLS policies, grants). Read column names and types there, and check every reader before changing a column's meaning. Schema changes go in new migration files (workflow: Taiga story #49); never edit the hosted schema by hand. `python3 scripts/check_schema_coverage.py --mobile-dir <dashboards dir>` checks that every table the bots and dashboards reference is defined there.
+
+Integration tests (`tests/integration/`) drive command callbacks and `on_message` listeners against the local Supabase stack with a faked Discord context. The harness re-seeds the database before each test and refuses any non-local URL; open bugs are strict xfails that the fix PR un-marks. See `docs/testing-conventions.md`.
 
 ## Agent pipeline
 
