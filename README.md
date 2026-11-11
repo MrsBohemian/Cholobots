@@ -82,12 +82,12 @@ Pick what to run from [docs/testing-workflow.md](docs/testing-workflow.md); whic
 | `make check` | compile check, `ruff check .`, then `make test` |
 | `make test` | `pytest tests/unit tests/scripts` and every `tests/scripts/test-*.sh` |
 | `make test-integration` | `tests/integration` against the local stack (`make db-up` first); refuses any non-local Supabase URL |
-| `python -m pytest tests/unit -q` | unit and contract tests; no network, no Supabase |
+| `python -m pytest tests/unit -q` | fast contract and guard tests; no network, no Supabase |
 | `python -m pytest tests/scripts -q` | tests for the pipeline scripts in `scripts/` |
 | `python -m py_compile cholobots.py config.py db/database.py bots/*.py` | compile check of the bot modules |
 | `ruff check .` | lint (configured in `ruff.toml`) |
 
-`tests/unit` holds contract tests only; the bots' command logic has no unit tests yet.
+The bots' command logic has no unit tests yet; `tests/integration` drives commands against the local stack.
 
 ## Work tracking
 
@@ -119,7 +119,7 @@ The setup script is run once by a project admin with `--apply`. Like the other h
 
 ## Contributing
 
-Access, the branch and pull-request flow, database changes, the command checklist and commit attribution are in [CONTRIBUTING.md](CONTRIBUTING.md). Ownership and licensing are not settled yet (Taiga story #58). Architecture notes and known hazards are in [CLAUDE.md](CLAUDE.md).
+Access, the branch and pull-request flow, database changes, the command checklist and commit attribution are in [CONTRIBUTING.md](CONTRIBUTING.md). Ownership and licensing terms are still pending. Architecture notes and known hazards are in [CLAUDE.md](CLAUDE.md).
 
 ## Layout
 
