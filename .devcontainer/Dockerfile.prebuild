@@ -1,7 +1,7 @@
 # ABOUTME: Pre-built devcontainer image: the base image plus the volatile tools and a warm pip cache.
-# ABOUTME: Built by CI and pushed to GHCR; scripts/devcontainer/launch.sh pulls it or builds both stages locally.
+# ABOUTME: CI publishes it to GHCR; scripts/devcontainer/launch.sh pulls it or builds both stages locally.
 #
-# Build requires two steps (the CI workflow and launch.sh's fallback both do this):
+# Two-stage build:
 #   1. docker build -f .devcontainer/Dockerfile -t devcontainer-base .
 #   2. docker build -f .devcontainer/Dockerfile.prebuild --build-arg BASE_IMAGE=devcontainer-base -t ghcr.io/mrsbohemian/cholobots/devcontainer:latest .
 
@@ -11,8 +11,8 @@ FROM ${BASE_IMAGE}
 # Links the GHCR package to the repo so it inherits the repo's access.
 LABEL org.opencontainers.image.source="https://github.com/MrsBohemian/Cholobots"
 
-# Volatile tool pins, each declared only here. scripts/devcontainer/pins.sh reads them for the
-# smoke test and the CI version check. All are exact versions; claude-code and codex need Node >=22.
+# Volatile tool pins, declared only here (scripts/devcontainer/pins.sh reads them). Exact versions;
+# claude-code and codex need Node >=22.
 ARG CLAUDE_CODE_VERSION=2.1.310
 ARG CODEX_VERSION=0.164.0
 ARG CHROME_DEVTOOLS_MCP_VERSION=1.12.0
@@ -28,22 +28,21 @@ RUN claude --version && codex --version && chrome-devtools-mcp --help >/dev/null
 
 RUN python3 -m pip install --no-cache-dir uv==${UV_VERSION}
 
-# pytaiga-mcp (workflow-mode Taiga server): install.sh owns the commit pin. vscode owns the
-# install so agents can re-run it to repair a stale checkout.
+# pytaiga-mcp (workflow-mode Taiga server); install.sh holds the commit pin. Owned by vscode so
+# agents can re-run install.sh to repair a stale checkout.
 ENV PYTAIGA_MCP_HOME=/opt/pytaiga-mcp
 ENV UV_PYTHON_DOWNLOADS=never
 COPY tools/pytaiga-mcp/install.sh /tmp/pytaiga-mcp/install.sh
 RUN /tmp/pytaiga-mcp/install.sh && rm -rf /tmp/pytaiga-mcp \
     && chown -R vscode:vscode /opt/pytaiga-mcp
 
-# The DinD daemon.json mirror (base image) proxies Docker Hub only, and the Supabase CLI pulls
-# from public.ecr.aws by default. Point it at Docker Hub so the host registry mirror
-# (start-registry-mirror.sh) serves the Supabase images. They are not pre-pulled: there is no
-# DinD daemon at build time and its data root is a per-container volume.
+# The registry mirror proxies Docker Hub only, and the Supabase CLI defaults to public.ecr.aws.
+# Pull Supabase images from Docker Hub so the mirror can serve them. They can't be pre-pulled:
+# there is no DinD daemon at build time and its data root is a per-container volume.
 ENV SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io
 
-# Warm the vscode user's pip cache so post-create.sh's plain `pip install` hits it. The throwaway
-# venv is deleted; the wheels stay in /home/vscode/.cache/pip (no --no-cache-dir on purpose).
+# Warm vscode's pip cache for post-create.sh's `pip install`. The venv is thrown away; the wheels
+# stay in /home/vscode/.cache/pip (no --no-cache-dir on purpose).
 WORKDIR /tmp/prebuild
 COPY requirements.txt requirements-dev.txt ./
 RUN chown -R vscode:vscode /tmp/prebuild

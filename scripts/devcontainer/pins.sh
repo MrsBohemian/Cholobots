@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ABOUTME: Prints every devcontainer tool pin as eval-safe KEY='value' lines, parsed from the Dockerfiles and the
-# ABOUTME: pytaiga-mcp installer. Single parser shared by smoke-test.sh and the build workflow's version guard.
+# ABOUTME: Prints every devcontainer tool pin as eval-safe KEY='value' lines, parsed from the Dockerfiles and
+# ABOUTME: tools/pytaiga-mcp/install.sh. Used by smoke-test.sh and the build workflow's version check.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

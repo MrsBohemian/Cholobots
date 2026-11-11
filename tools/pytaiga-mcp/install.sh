@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ABOUTME: Installs the pinned workflow-mode pytaiga-mcp server (Alterna-Dev-Studio fork) into PYTAIGA_MCP_HOME.
-# ABOUTME: Single source of the commit pin; idempotent via a marker written last, so a failed install never looks complete.
+# ABOUTME: The only place the commit is pinned; a marker written last makes reruns no-ops.
 set -euo pipefail
 
 PYTAIGA_MCP_REPO=https://github.com/Alterna-Dev-Studio/pytaiga-mcp.git
@@ -44,8 +44,8 @@ git -C "$HOME_DIR" fetch --depth 1 origin "$PYTAIGA_MCP_COMMIT"
 git -C "$HOME_DIR" checkout FETCH_HEAD
 
 # The system python is used as is; a missing interpreter must fail, not download one.
-# One fetch at a time: uv's parallel git fetches of the pyTaigaClient dependency fail with a TLS
-# "internal error" on some Docker bridge networks, which broke the devcontainer image build.
+# One fetch at a time: uv's parallel git fetches of pyTaigaClient can fail with a TLS
+# "internal error" on Docker bridge networks.
 UV_PYTHON_DOWNLOADS=never UV_CONCURRENT_DOWNLOADS=1 uv sync --frozen --directory "$HOME_DIR"
 
 for required in .venv/bin/python src/server_workflow.py; do

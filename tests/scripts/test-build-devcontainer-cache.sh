@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Regression test for build-devcontainer.yml registry cache wiring (you-thon bug #2667).
+# ABOUTME: Tests build-devcontainer.yml's registry cache wiring.
 # ABOUTME: Both build steps must export inline cache and seed from an image that carries it.
 
 set -euo pipefail
@@ -51,7 +51,7 @@ assert_true "prebuild step exists in both jobs" '[ "$(count_in "$prebuild_steps"
 
 # The base Dockerfile's layers only get cache records if the base build itself
 # exports inline cache; the prebuild's export does not cover its FROM image.
-# Here-strings, not echo-to-grep pipes: under pipefail, grep -q's early exit can SIGPIPE the writer (you-thon bug #2791).
+# Here-strings, not echo-to-grep pipes: under pipefail, grep -q's early exit can SIGPIPE the writer.
 assert_true "both base builds export inline cache" \
   '[ "$(count_in "$base_steps" "BUILDKIT_INLINE_CACHE=1")" -eq 2 ]'
 assert_true "both prebuilds export inline cache" \

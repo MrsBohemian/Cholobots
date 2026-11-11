@@ -1,13 +1,7 @@
-# ABOUTME: CI workflow that builds the devcontainer image and, on main only, publishes it to GHCR.
-# ABOUTME: Pull requests build and version-check but never log in or push; the publish job runs on main with packages: write.
+# ABOUTME: Builds the devcontainer image and checks its tool versions; publishes to GHCR on push to main only.
+# ABOUTME: Only the publish job logs in or holds packages: write. No pull_request_target, no secrets beyond GITHUB_TOKEN.
 #
-# The workflow is named "build-devcontainer" and so is its first job, matching the
-# name == job-name convention of checks.yml. It is not a required context, so the
-# trigger paths filters are safe.
-#
-# Security: no pull_request_target and no secrets beyond GITHUB_TOKEN. The PR job
-# holds contents: read only and never logs in to GHCR. The publish job is the only
-# one with packages: write and runs only for a push to main.
+# Not a required check, so the paths filters are safe.
 name: build-devcontainer
 
 on:
@@ -27,8 +21,7 @@ on:
       - '.dockerignore'
       - '.github/workflows/build-devcontainer.yml'
   schedule:
-    # Weekly build-only run (Sundays at 04:00 UTC) that catches base image or pin
-    # breakage early; it never publishes.
+    # Weekly build-only run to catch base image or pin breakage early.
     - cron: '0 4 * * 0'
   workflow_dispatch:
 
@@ -41,8 +34,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  # github.repository can contain uppercase letters; Docker image names must be lowercase.
-  # Use a fixed lowercase path that matches the image reference in launch.sh.
+  # Lowercase (github.repository is not); must match the image reference in launch.sh.
   IMAGE_NAME: mrsbohemian/cholobots/devcontainer
 
 jobs:
@@ -53,19 +45,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Anonymous pulls: the package is public once published, and a miss only
-      # costs a cold build. There is no login on this job.
+      # Anonymous pulls; a miss only costs a cold build.
       - name: Seed build cache from the last published images
         run: |
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:base || true
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest || true
 
-      # BUILDKIT_INLINE_CACHE embeds cache metadata in the pushed image so the
-      # next run's --cache-from can reuse its layers. Each build only records
-      # keys for its own instructions, so the base image needs its own export
-      # and its own published tag: seeding the base from :latest (the prebuild
-      # image) finds no keys for the base layers, the base rebuilds with a new
-      # digest, and every prebuild layer misses in turn (you-thon bug #2667).
+      # BUILDKIT_INLINE_CACHE embeds cache keys in the pushed image for the next
+      # run's --cache-from. Each build records keys only for its own layers, so the
+      # base needs its own export and its own :base tag; seeding it from :latest
+      # misses every base layer, and then every prebuild layer too.
       - name: Build base devcontainer image
         run: |
           DOCKER_BUILDKIT=1 docker build \
@@ -124,8 +113,7 @@ jobs:
   publish:
     name: publish
     needs: build-devcontainer
-    # Only a push to main publishes. Pull requests, the weekly schedule and manual
-    # dispatch run the build job alone.
+    # PRs, the schedule and manual dispatch run only the build job.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60

@@ -78,8 +78,7 @@ check_tool "psql" "psql --version"
 check_tool "jq" "jq --version"
 check_tool "git" "git --version"
 
-# Version assertions. The expected values come from pins.sh (which parses the Dockerfiles and the
-# pytaiga-mcp installer), so the test cannot drift from the pins.
+# Version assertions against pins.sh, so the test cannot drift from the pins.
 PINS_OUT=""
 PINS_OK=1
 PINS_OUT=$("$SCRIPT_DIR/pins.sh" "$REPO_ROOT" 2>&1) || PINS_OK=0

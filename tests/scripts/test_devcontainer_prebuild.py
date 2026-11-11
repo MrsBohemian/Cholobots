@@ -1,4 +1,4 @@
-# ABOUTME: Contract test for .devcontainer/Dockerfile.prebuild and the root .dockerignore (#74).
+# ABOUTME: Contract test for .devcontainer/Dockerfile.prebuild and the root .dockerignore.
 # ABOUTME: Reads the files as text only; it never builds the image or starts Docker.
 import re
 import subprocess
