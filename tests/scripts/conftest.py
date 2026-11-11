@@ -16,31 +16,33 @@ def _git(*args, cwd):
     )
 
 
-def make_host_repo(parent, stale_main=False):
+def make_host_repo(parent, stale_main=False, remote="origin"):
     """Create a sandbox host repo with `main` checked out and a local bare
-    `origin`, in a fresh directory under `parent`, and return the host repo
-    path. Each call gets its own directory, so one test may create several.
+    bare repo registered as `remote`, in a fresh directory under `parent`, and
+    return the host repo path. Each call gets its own directory, so one test
+    may create several.
 
-    The orchestrator's base-reachability check fetches from origin and
-    compares against the checked-out `main`; pointing it here keeps those
-    calls offline and independent of the developer's real clone. With
-    `stale_main`, origin gains a commit the host's `main` lacks.
+    The orchestrator's base-reachability check fetches from its remote
+    (`upstream`, so orchestrator tests pass `remote="upstream"`) and compares
+    against the checked-out `main`; pointing it here keeps those calls
+    offline and independent of the developer's real clone. With
+    `stale_main`, the remote gains a commit the host's `main` lacks.
     """
     Path(parent).mkdir(parents=True, exist_ok=True)
     path = Path(tempfile.mkdtemp(prefix="host-repo-", dir=parent))
-    origin = path / "origin.git"
+    origin = path / f"{remote}.git"
     host = path / "host"
     seed = path / "seed"
 
     _git("init", "--quiet", "--bare", "--initial-branch=main", str(origin), cwd=path)
     _git("init", "--quiet", "--initial-branch=main", str(seed), cwd=path)
     _git("commit", "--quiet", "--allow-empty", "-m", "initial", cwd=seed)
-    _git("remote", "add", "origin", str(origin), cwd=seed)
-    _git("push", "--quiet", "origin", "main", cwd=seed)
-    _git("clone", "--quiet", str(origin), str(host), cwd=path)
+    _git("remote", "add", remote, str(origin), cwd=seed)
+    _git("push", "--quiet", remote, "main", cwd=seed)
+    _git("clone", "--quiet", "-o", remote, str(origin), str(host), cwd=path)
 
     if stale_main:
         _git("commit", "--quiet", "--allow-empty", "-m", "ahead of host", cwd=seed)
-        _git("push", "--quiet", "origin", "main", cwd=seed)
+        _git("push", "--quiet", remote, "main", cwd=seed)
 
     return host
