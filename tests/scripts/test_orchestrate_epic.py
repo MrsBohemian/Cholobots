@@ -21,6 +21,7 @@ from orchestrate_epic import (
     MAX_TRANSIENT_HOLD_SECONDS,
     MAX_TRANSIENT_RETRIES,
     Orchestrator,
+    SMOKE_CMD,
     detect_transient_exit,
     determine_outcome,
     read_log_tail,
@@ -715,7 +716,7 @@ class TestNotBeforeGating:
 # ── launch timeout / teardown containment ───────────────
 
 
-def _make_orchestrator(tmp_path, refs=(101,), base_branch="main"):
+def _make_orchestrator(tmp_path, refs=(101,), base_branch="main", dry_run=False):
     """Orchestrator whose script_dir is tmp_path, with queued stories for refs,
     running its host-repo git against a sandbox repo whose `main` is current."""
     mock_bin = tmp_path / "mock-bin"
@@ -726,6 +727,7 @@ def _make_orchestrator(tmp_path, refs=(101,), base_branch="main"):
     orch = Orchestrator(
         "99999", 1, str(stories_file), str(mock_bin), str(tmp_path), base_branch,
         repo_root=make_host_repo(tmp_path / "host-repo", remote="upstream"),
+        dry_run=dry_run,
     )
     orch.base_dir.mkdir(parents=True, exist_ok=True)
     orch.sm.init_from_stories("99999", 1, stories, orch.base_dir, base_branch)
@@ -737,7 +739,7 @@ def _write_script(path, body):
     path.chmod(0o755)
 
 
-def _resume_orchestrator(tmp_path, base_branch, refs=(101,)):
+def _resume_orchestrator(tmp_path, base_branch, refs=(101,), dry_run=False):
     """Orchestrator pointed at an already-initialized state file, ready for init_or_resume()."""
     mock_bin = tmp_path / "mock-bin"
     mock_bin.mkdir(exist_ok=True)
@@ -747,6 +749,7 @@ def _resume_orchestrator(tmp_path, base_branch, refs=(101,)):
     return Orchestrator(
         "99999", 1, str(stories_file), str(mock_bin), str(tmp_path), base_branch,
         repo_root=make_host_repo(tmp_path / "host-repo", remote="upstream"),
+        dry_run=dry_run,
     )
 
 
@@ -2838,3 +2841,129 @@ class TestIsAgentProcess:
         proc = subprocess.Popen(["true"])
         proc.wait()
         assert is_agent_process(proc.pid) is False
+
+
+# ── --dry-run ───────────────────────────────────────────
+
+
+class TestDryRun:
+    """A dry run launches and prepares real containers, smokes the stack with
+    exec.sh instead of starting the story agent, and keeps everything."""
+
+    def _orchestrator(self, tmp_path, monkeypatch, smoke_exit=0, refs=(101,)):
+        orch, mock_bin = _make_orchestrator(tmp_path, refs=refs, dry_run=True)
+        calls = tmp_path / "calls.log"
+        _write_script(mock_bin / "launch.sh",
+                      f'echo "launch $1" >> "{calls}"\n'
+                      'echo "CONTAINER_ID=cid-$(basename "$1")"\n')
+        _write_script(mock_bin / "prepare-clone.sh", f'echo "prepare $1" >> "{calls}"\n')
+        _write_script(mock_bin / "exec.sh",
+                      f'echo "exec $1 $2" >> "{calls}"\n'
+                      'echo "smoke output"\n'
+                      f'exit {smoke_exit}\n')
+        _write_script(mock_bin / "exec-skill.sh", f'echo "exec-skill $*" >> "{calls}"\n')
+        _write_script(mock_bin / "teardown.sh", f'echo "teardown $*" >> "{calls}"\n')
+        # Any gh call a dry run makes lands in the call log.
+        _write_script(mock_bin / "gh", f'echo "gh $*" >> "{calls}"\n')
+        _write_script(mock_bin / "docker", f'echo "docker $*" >> "{calls}"\n')
+        monkeypatch.setenv("PATH", f"{mock_bin}{os.pathsep}{os.environ['PATH']}")
+        return orch, calls
+
+    def _run_story_to_completion(self, orch, ref=101):
+        assert orch.launch_story(ref) is True
+        orch.child_procs[ref].wait(timeout=10)
+        orch.check_completions()
+
+    def test_dry_run_runs_smoke_instead_of_agent(self, tmp_path, monkeypatch):
+        orch, calls = self._orchestrator(tmp_path, monkeypatch)
+
+        self._run_story_to_completion(orch)
+
+        clone = orch.sm.get_story(101)["clonePath"]
+        lines = calls.read_text().splitlines()
+        assert lines == [
+            f"launch {clone}", f"prepare {clone}", f"exec {clone} {SMOKE_CMD}",
+        ]
+        assert "smoke output" in Path(orch.sm.get_story(101)["logFile"]).read_text()
+
+    def test_dry_run_never_tears_down_or_pushes(self, tmp_path, monkeypatch, capsys):
+        orch, calls = self._orchestrator(tmp_path, monkeypatch)
+
+        self._run_story_to_completion(orch)
+        orch._final_cleanup()
+
+        recorded = calls.read_text()
+        for forbidden in ("teardown", "exec-skill", "gh ", "docker "):
+            assert forbidden not in recorded
+        clone = orch.sm.get_story(101)["clonePath"]
+        assert f"Dry run: kept {clone} (container cid-story-101)" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("smoke_exit,status,outcome", [
+        (0, "complete", "dry_run_ok"),
+        (3, "error", "dry_run_failed"),
+    ])
+    def test_dry_run_outcome_follows_smoke_exit_code(
+            self, tmp_path, monkeypatch, capsys, smoke_exit, status, outcome):
+        orch, _ = self._orchestrator(tmp_path, monkeypatch, smoke_exit=smoke_exit)
+
+        self._run_story_to_completion(orch)
+
+        story = orch.sm.get_story(101)
+        assert (story["status"], story["outcome"]) == (status, outcome)
+        assert f"COMPLETED:101:{outcome}:none" in capsys.readouterr().out
+
+    def test_dry_run_skips_dependency_bearing_story(self, tmp_path, monkeypatch, capsys):
+        orch, calls = self._orchestrator(tmp_path, monkeypatch, refs=(101, 102))
+        orch.stories_file = str(tmp_path / "stories.json")
+        Path(orch.stories_file).write_text(json.dumps([
+            {"ref": 101, "id": 1101, "subject": "Root"},
+            {"ref": 102, "id": 1102, "subject": "Child", "dependencies": [101]},
+        ]))
+        Path(orch.sm.state_file).unlink()
+
+        orch.init_or_resume()
+
+        assert orch.sm.get_story(101)["status"] == "queued"
+        child = orch.sm.get_story(102)
+        assert (child["status"], child["outcome"]) == ("skipped", "dry_run_dependency")
+        assert "SKIPPED:102:dry_run_dependency" in capsys.readouterr().out
+
+    def test_dry_run_state_records_the_flag(self, tmp_path, monkeypatch):
+        orch, _ = self._orchestrator(tmp_path, monkeypatch)
+        Path(orch.sm.state_file).unlink()
+
+        orch.init_or_resume()
+
+        assert json.loads(Path(orch.sm.state_file).read_text())["dryRun"] is True
+
+    @pytest.mark.parametrize("state_dry_run,run_dry_run", [(True, False), (False, True)])
+    def test_resume_rejects_dry_run_mismatch(
+            self, tmp_path, state_dry_run, run_dry_run, capsys):
+        first = _resume_orchestrator(tmp_path, "main", dry_run=state_dry_run)
+        first.init_or_resume()
+        before = Path(first.sm.state_file).read_text()
+
+        second = _resume_orchestrator(tmp_path, "main", dry_run=run_dry_run)
+        with pytest.raises(SystemExit) as exc:
+            second.init_or_resume()
+
+        assert exc.value.code == 2
+        assert "dry" in capsys.readouterr().err.lower()
+        assert Path(first.sm.state_file).read_text() == before
+
+
+class TestUsage:
+    def _run(self, tmp_path, *extra):
+        stories = tmp_path / "stories.json"
+        stories.write_text("[]")
+        return subprocess.run(
+            [sys.executable, os.path.join(REPO_ROOT, "scripts", "devcontainer", "orchestrate_epic.py"),
+             "99999", "1", str(stories), *extra],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "ORCHESTRATE_STATE_DIR": str(tmp_path)},
+        )
+
+    def test_unknown_extra_argument_is_usage_error(self, tmp_path):
+        result = self._run(tmp_path, "--bogus")
+        assert result.returncode == 1
+        assert "--dry-run" in result.stderr

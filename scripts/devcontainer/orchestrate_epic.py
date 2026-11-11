@@ -1,7 +1,12 @@
 # ABOUTME: Deterministic state machine for parallel story implementation across devcontainers.
 # ABOUTME: Manages launch/monitor/teardown lifecycle; emits machine-parseable events on stdout.
 """
-Usage: python3 orchestrate_epic.py <epic-ref> <concurrency> <stories-json-file>
+Usage: python3 orchestrate_epic.py <epic-ref> <concurrency> <stories-json-file> [--dry-run]
+
+--dry-run launches and prepares each story's container like a real run, then
+smokes the container's Supabase stack with exec.sh instead of starting the story
+agent. It never pushes, never calls gh and never tears anything down: containers
+and clones are kept so the operator can check isolation between them.
 
 Each story runs in its own devcontainer (launch.sh), with its own Docker-in-Docker
 daemon and its own local Supabase stack, and the story agent is started through
@@ -57,6 +62,13 @@ GH_REPO = os.environ.get("GH_REPO", "MrsBohemian/Cholobots")
 # The state file records which mode wrote it so a resume never mixes the
 # container orchestrator with the worktree slot loop.
 STATE_MODE = "container"
+
+# What a dry run executes in each container in place of the story agent:
+# the stack must be healthy, reset cleanly and pass the integration tests.
+SMOKE_CMD = (
+    "supabase status -o env && supabase db reset "
+    "&& { [ ! -d tests/integration ] || python -m pytest tests/integration -q; }"
+)
 
 
 def gh_cmd(*args):
@@ -279,12 +291,14 @@ class StateManager:
             "baseBranch": None,
         }
 
-    def init_from_stories(self, epic_ref, concurrency, stories, base_dir, base_branch="main"):
+    def init_from_stories(self, epic_ref, concurrency, stories, base_dir, base_branch="main",
+                          dry_run=False):
         """Initialize state from a list of story dicts."""
         deps_map = self._normalize_deps(stories)
         with self._lock:
             self._state = {
                 "mode": STATE_MODE,
+                "dryRun": dry_run,
                 "epicRef": str(epic_ref),
                 "concurrency": concurrency,
                 "baseBranch": base_branch,
@@ -655,8 +669,9 @@ class Orchestrator:
     """Main orchestrator state machine."""
 
     def __init__(self, epic_ref, concurrency, stories_file, script_dir, state_dir, base_branch,
-                 repo_root=None):
+                 repo_root=None, dry_run=False):
         self.epic_ref = epic_ref
+        self.dry_run = dry_run
         self.concurrency = concurrency
         self.stories_file = stories_file
         self.script_dir = Path(script_dir)
@@ -846,6 +861,9 @@ class Orchestrator:
         Failures are logged, never swallowed: a silent teardown failure leaks a
         multi-GB container and lets a retry reuse a dirty clone.
         """
+        if self.dry_run:
+            log(f"Dry run: kept {clone_path} (container {container_id or self._recorded_container(clone_path)})")
+            return True
         timeout = int(os.environ.get("ORCHESTRATE_TEARDOWN_TIMEOUT", "180"))
         cmd = [str(self.script_dir / "teardown.sh"), clone_path]
         if keep_clone:
@@ -869,6 +887,13 @@ class Orchestrator:
         if not ok:
             ok = self._force_remove_containers(clone_path, container_id)
         return ok
+
+    def _recorded_container(self, clone_path):
+        """The container id recorded for a clone, for log lines."""
+        for story in self.sm.state["stories"]:
+            if story.get("clonePath") == clone_path:
+                return story.get("containerId")
+        return None
 
     def _force_remove_containers(self, clone_path, container_id=None):
         """Last-resort `docker rm -f` for a clone's containers. Returns True if none remain."""
@@ -919,6 +944,8 @@ class Orchestrator:
         preserved work are kept (containers still go): after a signal, the next run
         resumes them from the directory.
         """
+        if self.dry_run:
+            return
         for story in self.sm.state["stories"]:
             clone_path = story.get("clonePath")
             container_id = story.get("containerId")
@@ -1283,6 +1310,13 @@ class Orchestrator:
                     f"re-invoke /implement-epic with n=1 or --worktrees, or delete the file"
                 )
                 sys.exit(2)
+            if bool(self.sm.state.get("dryRun", False)) != self.dry_run:
+                written = "a --dry-run" if self.sm.state.get("dryRun", False) else "a real"
+                log(
+                    f"ERROR: {self.sm.state_file} was written by {written} run; "
+                    f"re-invoke {'without' if self.dry_run else 'with'} --dry-run, or delete the file"
+                )
+                sys.exit(2)
             log("Resuming from existing state file")
             # Use the stored concurrency to avoid mid-run surprises if
             # the caller passes a different -n value on resume.
@@ -1316,16 +1350,33 @@ class Orchestrator:
             for ref in added:
                 emit(f"ADDED:{ref}")
             self._resume()
+            self._skip_dependency_bearing_for_dry_run()
             return
 
         # Fresh init
         stories = self._load_stories_file()
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.sm.init_from_stories(
-            self.epic_ref, self.concurrency, stories, self.base_dir, self.base_branch
+            self.epic_ref, self.concurrency, stories, self.base_dir, self.base_branch,
+            dry_run=self.dry_run,
         )
         total = len(stories)
         emit(f"INIT:{self.epic_ref}:{total}:{self.concurrency}")
+        self._skip_dependency_bearing_for_dry_run()
+
+    def _skip_dependency_bearing_for_dry_run(self):
+        """A dry run only smokes dependency-free stories: stacking on a parent
+        needs a real branch (and a multi-parent story an integration branch),
+        and a dry run pushes nothing."""
+        if not self.dry_run:
+            return
+        for story in self.sm.stories_with_status("queued"):
+            if story.get("dependencies"):
+                self.sm.update_story(
+                    story["ref"], status="skipped", outcome="dry_run_dependency",
+                    completedAt=utcnow_iso(),
+                )
+                emit(f"SKIPPED:{story['ref']}:dry_run_dependency")
 
     def _resume(self):
         """Handle resumption: check active PIDs, reset dead ones."""
@@ -1841,7 +1892,7 @@ class Orchestrator:
         # arguments, since the in-container state file the skill would
         # otherwise detect does not survive a container loss.
         skill_path = Path(clone_path) / ".claude/skills/fully-implement-story/SKILL.md"
-        if not skill_path.is_file():
+        if not self.dry_run and not skill_path.is_file():
             log(f"Could not read skill for story {ref}: {skill_path} not found")
             return self._handle_launch_failure(
                 ref, clone_path, "skill file not found", keep_clone=resuming)
@@ -1850,20 +1901,37 @@ class Orchestrator:
             return False
 
         skill_args = f"{ref} {base} --resume" if resuming else f"{ref} {base}"
-        cmd = [
-            str(self.script_dir / "exec-skill.sh"), clone_path,
-            "fully-implement-story", skill_args, "--log", log_file,
-        ]
+        if self.dry_run:
+            # Smoke the container's stack instead of running the agent; the
+            # output goes to the story's log file.
+            cmd = [str(self.script_dir / "exec.sh"), clone_path, SMOKE_CMD]
+            launcher = "exec.sh"
+        else:
+            cmd = [
+                str(self.script_dir / "exec-skill.sh"), clone_path,
+                "fully-implement-story", skill_args, "--log", log_file,
+            ]
+            launcher = "exec-skill.sh"
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
+            if self.dry_run:
+                with open(log_file, "w") as smoke_log:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdin=subprocess.DEVNULL,
+                        stdout=smoke_log,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
+            else:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
         except OSError as e:
-            log(f"Failed to start exec-skill.sh for story {ref}: {e}")
+            log(f"Failed to start {launcher} for story {ref}: {e}")
             return self._handle_launch_failure(
                 ref, clone_path, "agent start failed", container_id, keep_clone=resuming)
 
@@ -1910,6 +1978,10 @@ class Orchestrator:
             elif pid is not None and is_agent_process(pid):
                 continue  # Still running
 
+            if self.dry_run:
+                self._finish_dry_run_story(story, proc)
+                continue
+
             # Process exited. A provider rate limit is transient: requeue the
             # story to relaunch after the limit resets. This runs before
             # determine_outcome(), which deletes the in-container story state
@@ -1938,6 +2010,20 @@ class Orchestrator:
                 outcome_label="no_pr_created" if no_pr_downgrade else None,
                 branch=branch,
             )
+
+    def _finish_dry_run_story(self, story, proc):
+        """Record a dry-run story's smoke result. Nothing is torn down."""
+        ref = story["ref"]
+        rc = proc.returncode if proc is not None else 1
+        outcome = "dry_run_ok" if rc == 0 else "dry_run_failed"
+        self.sm.update_story(
+            ref,
+            status="complete" if rc == 0 else "error", outcome=outcome,
+            completedAt=utcnow_iso(), pid=None,
+        )
+        self._teardown(story["clonePath"], story.get("containerId"), keep_clone=True)
+        self.child_procs.pop(ref, None)
+        emit(f"COMPLETED:{ref}:{outcome}:none")
 
     def fill_slots(self, now=None):
         """Fill empty concurrency slots with queued stories.
@@ -2034,12 +2120,12 @@ class Orchestrator:
 
 
 def main():
-    if len(sys.argv) < 4:
-        print(
-            "Usage: orchestrate_epic.py <epic-ref> <concurrency> <stories-json-file>",
-            file=sys.stderr,
-        )
+    usage = "Usage: orchestrate_epic.py <epic-ref> <concurrency> <stories-json-file> [--dry-run]"
+    extra = sys.argv[4:]
+    if len(sys.argv) < 4 or any(a != "--dry-run" for a in extra):
+        print(usage, file=sys.stderr)
         sys.exit(1)
+    dry_run = "--dry-run" in extra
 
     epic_ref = sys.argv[1]
     try:
@@ -2071,7 +2157,7 @@ def main():
 
     orchestrator = Orchestrator(
         epic_ref, concurrency, stories_file, script_dir, state_dir, base_branch,
-        repo_root=repo_root,
+        repo_root=repo_root, dry_run=dry_run,
     )
     try:
         orchestrator.run()
