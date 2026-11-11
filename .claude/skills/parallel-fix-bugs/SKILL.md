@@ -239,7 +239,7 @@ Two tables, one per mode; the modes emit different events.
 - `LAUNCH_OK:<ref>:<pid>` -> Agent started in the container (`<pid>` is the host-side `exec-skill.sh` process)
 - `LAUNCH_FAIL:<ref>:<reason>` -> The container or clone could not be prepared; a bug is retried until 3 launch attempts have failed, then it is an error
 - `SLOT_FILLED:<active>:<queued>` -> A freed slot took the next queued bug
-- `COMPLETED:<ref>:<outcome>:<pr>` -> Bug finished; `<outcome>` is `complete`, `already_closed`, `escalated`, or `error` (a `complete` with no PR is downgraded to `error`/`no_pr_created`)
+- `COMPLETED:<ref>:<outcome>:<pr>` -> Bug finished; `<outcome>` is `complete`, `already_closed`, `escalated`, or `error` (a `complete` with no PR is downgraded to `error`/`no_pr_created`), or `teardown_failed` (the bug's container could not be removed, so it is not requeued; a bug that finished but whose container could not be removed keeps its outcome and gets `teardownFailed: true` in the state file)
 - `WAITING:<active>:<queued>` -> Polling cycle
 - `DONE:<complete>:<escalated>:<errors>` -> Final summary
 

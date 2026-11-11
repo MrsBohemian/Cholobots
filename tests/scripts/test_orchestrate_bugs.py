@@ -1131,6 +1131,109 @@ class TestRunScriptRegistersBeforeShutdownCanMissIt:
         assert 101 not in orch.launch_procs, "launch process was never deregistered"
 
 
+class TestFailedTeardownKeepsBugOutOfCirculation:
+    """A teardown that fails may leave the old container or agent bound to the
+    clone, so no path may requeue the bug or report it as cleanly finished."""
+
+    def _orch(self, tmp_path, monkeypatch, teardown_ok):
+        orch = make_orch(tmp_path, [101], concurrency=1)
+        monkeypatch.setattr(orch, "_teardown", lambda path: teardown_ok)
+        monkeypatch.setattr("orchestrate_bugs.is_agent_process", lambda pid: False)
+        return orch
+
+    def test_resume_does_not_requeue_a_dead_bug_whose_teardown_failed(
+            self, tmp_path, monkeypatch, capsys):
+        orch = self._orch(tmp_path, monkeypatch, teardown_ok=False)
+        orch.sm.update_bug(101, status="active", pid=99999, containerId="abc123")
+
+        orch._resume()
+
+        bug = orch.sm.get_bug(101)
+        assert bug["status"] == "error"
+        assert bug["outcome"] == "teardown_failed"
+        assert bug["containerId"] == "abc123"
+        assert "COMPLETED:101:teardown_failed:none" in capsys.readouterr().out
+
+    def test_resume_does_not_requeue_a_launching_bug_whose_teardown_failed(
+            self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, teardown_ok=False)
+        orch.sm.update_bug(101, status="launching")
+
+        orch._resume()
+
+        assert orch.sm.get_bug(101)["outcome"] == "teardown_failed"
+
+    def test_resume_requeues_when_teardown_succeeds(self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, teardown_ok=True)
+        orch.sm.update_bug(101, status="active", pid=99999)
+
+        orch._resume()
+
+        assert orch.sm.get_bug(101)["status"] == "queued"
+
+    def test_signal_cleanup_leaves_the_bug_active_when_teardown_fails(self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, teardown_ok=False)
+        orch.sm.update_bug(101, status="active", pid=None)
+        monkeypatch.setattr("orchestrate_bugs.time.sleep", lambda s: None)
+
+        orch._cleanup_active()
+
+        assert orch.sm.get_bug(101)["status"] == "active"
+
+    def test_signal_cleanup_leaves_a_launching_bug_launching_when_teardown_fails(
+            self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, teardown_ok=False)
+        orch.sm.update_bug(101, status="launching")
+
+        orch._cleanup_launching()
+
+        assert orch.sm.get_bug(101)["status"] == "launching"
+
+    @pytest.mark.parametrize("outcome,pr", [("complete", "42"), ("escalated", "none"),
+                                            ("already_closed", "none")])
+    def test_finished_bug_records_that_its_teardown_failed(
+            self, tmp_path, monkeypatch, capsys, outcome, pr):
+        orch = self._orch(tmp_path, monkeypatch, teardown_ok=False)
+        orch.sm.update_bug(101, status="active", pid=99999, containerId="abc123")
+        monkeypatch.setattr(
+            "orchestrate_bugs.determine_outcome",
+            lambda ref, log_file, container_id=None, state_dir="/tmp": (outcome, pr, None),
+        )
+
+        orch.check_completions()
+
+        bug = orch.sm.get_bug(101)
+        assert bug["status"] != "active"
+        assert bug["teardownFailed"] is True
+        assert "container may still be running" in capsys.readouterr().err
+
+    def test_no_pr_downgrade_records_that_its_teardown_failed(self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, teardown_ok=False)
+        orch.sm.update_bug(101, status="active", pid=99999, containerId="abc123")
+        monkeypatch.setattr(
+            "orchestrate_bugs.determine_outcome",
+            lambda ref, log_file, container_id=None, state_dir="/tmp": ("complete", "none", None),
+        )
+
+        orch.check_completions()
+
+        bug = orch.sm.get_bug(101)
+        assert bug["outcome"] == "no_pr_created"
+        assert bug["teardownFailed"] is True
+
+    def test_finished_bug_with_clean_teardown_has_no_failure_flag(self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, teardown_ok=True)
+        orch.sm.update_bug(101, status="active", pid=99999)
+        monkeypatch.setattr(
+            "orchestrate_bugs.determine_outcome",
+            lambda ref, log_file, container_id=None, state_dir="/tmp": ("complete", "42", None),
+        )
+
+        orch.check_completions()
+
+        assert "teardownFailed" not in orch.sm.get_bug(101)
+
+
 class TestHostStateFileIsNotReadInRealRuns:
     """The state file that decides an outcome is the one inside the bug's
     container. /tmp/fix-and-remediate-<ref>.json on the host is the path worktree

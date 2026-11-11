@@ -1034,6 +1034,133 @@ class TestTeardownReportsFailure:
         assert "WARNING" in err and "permission denied" in err
 
 
+class TestFailedTeardownKeepsStoryOutOfCirculation:
+    """A teardown that fails may leave the old container or agent bound to the
+    clone. No path may then requeue the story (a relaunch would reuse the clone
+    beside the survivor) or report it as cleanly finished."""
+
+    def _orch(self, tmp_path, monkeypatch, refs=(101, 102), teardown_ok=False):
+        orch, _ = _make_orchestrator(tmp_path, refs=refs)
+        calls = []
+
+        def fake_teardown(clone_path, container_id=None, keep_clone=False):
+            calls.append((clone_path, container_id, keep_clone))
+            return teardown_ok
+
+        monkeypatch.setattr(orch, "_teardown", fake_teardown)
+        monkeypatch.setattr("orchestrate_epic.is_agent_process", lambda pid: False)
+        orch.teardown_calls = calls
+        return orch
+
+    def test_resume_does_not_requeue_a_dead_story_whose_teardown_failed(
+            self, tmp_path, monkeypatch, capsys):
+        orch = self._orch(tmp_path, monkeypatch)
+        orch.sm.update_story(102, dependencies=[101])
+        orch.sm.update_story(101, status="active", pid=99999, containerId="abc123")
+
+        orch._resume()
+
+        story = orch.sm.get_story(101)
+        assert story["status"] == "error"
+        assert story["outcome"] == "teardown_failed"
+        assert story["containerId"] == "abc123", "the id must survive for the final sweep"
+        assert story["holdsPreservedWork"] is True, "the clone must not be deleted blindly"
+        assert orch.sm.next_queued_ref() is None
+        assert orch.sm.get_story(102)["status"] == "skipped"
+        out = capsys.readouterr().out
+        assert "COMPLETED:101:teardown_failed:none" in out
+        assert "SKIPPED:102:dependency_failed:101" in out
+
+    def test_resume_does_not_requeue_a_launching_story_whose_teardown_failed(
+            self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, refs=(101,))
+        orch.sm.update_story(101, status="launching", containerId="abc123")
+
+        orch._resume()
+
+        story = orch.sm.get_story(101)
+        assert story["status"] == "error"
+        assert story["outcome"] == "teardown_failed"
+
+    def test_resume_still_requeues_when_teardown_succeeds(self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, refs=(101,), teardown_ok=True)
+        orch.sm.update_story(101, status="active", pid=99999)
+
+        orch._resume()
+
+        assert orch.sm.get_story(101)["status"] == "queued"
+
+    def test_resume_teardown_is_given_the_recorded_container(self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, refs=(101,), teardown_ok=True)
+        orch.sm.update_story(101, status="launching", containerId="abc123")
+
+        orch._resume()
+
+        assert orch.teardown_calls[0][1] == "abc123"
+
+    def test_signal_cleanup_leaves_an_active_story_active_when_teardown_fails(
+            self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, refs=(101,))
+        orch.sm.update_story(101, status="active", pid=None, containerId="abc123")
+        monkeypatch.setattr("orchestrate_epic.time.sleep", lambda s: None)
+
+        orch._cleanup_active()
+
+        assert orch.sm.get_story(101)["status"] == "active"
+
+    def test_signal_cleanup_requeues_an_active_story_when_teardown_succeeds(
+            self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, refs=(101,), teardown_ok=True)
+        orch.sm.update_story(101, status="active", pid=None)
+        monkeypatch.setattr("orchestrate_epic.time.sleep", lambda s: None)
+
+        orch._cleanup_active()
+
+        assert orch.sm.get_story(101)["status"] == "queued"
+
+    def test_signal_cleanup_leaves_a_launching_story_launching_when_teardown_fails(
+            self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, refs=(101,))
+        orch.sm.update_story(101, status="launching", containerId="abc123")
+
+        orch._cleanup_launching()
+
+        assert orch.sm.get_story(101)["status"] == "launching"
+
+    def test_signal_cleanup_requeues_a_launching_story_when_teardown_succeeds(
+            self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, refs=(101,), teardown_ok=True)
+        orch.sm.update_story(101, status="launching")
+
+        orch._cleanup_launching()
+
+        assert orch.sm.get_story(101)["status"] == "queued"
+
+    @pytest.mark.parametrize("outcome,expected_status", [
+        ("complete", "complete"), ("handed_off", "complete"), ("escalated", "escalated"),
+        ("error", "error"),
+    ])
+    def test_finished_story_records_that_its_teardown_failed(
+            self, tmp_path, monkeypatch, capsys, outcome, expected_status):
+        orch = self._orch(tmp_path, monkeypatch, refs=(101,))
+        orch.sm.update_story(101, status="active", containerId="abc123")
+
+        orch._finish_story(orch.sm.get_story(101), outcome, "42" if outcome != "error" else "none")
+
+        story = orch.sm.get_story(101)
+        assert story["status"] == expected_status
+        assert story["teardownFailed"] is True
+        assert "container may still be running" in capsys.readouterr().err
+
+    def test_finished_story_with_clean_teardown_has_no_failure_flag(self, tmp_path, monkeypatch):
+        orch = self._orch(tmp_path, monkeypatch, refs=(101,), teardown_ok=True)
+        orch.sm.update_story(101, status="active")
+
+        orch._finish_story(orch.sm.get_story(101), "complete", "42")
+
+        assert "teardownFailed" not in orch.sm.get_story(101)
+
+
 class TestEnsureCloneAbsentRefusesWorktrees:
     """_ensure_clone_absent is the only removal path in this file that does
     not go through teardown.sh — it must not defeat teardown.sh's own

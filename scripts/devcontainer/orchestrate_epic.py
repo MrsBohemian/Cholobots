@@ -965,8 +965,13 @@ class Orchestrator(HostRepoBaseMixin):
             # work: the container goes, the clone and its marker stay so the
             # next run can still resume from them.
             preserved = self._holds_preserved_work(story)
-            self._teardown(clone_path, keep_clone=preserved)
-            self.sm.update_story(ref, status="queued", pid=None, holdsPreservedWork=preserved)
+            # On a failed cleanup the story keeps its status: the next run's
+            # _resume sweeps it again instead of launching over the leftover
+            # container or the old agent still bound to the clone.
+            if self._teardown(clone_path, story.get("containerId"), keep_clone=preserved):
+                self.sm.update_story(ref, status="queued", pid=None, holdsPreservedWork=preserved)
+            else:
+                log(f"Story {ref}: cleanup of {clone_path} failed; leaving it {story['status']}")
 
     def _cleanup_launching(self):
         """Stop in-flight launches and reset those stories to queued.
@@ -1006,8 +1011,11 @@ class Orchestrator(HostRepoBaseMixin):
         for story in self.sm.stories_with_status("launching"):
             ref = story["ref"]
             clone_path = story["clonePath"]
-            self._teardown(clone_path, keep_clone=self._holds_preserved_work(story))
-            self.sm.update_story(ref, status="queued")
+            if self._teardown(clone_path, story.get("containerId"),
+                              keep_clone=self._holds_preserved_work(story)):
+                self.sm.update_story(ref, status="queued")
+            else:
+                log(f"Story {ref}: cleanup of {clone_path} failed; leaving it launching")
 
     @staticmethod
     def _holds_preserved_work(story):
@@ -1596,17 +1604,14 @@ class Orchestrator(HostRepoBaseMixin):
                 self._finish_story(story, "error", pr, outcome_label="no_pr_created")
             else:
                 # Transient error (e.g., process crashed): reset to queued for retry
-                preserved = self._holds_preserved_work(story)
-                self._teardown(story["clonePath"], keep_clone=preserved)
-                self.sm.update_story(ref, status="queued", pid=None, holdsPreservedWork=preserved)
-                log(f"Story {ref} reset to queued")
+                if self._requeue_after_teardown(story, pid=None):
+                    log(f"Story {ref} reset to queued")
 
         # Check launching stories
         for story in list(self.sm.stories_with_status("launching")):
             ref = story["ref"]
-            self._teardown(story["clonePath"], keep_clone=self._holds_preserved_work(story))
-            self.sm.update_story(ref, status="queued")
-            log(f"Story {ref} (launching) reset to queued")
+            if self._requeue_after_teardown(story):
+                log(f"Story {ref} (launching) reset to queued")
 
         active = self.sm.count_status("active")
         queued = self.sm.count_status("queued")
@@ -1614,6 +1619,34 @@ class Orchestrator(HostRepoBaseMixin):
         escalated = self.sm.count_status("escalated")
         errors = self.sm.count_status("error")
         emit(f"RESUMED:{self.epic_ref}:{active}:{queued}:{complete}:{escalated}:{errors}")
+
+    def _requeue_after_teardown(self, story, **fields):
+        """Tear the story's container down and requeue it, only if the cleanup worked.
+
+        On a failed cleanup the old container or agent may still be bound to
+        the clone, and a relaunch would run a second one next to it. The story
+        becomes a terminal `teardown_failed` error instead, keeping its clone
+        (marked as preserved work) and container id so the next run's resume
+        sweep, and this run's final cleanup, can still remove the leak; its
+        dependents are cascade-skipped like any other terminal error. Returns
+        True when the story was requeued.
+        """
+        ref = story["ref"]
+        clone_path = story["clonePath"]
+        preserved = self._holds_preserved_work(story)
+        if self._teardown(clone_path, story.get("containerId"), keep_clone=preserved):
+            self.sm.update_story(ref, status="queued", holdsPreservedWork=preserved, **fields)
+            return True
+        log(f"Story {ref}: cleanup of {clone_path} failed; not requeueing "
+            f"(a retry would bind a second container to the same folder)")
+        self.sm.update_story(
+            ref, status="error", outcome="teardown_failed",
+            completedAt=utcnow_iso(), pid=None, holdsPreservedWork=True,
+        )
+        emit(f"COMPLETED:{ref}:teardown_failed:none")
+        for skipped_ref in self.sm.cascade_skip(ref):
+            emit(f"SKIPPED:{skipped_ref}:dependency_failed:{ref}")
+        return False
 
     def _handle_launch_failure(self, ref, clone_path, reason, container_id=None, keep_clone=False):
         """Handle a launch failure: retry if under limit, otherwise mark as terminal error.
@@ -1726,7 +1759,14 @@ class Orchestrator(HostRepoBaseMixin):
             completedAt=utcnow_iso(), prNumber=self._pr_number_value(ref, pr), pid=None,
             branch=branch, holdsPreservedWork=keep_clone,
         )
-        self._teardown(story["clonePath"], keep_clone=keep_clone)
+        if not self._teardown(story["clonePath"], story.get("containerId"), keep_clone=keep_clone):
+            # The work is finished (the PR exists), so the outcome stands and
+            # dependents may proceed -- but the container may still be running.
+            # Record it for the report; _final_cleanup retries, and an error or
+            # escalated story's relaunch sweeps the container before it resumes.
+            log(f"WARNING: story {ref} finished as {outcome} but its container may still be "
+                f"running (cleanup of {story['clonePath']} failed)")
+            self.sm.update_story(ref, teardownFailed=True)
         self.child_procs.pop(ref, None)
         emit(f"COMPLETED:{ref}:{outcome}:{pr}")
         if outcome in ("error", "escalated"):

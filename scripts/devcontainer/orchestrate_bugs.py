@@ -491,6 +491,22 @@ class Orchestrator(HostRepoBaseMixin):
         emit(f"COMPLETED:{ref}:teardown_failed:none")
         return False
 
+    def _teardown_finished(self, ref, clone_path, outcome):
+        """Tear down a bug that reached a terminal outcome and record a failure.
+
+        The work is finished (the PR exists, or the bug is already closed), so
+        the outcome stands; but the container may still be running, so the bug
+        is flagged `teardownFailed` and logged for the report. The final
+        cleanup retries, and a requeued error bug's relaunch sweeps the
+        container before it resumes. Returns True when the cleanup worked.
+        """
+        if self._teardown(clone_path):
+            return True
+        log(f"WARNING: bug {ref} finished as {outcome} but its container may still be "
+            f"running (cleanup of {clone_path} failed)")
+        self.sm.update_bug(ref, teardownFailed=True)
+        return False
+
     def _final_cleanup(self):
         """Defense-in-depth: iterate ALL bugs and ensure their containers are stopped/removed."""
         for bug in self.sm.state["bugs"]:
@@ -668,7 +684,7 @@ class Orchestrator(HostRepoBaseMixin):
                     status=status, outcome=outcome,
                     completedAt=utcnow_iso(), prNumber=pr_value, pid=None,
                 )
-                self._teardown(bug["clonePath"])
+                self._teardown_finished(ref, bug["clonePath"], outcome)
                 emit(f"COMPLETED:{ref}:{outcome}:{pr}")
             elif no_pr_downgrade:
                 self.sm.update_bug(
@@ -676,7 +692,7 @@ class Orchestrator(HostRepoBaseMixin):
                     status="error", outcome="no_pr_created",
                     completedAt=utcnow_iso(), pid=None,
                 )
-                self._teardown(bug["clonePath"])
+                self._teardown_finished(ref, bug["clonePath"], "no_pr_created")
                 emit(f"COMPLETED:{ref}:error:{pr}")
             elif self._requeue_after_teardown(ref, bug["clonePath"], pid=None):
                 log(f"Bug {ref} reset to queued")
@@ -899,7 +915,7 @@ class Orchestrator(HostRepoBaseMixin):
                 status=status, outcome=outcome_label,
                 completedAt=utcnow_iso(), prNumber=pr_value, pid=None,
             )
-            self._teardown(bug["clonePath"])
+            self._teardown_finished(ref, bug["clonePath"], outcome_label)
             with self.proc_lock:
                 self.child_procs.pop(ref, None)
             emit(f"COMPLETED:{ref}:{outcome_label}:{pr}")

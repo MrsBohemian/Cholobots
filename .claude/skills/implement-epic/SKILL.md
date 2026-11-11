@@ -597,7 +597,7 @@ Two tables, one per mode; the modes differ and so does what they emit.
 - `LAUNCH_OK:<ref>:<pid>` → Agent started inside the container (`<pid>` is the host-side `exec-skill.sh` process)
 - `LAUNCH_FAIL:<ref>:<reason>` → The container or clone could not be prepared
 - `SLOT_FILLED:<active>:<queued>` → A freed slot took the next ready story
-- `COMPLETED:<ref>:<outcome>:<pr>` → Story finished; `<outcome>` is `complete`, `handed_off` (a success) or `escalated`
+- `COMPLETED:<ref>:<outcome>:<pr>` → Story finished; `<outcome>` is `complete`, `handed_off` (a success) or `escalated`; `teardown_failed` (a resume could not remove the story's container, so it is a terminal error, not requeued; its dependents are skipped). A story that finished but whose container could not be removed keeps its outcome and gets `teardownFailed: true` in the state file
 - `FAILED:<ref>:<reason>` → Error outcome (`no_pr_created`, `agent_incomplete`)
 - `SKIPPED:<ref>:dependency_failed:<failed_ref>` → Skipped because a dependency did not succeed
 - `SKIPPED:<ref>:dry_run_dependency` → Dry run only: the story has dependencies, so it is not launched
