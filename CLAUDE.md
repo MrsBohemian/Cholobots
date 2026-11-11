@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Cholobots is a single Discord bot (discord.py, `!` prefix) that hosts six personas for a small contracting business (Handley Man): Metichebot (planning, daily tasks, time tracking, pings), Chismebot (CRM / leads), Guardabot (inventory), Crudobot (job costing, closeout, receipts), Obi Juan (subcontractor "quests"), Vueltabot (marketplace / delivery gigs). Data lives in Supabase. `mobile/` is a set of static HTML dashboards reading the same Supabase project with a publishable key (published to GitHub Pages from `mobile/` only).
+Cholobots is a single Discord bot (discord.py, `!` prefix) that hosts six personas for a small contracting business (Handley Man): Metichebot (planning, daily tasks, time tracking, pings), Chismebot (CRM / leads), Guardabot (inventory), Crudobot (job costing, closeout, receipts), Obi Juan (subcontractor "quests"), Vueltabot (marketplace / delivery gigs). Data lives in Supabase. `mobile/` is a set of static HTML dashboards reading the same Supabase project with a publishable key; only `mobile/` is published to GitHub Pages.
 
 Work is tracked in Taiga project `cholo-bots` (id 39) on https://backlog.growthgarage.org. The roadmap is `Cholobots_48_Hour_Development_Plan.md` at the repo root.
 

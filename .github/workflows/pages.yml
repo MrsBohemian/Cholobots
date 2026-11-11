@@ -1,17 +1,9 @@
-# ABOUTME: Publishes only mobile/ (the static dashboards) to GitHub Pages at https://mrsbohemian.github.io/Cholobots/.
-# ABOUTME: The deploy job is skipped, with a visible notice, until the repository variable PAGES_ENABLED is 'true'.
+# ABOUTME: Publishes mobile/ as is (no build, no Jekyll) to GitHub Pages at https://mrsbohemian.github.io/Cholobots/.
+# ABOUTME: The deploy job is skipped, with a notice, until the repository variable PAGES_ENABLED is 'true'.
 #
-# There is no build and no Jekyll: the artifact is the mobile/ folder as is, so
-# nothing outside it (.claude/, docs/, scripts/) is ever published.
-#
-# Pages is switched on by hand after the story #64 PR merges (story #179 task
-# #135: set the Pages source to "GitHub Actions", then set the repository
-# variable PAGES_ENABLED to 'true'). Until then a run on main must stay green,
-# so the deploy job is skipped and pages-disabled says why. Do not add
-# `enablement: true` to configure-pages: it needs an admin token.
-#
-# Security: no pull_request trigger; the publish permissions exist on the deploy
-# job only.
+# To switch on: set the Pages source to "GitHub Actions", then set PAGES_ENABLED.
+# Don't add `enablement: true` to configure-pages: it needs an admin token.
+# No pull_request trigger; only the deploy job gets publish permissions.
 name: Pages
 
 on:
@@ -25,7 +17,7 @@ on:
 permissions:
   contents: read
 
-# A Pages deploy that is already running is allowed to finish.
+# Let a running deploy finish.
 concurrency:
   group: pages
   cancel-in-progress: false

@@ -11,7 +11,7 @@ A Discord bot that hosts six Spanglish-speaking personas for running a small con
 | Obi Juan | `!obijuan` | subcontractor "quests", clock-in/out, payouts |
 | Vueltabot | `!vueltabot` | marketplace listings and delivery gigs |
 
-Data lives in Supabase. The `mobile/` folder holds static dashboards that read the same Supabase project; see [mobile/README.md](mobile/README.md). They are published at https://mrsbohemian.github.io/Cholobots/.
+Data lives in Supabase. `mobile/` holds static dashboards that read the same Supabase project ([mobile/README.md](mobile/README.md)), published at https://mrsbohemian.github.io/Cholobots/.
 
 ## Running locally
 
@@ -58,5 +58,5 @@ The setup script is run once by a project admin with `--apply`. Like the other h
 - `bots/` — one module per persona
 - `db/database.py` — legacy SQLite helpers plus the Supabase `metiche_weekly` accessors
 - `config.py` — env loading and the shared OpenAI client
-- `mobile/` — static dashboards, published to GitHub Pages by `.github/workflows/pages.yml`. It was imported with `git subtree`; `git blame` follows its history, and `git log -- mobile/<file> <file>` lists a page's commits from before the import.
+- `mobile/` — static dashboards, published to GitHub Pages by `.github/workflows/pages.yml`. For a page's full history use `git log -- mobile/<file> <file>` (commits before the subtree import use the old path).
 - `docs/` — assessments and design notes; `Cholobots_48_Hour_Development_Plan.md` is the current roadmap

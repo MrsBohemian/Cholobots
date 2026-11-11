@@ -115,7 +115,7 @@ else
     pass "every pinned action carries a version comment"
 fi
 
-# Pages is switched on by hand after merge; until then the run must stay green.
+# Until Pages is switched on, runs on main must stay green.
 DEPLOY_JOB=$(sed -n '/^  deploy:/,/^  [a-z-]*:$/p' <<< "$BODY")
 DISABLED_JOB=$(sed -n '/^  pages-disabled:/,$p' <<< "$BODY")
 if grep -qF "if: vars.PAGES_ENABLED == 'true'" <<< "$DEPLOY_JOB"; then
