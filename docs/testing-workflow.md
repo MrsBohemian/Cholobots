@@ -36,6 +36,7 @@ Never run `python cholobots.py` or `make run` from an automated run.
 | A command handler or listener with no automated test possible yet | Compile; write manual verification steps on the Taiga item and in the PR |
 | `scripts/**` | `python -m pytest tests/scripts -q` plus the matching `bash tests/scripts/test-*.sh` |
 | `tests/**` | The tests you changed |
+| `.devcontainer/**`, `scripts/devcontainer/**` | `python -m pytest tests/scripts -q -k devcontainer` and `bash tests/scripts/test-devcontainer-lifecycle.sh`; a `devcontainer up` smoke when the Dockerfile or lifecycle scripts change |
 | `.claude/**`, `docs/**` | Nothing to run |
 | `requirements.txt`, `requirements-dev.txt`, `.python-version` | Fresh venv, compile, `ruff check .`, script tests, whole suite once it exists |
 

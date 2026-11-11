@@ -95,6 +95,7 @@ for a scope that does not exist.
 | Script | Purpose |
 |---|---|
 | `check_local_env.py [--env-file F]` | Preflight `make run` calls before `cholobots.py`. Resolves `.env` over the shell like `config.py` and exits 1, one line per problem on stderr, unless `SUPABASE_URL` is on `127.0.0.1`, `localhost` or `::1`, `DISCORD_TOKEN`, `OPENAI_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are non-empty, and `TRANSPORTATION_CHANNEL_ID` (when set) is an integer. Has no override flag. Needs python-dotenv, so it runs with `.venv/bin/python` |
+| `devcontainer/write_env.py ENV_FILE` | Run by `.devcontainer/post-start.sh`; stdlib-only (it imports `is_local_url` from `check_local_env.py`). Reads `supabase status -o env` on stdin and merges `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `DISCORD_TOKEN` (from `CHOLOBOTS_TEST_DISCORD_TOKEN`) and `OPENAI_API_KEY` into the given `.env`, leaving every other line alone. Refuses a `SUPABASE_URL` that is not local, never prints secret values, writes the file with mode 0600. Tests: `tests/scripts/test_devcontainer_write_env.py` and `test-devcontainer-lifecycle.sh` |
 
 ## Tests
 
