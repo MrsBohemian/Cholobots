@@ -48,7 +48,7 @@ python3 scripts/taiga_project_setup.py --check   # exit 0 when the Taiga project
 
 The setup script is run once by a project admin with `--apply`. Like the other helper scripts it reads the `TAIGA_*` variables from the shell, which direnv loads from Jon's dev-env vault; `scripts/README.md` has the admin command.
 
-**Contributing.** Branch from `main`, open a pull request against `MrsBohemian/Cholobots`, keep each change in its own commit. Pipeline branches are pushed to the upstream repo directly so stacked pull requests work; the `Alterna-Dev-Studio` fork is a mirror. The access model and licensing are being settled under Taiga story #58.
+**Contributing.** See [CONTRIBUTING.md](CONTRIBUTING.md) for access and the pull-request flow.
 
 ## Layout
 
