@@ -48,7 +48,7 @@ python3 scripts/taiga_project_setup.py --check   # exit 0 when the Taiga project
 
 The setup script is run once by a project admin with `--apply`. Like the other helper scripts it reads the `TAIGA_*` variables from the shell, which direnv loads from Jon's dev-env vault; `scripts/README.md` has the admin command.
 
-**Contributing.** See [CONTRIBUTING.md](CONTRIBUTING.md) for access and the pull-request flow. Ownership and licensing are being settled under Taiga story #58.
+**Contributing.** See [CONTRIBUTING.md](CONTRIBUTING.md) for access and the pull-request flow.
 
 ## Layout
 
