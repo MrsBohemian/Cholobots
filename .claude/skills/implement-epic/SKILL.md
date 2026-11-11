@@ -1,12 +1,20 @@
 ---
 name: implement-epic
-description: Orchestrate story implementation across an epic in git worktree slots — up to N stories at a time, each in its own worktree driven by a senior-software-developer running /fully-implement-story, in dependency order
-argument-hint: "<epic-ref> [<n>]"
+description: Orchestrate story implementation across an epic, in dependency order. n = 1 runs one story at a time in a git worktree; n > 1 runs up to N stories at once in isolated devcontainers (--worktrees keeps n > 1 on worktree slots; --dry-run launches and smoke-tests containers without implementing)
+argument-hint: "<epic-ref> [<n>] [--worktrees] [--dry-run]"
 allowed-tools:
   - Agent
   - Bash(scripts/taiga-story.sh *)
   - Bash(scripts/taiga-epic.sh *)
   - Bash(scripts/supabase-local.sh *)
+  - Bash(python3 scripts/devcontainer/*)
+  - Bash(nohup python3 scripts/devcontainer/*)
+  - Bash(scripts/devcontainer/*)
+  - Bash(docker info*)
+  - Bash(docker ps *)
+  - Bash(ps -p *)
+  - Bash(tail *)
+  - Bash(kill *)
   - Bash(python3 scripts/taiga_project_setup.py --check)
   - Bash(python3 scripts/lib/parse_roadmap.py *)
   - Bash(mkdir *)
@@ -33,18 +41,32 @@ allowed-tools:
 
 # Implement Epic $ARGUMENTS
 
-Orchestrate story implementation across an epic. The skill itself is the orchestrator: it
-discovers the epic's analyzed stories, orders them by the epic's `## Dependency Diagram`, and runs
-up to `<n>` of them at a time, each in a **slot** — a git worktree at
-`.claude/worktrees/story-<ref>` plus one synchronous `senior-software-developer` agent following
-`/fully-implement-story` in that worktree. A finished slot is refilled with the next ready story.
-Each slot also runs its own local Supabase stack (`scripts/supabase-local.sh`), about 1 GB RAM.
+Orchestrate story implementation across an epic. Two modes share story discovery and dependency
+parsing (Steps 2 to 2c), then diverge:
+
+- **Worktree mode** (`<n>` = 1, or `--worktrees`): the skill itself is the orchestrator. It runs up
+  to `<n>` stories at a time, each in a **slot**: a git worktree at
+  `.claude/worktrees/story-<ref>` plus one synchronous `senior-software-developer` agent following
+  `/fully-implement-story` in that worktree. A finished slot is refilled with the next ready story.
+  Each slot also runs its own local Supabase stack (`scripts/supabase-local.sh`), about 1 GB RAM.
+- **Container mode** (`<n>` > 1 without `--worktrees`): the skill hands the stories to the Python
+  state machine `scripts/devcontainer/orchestrate_epic.py`, which runs up to `<n>` stories at once,
+  each in its own devcontainer clone with its own Supabase stack, and relaunches a story after a
+  provider rate limit.
+
 Nothing is merged; `/merge-train epic:<ref>` does that afterwards.
 
-## Choosing `<n>`
+## Choosing the mode
 
-**`<n>` defaults to 1** — one story at a time. Raise it only for a wide dependency diagram whose
-stories are genuinely disjoint on disk.
+**`<n>` defaults to 1: worktree mode, one story at a time.**
+
+- **`<n>` = 1**: worktree mode. Use it when the epic's stories build on each other or edit the same
+  files. Every branch is local, there is no image pull and no Docker-in-Docker, so setup is seconds.
+- **`<n>` > 1**: container mode, only for a wide dependency diagram whose stories are genuinely
+  disjoint on disk.
+- **`<n>` > 1 with `--worktrees`**: the worktree slot loop with several slots. Pick it on a host
+  without Docker headroom: each container needs about 1 to 1.5 GB plus its own Supabase stack.
+  `--dry-run` is not valid with it.
 
 A wide diagram is not on its own a reason to raise `<n>`: what decides is whether stories that
 would run beside each other edit the same files. In this repo most behaviour lives in a few large
@@ -55,8 +77,13 @@ slower.
 
 ## Step 0: Parse arguments and validate
 
-Split `$ARGUMENTS` into `<epic-ref>` and `<n>` (concurrency limit). Default `<n>` to 1 if not
-provided. If `<n>` is provided but is not a positive integer, stop and report the error.
+Split `$ARGUMENTS` into `<epic-ref>`, `<n>` (concurrency limit) and the flags `--worktrees` and
+`--dry-run`. Default `<n>` to 1 if not provided. If `<n>` is provided but is not a positive integer,
+stop and report the error: neither mode applies to zero, a negative value or a non-integer.
+
+The run's **mode** is `worktree` when `<n>` = 1 or `--worktrees` is present, otherwise `container`.
+`--dry-run` is only valid in container mode (`<n>` > 1, no `--worktrees`); with `<n>` = 1 or with
+`--worktrees`, stop and say so.
 
 If `<n>` > 3, warn:
 > "Warning: N=<n> may exceed account rate limits. Recommended max is 3."
@@ -65,14 +92,31 @@ If `<n>` > 3, warn:
 project lacks the pipeline statuses or tags this skill reads and writes: stop and print
 `Run: (eval "$(dv export project/taiga-growthgarage-jonroberts)" && python3 scripts/taiga_project_setup.py --apply)` for Jon.
 
-**Substrate check.** `git remote get-url upstream` must name `MrsBohemian/Cholobots`, and
-`env -u GH_TOKEN gh repo view MrsBohemian/Cholobots --json name` must succeed. If either fails,
-stop and say exactly what is missing.
+**Substrate check, both modes.** `git remote get-url upstream` must name `MrsBohemian/Cholobots`,
+and `env -u GH_TOKEN gh repo view MrsBohemian/Cholobots --json name` must succeed. If either
+fails, stop and say exactly what is missing.
+
+**Container substrate, container mode only.** `docker info` must succeed; the five scripts
+`scripts/devcontainer/{launch,prepare-clone,exec,exec-skill,teardown}.sh` must exist and be
+executable; and `npx --yes @devcontainers/cli@<DEVCONTAINER_MIN_VERSION from
+scripts/devcontainer/launch.sh> --version` must succeed. If anything is missing, stop, name it,
+and suggest re-invoking with `--worktrees`. Never fall back to worktree mode silently.
 
 ## Step 1: Initialize and reconcile the state file
 
-State lives in `/tmp/implement-epic-<epic-ref>.json`. If the file exists and `phase` is not
-`"complete"`, this is a **resume**:
+State lives in `/tmp/implement-epic-<epic-ref>.json` (container mode honours
+`$ORCHESTRATE_STATE_DIR`; the path is the same unless that is set). Read its `mode` field first.
+**A run resumes in the mode that wrote its file**: if the file's `mode` differs from this run's
+mode, stop and explain; the operator re-invokes with matching arguments or deletes the file. A
+missing `mode` means `"container"`.
+
+In container mode the reconcile is `orchestrate_epic.py`'s (it re-queues `error`, `skipped` and
+PR-less `escalated` stories and leaves `complete` and PR-bearing `escalated` alone); do not edit
+its file by hand, and skip the rest of this step. The file also records `dryRun`: a dry-run file
+resumed without `--dry-run` (or the reverse) makes `orchestrate_epic.py` exit 2 and name the
+mismatch; re-invoke with matching flags or delete the file.
+
+In worktree mode, if the file exists and `phase` is not `"complete"`, this is a **resume**:
 
 - `complete` stories are **left alone** — they already have a PR and re-running one opens a second;
 - `escalated` stories with a `pr` already recorded are **left alone** too, for the same reason — a
@@ -208,7 +252,12 @@ story's `dependencies` set to its `run_deps` entry (`[]` when it has none):
 ]
 ```
 
-This file is the run's input record; on a resume, Step 1 reconciles the state file against it.
+This file is the run's input record; on a resume, Step 1 reconciles the state file against it, and
+container mode's `orchestrate_epic.py` reads it directly (Step 4'). The orchestrator resolves each
+story's base branch itself, so the file carries only `dependencies`.
+
+**Dry run:** write only the first `<n>` stories, in ref order, whose `dependencies` list is empty.
+A dry run proves the launch path, not the dependency chain.
 
 ### Step 2c: `baseBranch` is the run's root base, not every story's base
 
@@ -225,9 +274,9 @@ On resume, the state file's `baseBranch` wins over a conflicting `$BASE_BRANCH` 
 value). A single dependency that completed without a recorded branch causes its dependents to be
 **skipped** (`SKIPPED:<ref>:dependency_failed:<dep>`) rather than falling back to `baseBranch`.
 
-## Step 3 (fresh runs only): write the state file
+## Step 3 (worktree mode, fresh runs only): write the state file
 
-**Skip on a resume.** Rewriting the file on a resume sets every story back to `queued` and
+**Skip on a resume, and skip entirely in container mode.** Rewriting the file on a resume sets every story back to `queued` and
 re-implements the finished ones — the exact failure Step 1 exists to prevent.
 
 Compute the run order first: topological sort of the eligible stories by `run_deps`, ties broken by
@@ -254,7 +303,7 @@ makes an interrupted run resumable.
 
 Emit `INIT:<epic-ref>:<total>:<n>`.
 
-## Step 4: the slot loop
+## Step 4 (worktree mode): the slot loop
 
 Repeat until no story is `queued`, `launching` or `active`:
 
@@ -446,12 +495,49 @@ base. Branch names are never derived from a ref.
 
 **Never leave the loop for a single story's failure.** Record it, move on, report it at the end.
 
+## Step 4' (container mode): prepare input and run the orchestrator
+
+1. `mkdir -p /tmp/epic-<epic-ref>`. Step 2b already wrote `stories-input.json` there.
+2. Run the orchestrator **detached via nohup** so it survives session timeouts. Export
+   `BASE_BRANCH=<baseBranch>` first when the run's root base is not `main` (the state file's
+   recorded `baseBranch` wins on a resume):
+   ```bash
+   nohup python3 scripts/devcontainer/orchestrate_epic.py <epic-ref> <n> /tmp/epic-<epic-ref>/stories-input.json [--dry-run] \
+     > /tmp/epic-<epic-ref>/orchestrator.log 2>&1 &
+   echo "PID: $!"
+   ```
+   Note the PID. An exit of 1 right away (bad arguments, or `ERROR: Circular dependency`) is in
+   the log; an exit of 2 after a signal still emits a `DONE` line.
+3. Start monitoring with `/loop` and note the **job ID** it returns:
+   ```
+   /loop 5m Check orchestrator status: tail -5 /tmp/epic-<epic-ref>/orchestrator.log; wc -c /tmp/epic-<epic-ref>/story-*.log 2>/dev/null; if ps -p <PID> > /dev/null 2>&1; then echo "orchestrator alive"; else PHASE=$(python3 -c "import json; print(json.load(open('/tmp/implement-epic-<epic-ref>.json')).get('phase','unknown'))" 2>/dev/null); echo "orchestrator DEAD, phase: $PHASE"; [ "$PHASE" != "running" ] && echo "TERMINAL: proceed to Step 5"; fi
+   ```
+   The shell command only prints; it cannot call `CronDelete`. When the loop prints `TERMINAL:
+   proceed to Step 5`, use `CronDelete` with the job ID, then go to Step 5. A dead orchestrator
+   whose phase is still `running` was killed: report it, do not loop forever, and tell the user a
+   re-invocation resumes.
+4. Tell the user:
+   - the orchestrator is running detached (PID), and for a dry run that it launches and
+     smoke-tests containers without implementing and keeps them
+   - watch it: `tail -f -n +1 /tmp/epic-<epic-ref>/orchestrator.log`
+   - watch a story agent: `tail -f -n +1 /tmp/epic-<epic-ref>/story-<ref>.log | jq .`
+   - check state: `python3 -m json.tool /tmp/implement-epic-<epic-ref>.json`
+   - stop it: `kill <PID>` (it tears its containers down and emits `DONE`)
+5. Cancel the monitoring loop with `CronDelete` and the job ID, also when you reached Step 5
+   manually rather than through the loop's `TERMINAL` line.
+
 ## Step 5 — finish, report, epic status
 
 Set `phase` to `"complete"` and emit `DONE:<complete>:<escalated>:<errors>:<skipped>`
 (`handed_off` stories count under `<complete>`).
 
-**Worktree cleanup is this skill's**: for a story that ended `complete`, stop its stack first
+Shared by both modes. In container mode the orchestrator has already set `phase` and tore down
+its containers; skip the worktree cleanup below and only report. **Dry run:** the orchestrator
+keeps every container and clone. Report each story's kept `clonePath` and `containerId` from the
+state file, the teardown command (`scripts/devcontainer/teardown.sh <clonePath>` per clone), the stories skipped as `dry_run_dependency`, and
+recommend **no** epic status change.
+
+**Worktree cleanup is worktree mode's**: for a story that ended `complete`, stop its stack first
 (`scripts/supabase-local.sh stop <absolute worktree path>`, its own Bash call), then
 run `git worktree remove .claude/worktrees/story-<ref>` and `git worktree prune` — the branch is
 pushed and the PR is open. **Keep** the worktree for a story that ended `escalated` or `error`: it
@@ -479,6 +565,10 @@ to run `scripts/supabase-local.sh prune`. The scratch `integration-<ref>` worktr
 
 ## Event vocabulary
 
+Two tables, one per mode; the modes differ and so does what they emit.
+
+### Worktree mode
+
 - `INIT:<epic-ref>:<total>:<n>` → Starting a fresh run
 - `RESUMED:<epic-ref>:<total>` → Resuming from existing state
 - `REQUEUED:<ref>` → On resume, a previously failed or interrupted story was re-queued
@@ -493,13 +583,34 @@ to run `scripts/supabase-local.sh prune`. The scratch `integration-<ref>` worktr
 - `BLOCKED:<ref>:integration_error:<parent-refs>` → The integration branch failed to build for an operational reason; same skip and cascade
 - `DONE:<complete>:<escalated>:<errors>:<skipped>` → Final summary
 
+### Container mode (emitted by `orchestrate_epic.py` into `orchestrator.log`)
+
+- `INIT:<epic-ref>:<total>:<n>` → Starting a fresh run
+- `RESUMED:<epic-ref>:<active>:<queued>:<complete>:<escalated>:<errors>` → Resuming from existing state
+- `REQUEUED:<ref>` / `ADDED:<ref>` → Resume reconcile, as in worktree mode
+- `LAUNCHING:<ref>:<subject>` → Preparing the story's clone and container
+- `LAUNCH_OK:<ref>:<pid>` → Agent started inside the container (`<pid>` is the host-side `exec-skill.sh` process)
+- `LAUNCH_FAIL:<ref>:<reason>` → The container or clone could not be prepared
+- `SLOT_FILLED:<active>:<queued>` → A freed slot took the next ready story
+- `COMPLETED:<ref>:<outcome>:<pr>` → Story finished; `<outcome>` is `complete`, `handed_off` (a success) or `escalated`
+- `FAILED:<ref>:<reason>` → Error outcome (`no_pr_created`, `agent_incomplete`)
+- `SKIPPED:<ref>:dependency_failed:<failed_ref>` → Skipped because a dependency did not succeed
+- `SKIPPED:<ref>:dry_run_dependency` → Dry run only: the story has dependencies, so it is not launched
+- `BLOCKED:<ref>:<outcome>:<parent-refs>` → Integration branch for a multi-parent story failed; that story is skipped and its dependents cascade-skip
+- `RATE_LIMITED:<ref>:<not-before-iso>` → The agent hit a provider rate limit. Not a failure: the story is re-queued with its clone kept and relaunches after the reset time; no other story launches until then. After 3 rate-limited exits it is `escalated` with outcome `rate_limit_exhausted` and its clone is kept
+- `WAITING:<active>:<queued>` → Polling cycle; long runs of it are normal while a rate-limit window elapses
+- `DONE:<complete>:<escalated>:<errors>:<skipped>` → Final summary (`handed_off` counts under `<complete>`)
+
 ## Notes
 
-- **Resume**: re-invoke with the same epic ref; Step 1 reconciles the state file. To force a full
+- **Resume**: re-invoke with the same epic ref and the same mode; Step 1 reconciles the state file. To force a full
   from-scratch re-run, use `/reset-epic-stories` or delete `/tmp/implement-epic-<epic-ref>.json`.
-- **Rate limits**: there is no automatic requeue on a provider rate limit. An agent killed by one
-  returns without completing, so the story ends `error` with its worktree kept, and the next run
-  re-queues it and resumes from `/tmp/fully-implement-<ref>.json`.
+- **Rate limits, per mode**: container mode relaunches a rate-limited story automatically
+  (`RATE_LIMITED`, above). Worktree mode does not: an agent killed by one returns without
+  completing, so the story ends `error` with its worktree kept, and the next run re-queues it and
+  resumes from `/tmp/fully-implement-<ref>.json`.
+- **Container mode costs**: the first launch of each container is slow (image pull and stack
+  start), and each holds about 1 to 1.5 GB RAM plus its Supabase stack. N = 2 or 3 is safe.
 - **Worktrees** live at `.claude/worktrees/story-<ref>` (git-ignored), are reused on a resumed run,
   and are removed by this skill only on `complete`.
 - **Merge train**: after the run, use `/merge-train epic:<ref>` to rebase and merge the resulting
