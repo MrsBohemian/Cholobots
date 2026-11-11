@@ -30,15 +30,18 @@ allowed-tools:
 
 # Fix and Remediate Bug $ARGUMENTS
 
-Composite skill that fixes a single bug, creates a PR, then monitors and remediates the PR until CI-stable or escalated. It runs in a git worktree (`.claude/worktrees/bug-<ref>`) inside an `Agent` spawn made by the `parallel-fix-bugs` orchestrator, which waits for it synchronously.
+Composite skill that fixes a single bug, creates a PR, then monitors and remediates the PR until CI-stable or escalated. It runs in one of two hosts, and in both there is no human present:
 
-State is tracked in `/tmp/fix-and-remediate-<ref>.json` so the orchestrator can read the outcome directly after you return.
+- **Worktree mode**: a git worktree (`.claude/worktrees/bug-<ref>`) inside an `Agent` spawn made by `/parallel-fix-bugs --worktrees` (or `/fully-fix-bugs`), which waits for it synchronously.
+- **Container mode**: the top-level `claude -p` session in a devcontainer clone, launched by `scripts/devcontainer/orchestrate_bugs.py` through `scripts/devcontainer/exec-skill.sh <clone> fix-and-remediate-bug "<ref>"`. The checkout is the clone itself; there is no worktree to create.
+
+State is tracked in `/tmp/fix-and-remediate-<ref>.json` so the orchestrator can read the outcome after you return: directly from the file in worktree mode, with `docker exec <container> cat /tmp/fix-and-remediate-<ref>.json` in container mode (the file lives inside the container). The terminal-phase rule below is the same in both.
 
 Repo facts: branches are pushed to `upstream` (`MrsBohemian/Cholobots`) and PRs open inside it; `origin` is only a mirror. Every `gh` call is `env -u GH_TOKEN gh ... --repo MrsBohemian/Cholobots`. Taiga names are in `.claude/skills/shared/taiga-project.md`. Never `cd` to the main checkout, check out other branches, `git reset --hard` or `git stash`.
 
 ## Running Unattended
 
-This skill runs in a subagent spawned by `/parallel-fix-bugs`. **There is no human present.** You MUST NOT post questions to the user like "what should I do?" or "should I keep retrying?". The skill defines the decision tree; follow it.
+This skill runs in a subagent spawned by `/parallel-fix-bugs --worktrees` or as the top-level session of a container launched by `orchestrate_bugs.py`. **There is no human present.** You MUST NOT post questions to the user like "what should I do?" or "should I keep retrying?". The skill defines the decision tree; follow it.
 
 Decision rules when things go wrong:
 - CI flaky but under 5 failures: invoke `python3 scripts/remediate_pr.py` again. Let the script run its stability check.
@@ -83,6 +86,8 @@ If the bug lives only in `../Cholobots-Mobile` and this repo has no `mobile/` di
 
 ### 2b. Setup branch
 
+Never create `.claude/worktrees/...` here: the orchestrator already provided the checkout (a worktree in worktree mode; in container mode the clone itself, whose `upstream` remote points at `MrsBohemian/Cholobots`).
+
 1. `git fetch upstream`
 2. If the current branch is already `fix/<ref>-*`, keep it (resume). Otherwise create the branch from the fetched tip: `git switch -c fix/<ref>-<short-slug> upstream/main` (slug from the issue subject, 3-4 words).
 3. Set the issue to `In progress`: `update_issue(project=39, ref=<ref>, status="In progress")`
@@ -103,6 +108,8 @@ Every check run below follows the headless foreground rule in Step 2e. Follow [d
 - **Command handlers that need a live bot or Supabase, or no suite yet**: make the smallest fix and post numbered manual test steps on the Taiga issue (`add_comment(project=39, ref=<ref>, text=..., entity_type="issue")`) for the test-server run (story #31). Record "no test suite yet (#34)" when that is the reason.
 
 Never run `python cholobots.py`.
+
+**Container mode:** the Supabase stack belongs to the container (started by `.devcontainer/post-start.sh`, `CHOLOBOTS_DEVCONTAINER=1`). Never run `scripts/supabase-local.sh stop` (or `start`) there; run integration tests against it with the `.env` the container already wrote. Taiga calls go through the workflow-mode tools from the container's `.mcp.json`, unchanged.
 
 ### 2e. Verify
 
@@ -128,6 +135,7 @@ Fix every failure, then re-run. For a failure you believe is unrelated, follow `
    ```
    env -u GH_TOKEN gh pr create --repo MrsBohemian/Cholobots --base main --head <branch> --title "fix(#<ref>): <bug subject>" --body-file <body> [--label mark-done-on-merge]
    ```
+   - Always pass `--head <branch>`: in a `launch.sh` clone `git push` may record no tracking ref, and `gh pr create` without `--head` then fails.
    - Add `--label mark-done-on-merge` iff the bug's plan says `**Closes on merge:** eligible` (a missing line counts as not eligible). This skill runs only under the unattended `/parallel-fix-bugs`, so it needs no flag to opt in. See [`../shared/merge-side-effects.md`](../shared/merge-side-effects.md). If the repo rejects the label, create the PR without it.
    - Body: same format as fix-single-bug (Bug context, Fix summary, Regression tests; for manual-only fixes list the manual test steps posted on the issue). Issue links use `https://backlog.growthgarage.org/project/cholo-bots/issue/<ref>`.
 4. Mark the issue ready for review: `update_issue(project=39, ref=<ref>, status="Ready for review")`.
