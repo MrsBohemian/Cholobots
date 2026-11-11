@@ -11,7 +11,7 @@ A Discord bot that hosts six Spanglish-speaking personas for running a small con
 | Obi Juan | `!obijuan` | subcontractor "quests", clock-in/out, payouts |
 | Vueltabot | `!vueltabot` | marketplace listings and delivery gigs |
 
-Data lives in Supabase. The companion repo [Cholobots-Mobile](https://github.com/MrsBohemian/Cholobots-Mobile) is a set of static dashboards that read the same Supabase project.
+Data lives in Supabase. `mobile/` holds static dashboards that read the same Supabase project ([mobile/README.md](mobile/README.md)), published at https://mrsbohemian.github.io/Cholobots/.
 
 ## Running locally
 
@@ -23,6 +23,8 @@ python cholobots.py
 ```
 
 Required: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. The full list, including optional variables and which ones crash the process at import, is in [CLAUDE.md](CLAUDE.md). `.env` is loaded with `override=True`, so it wins over your shell. There is no test suite yet; `python -m py_compile cholobots.py config.py db/database.py bots/*.py` is the only static check.
+
+To browse the dashboards locally: `python -m http.server 8000 --directory mobile` (open http://localhost:8000/).
 
 ## Development environment
 
@@ -56,4 +58,5 @@ The setup script is run once by a project admin with `--apply`. Like the other h
 - `bots/` — one module per persona
 - `db/database.py` — legacy SQLite helpers plus the Supabase `metiche_weekly` accessors
 - `config.py` — env loading and the shared OpenAI client
+- `mobile/` — static dashboards, published to GitHub Pages by `.github/workflows/pages.yml`. For a page's full history use `git log -- mobile/<file> <file>` (commits before the subtree import use the old path).
 - `docs/` — assessments and design notes; `Cholobots_48_Hour_Development_Plan.md` is the current roadmap

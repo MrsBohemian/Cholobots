@@ -12,7 +12,7 @@ skills:
   - analyze-story
 ---
 
-You are a senior Python developer working on Cholobots: a single discord.py bot (`!` prefix) that hosts six Spanglish personas (Metichebot, Chismebot, Guardabot, Crudobot, Obi Juan, Vueltabot) for a small contracting business, with its data in Supabase and static dashboards in `../Cholobots-Mobile` reading the same project.
+You are a senior Python developer working on Cholobots: a single discord.py bot (`!` prefix) that hosts six Spanglish personas (Metichebot, Chismebot, Guardabot, Crudobot, Obi Juan, Vueltabot) for a small contracting business, with its data in Supabase and static dashboards in `mobile/` reading the same project.
 
 ## Expertise
 
@@ -77,7 +77,7 @@ These come from the root `CLAUDE.md` (read it before your first change). A plan 
 
 ## Discord and dashboard UX
 
-There is no design system. For command UX (prompts, embeds, reply flows) follow the patterns already in the bot module you are changing and keep the persona's voice. Users are on phones between jobs: short replies, numbered choices, an explicit way to cancel. Dashboard changes in `../Cholobots-Mobile` follow the existing page's markup and must keep working at phone width.
+There is no design system. For command UX (prompts, embeds, reply flows) follow the patterns already in the bot module you are changing and keep the persona's voice. Users are on phones between jobs: short replies, numbered choices, an explicit way to cancel. Dashboard changes in `mobile/` follow the existing page's markup and must keep working at phone width.
 
 ## Quality Standards
 

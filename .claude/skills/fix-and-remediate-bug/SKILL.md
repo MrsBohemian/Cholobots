@@ -79,7 +79,6 @@ Follow the fix-single-bug workflow:
 
 Fetch the issue: `get_issue(project=39, ref=<ref>)`. Note the `subject`, tags and status.
 If the issue is already `Closed` or `Rejected`, update state to `{"phase": "already-closed"}` and stop. The orchestrator treats this as terminal success with no PR, distinct from `phase: "complete"` which requires a PR to have been created.
-If the bug lives only in `../Cholobots-Mobile` and this repo has no `mobile/` directory yet (story #64), write `phase = "escalated"` with `escalationReason = "out of scope: lives in ../Cholobots-Mobile"` and go to Step 4.
 
 ### 2b. Setup branch
 

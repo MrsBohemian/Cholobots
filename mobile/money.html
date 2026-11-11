@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Financial Engine</title>
+  <style>
+    :root {
+      --bg: #05070a;
+      --panel: #10151c;
+      --panel-2: #0b1016;
+      --line: #2c3542;
+      --text: #f2f4f8;
+      --muted: #a9b1bd;
+      --green: #75d64b;
+      --yellow: #ffd43b;
+      --red: #ff4b3e;
+      --purple: #9a7cff;
+      --blue: #66c7ff;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      min-height: 100%;
+    }
+
+    body {
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 52px 12px 14px;
+      background:
+        radial-gradient(circle at top, rgba(117,214,75,.09), transparent 36%),
+        linear-gradient(180deg, #06080c, #05070a 45%, #020304);
+    }
+
+    .back-link {
+      position: fixed;
+      top: 12px;
+      left: 16px;
+      font-size: 30px;
+      font-weight: bold;
+      color: var(--blue);
+      text-decoration: none;
+      opacity: 0.9;
+      z-index: 9999;
+    }
+    
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.018));
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 12px 30px rgba(0,0,0,.24);
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .card-title .icon {
+      font-size: 29px;
+      line-height: 1;
+    }
+
+    .card-title h2 {
+      margin: 0;
+      font-size: 19px;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+    }
+
+    .card-title p {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .fuel-wrap {
+      text-align: center;
+      padding-top: 4px;
+    }
+
+    .gauge {
+      width: 100%;
+      max-width: 360px;
+      aspect-ratio: 2 / 1;
+      margin: 0 auto;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .arc {
+      position: absolute;
+      inset: 0;
+      border-radius: 360px 360px 0 0;
+      background: conic-gradient(from 270deg at 50% 100%,
+        var(--red) 0deg 38deg,
+        #ff8144 38deg 62deg,
+        var(--yellow) 62deg 126deg,
+        var(--green) 126deg 180deg,
+        transparent 180deg 360deg);
+      -webkit-mask: radial-gradient(circle at 50% 100%, transparent 0 48%, #000 49% 64%, transparent 65%);
+              mask: radial-gradient(circle at 50% 100%, transparent 0 48%, #000 49% 64%, transparent 65%);
+    }
+
+    .needle {
+      position: absolute;
+      width: 42%;
+      height: 7px;
+      background: #f4f6fa;
+      left: 50%;
+      bottom: 0;
+      transform-origin: left center;
+      transform: rotate(-31deg);
+      border-radius: 99px;
+      box-shadow: 0 0 12px rgba(255,255,255,.4);
+    }
+
+    .needle::after {
+      content: "";
+      position: absolute;
+      width: 21px;
+      height: 21px;
+      border-radius: 50%;
+      background: #e9edf4;
+      left: -9px;
+      top: -7px;
+    }
+
+    .gauge-center {
+      position: absolute;
+      width: 100%;
+      bottom: 5px;
+      left: 0;
+      text-align: center;
+    }
+
+    .fuel-label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .fuel-percent {
+      font-size: 50px;
+      font-weight: 800;
+      color: var(--green);
+      line-height: .98;
+    }
+
+    .fuel-money {
+      margin-top: 4px;
+      font-size: 23px;
+      font-weight: 700;
+    }
+
+    .fuel-ends {
+      display: flex;
+      justify-content: space-between;
+      max-width: 360px;
+      margin: -7px auto 2px;
+      font-size: 28px;
+      font-weight: 800;
+    }
+
+    .fuel-ends span:first-child { color: var(--red); }
+    .fuel-ends span:last-child { color: var(--green); }
+
+    .status-row, .next-step, .cruise-item {
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 14px;
+      padding: 13px;
+      background: rgba(0,0,0,.18);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .status-row strong { color: var(--green); }
+    .status-row p, .next-step p, .cruise-item p {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    .chev { margin-left: auto; color: var(--muted); font-size: 22px; }
+
+    .money-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .money-box {
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 14px;
+      padding: 12px;
+      background: rgba(0,0,0,.14);
+    }
+
+    .money-box strong {
+      display: block;
+      color: var(--green);
+      font-size: 22px;
+      margin-bottom: 2px;
+    }
+
+    .money-box span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .gear-track {
+      margin: 18px 8px 6px;
+      position: relative;
+      height: 112px;
+    }
+
+    .gear-line {
+      position: absolute;
+      left: 8%;
+      right: 8%;
+      top: 35px;
+      height: 8px;
+      border-radius: 99px;
+      background: linear-gradient(90deg, #777, #d4d8df, #777);
+      box-shadow: inset 0 0 4px rgba(255,255,255,.6);
+    }
+
+    .gear-dot {
+      position: absolute;
+      top: 25px;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: linear-gradient(#e9edf5, #6d7480);
+      border: 2px solid #bec4cf;
+      transform: translateX(-50%);
+    }
+
+    .gear-dot.r { left: 8%; }
+    .gear-dot.n { left: 36%; }
+    .gear-dot.d { left: 64%; }
+    .gear-dot.od { left: 92%; }
+
+    .shifter {
+      position: absolute;
+      left: 64%;
+      top: -4px;
+      transform: translateX(-50%);
+      width: 34px;
+      height: 65px;
+      z-index: 2;
+    }
+
+    .knob {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, #fafafa, #272d36 45%, #05070a 75%);
+      border: 2px solid #d5d9e2;
+    }
+
+    .stem {
+      width: 10px;
+      height: 36px;
+      margin: -2px auto 0;
+      border-radius: 99px;
+      background: linear-gradient(90deg, #626b77, #f2f4f9, #616975);
+    }
+
+    .gear-labels {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 4px;
+      margin-top: 5px;
+      text-align: center;
+    }
+
+    .gear-label strong {
+      display: block;
+      font-size: 28px;
+      line-height: 1;
+    }
+
+    .gear-label small {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.2;
+    }
+
+    .r strong { color: var(--red); }
+    .n strong { color: var(--yellow); }
+    .d strong, .od strong { color: var(--green); }
+
+    .mode-box {
+      border: 1px solid rgba(117,214,75,.28);
+      border-radius: 14px;
+      padding: 13px;
+      background: rgba(117,214,75,.08);
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    .mode-badge {
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: rgba(117,214,75,.24);
+      color: white;
+      font-weight: 800;
+      font-size: 22px;
+    }
+
+    .mode-box strong { color: var(--green); }
+    .mode-box p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+
+    .page-break {
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      opacity: .8;
+    }
+
+    .cruise-header {
+      text-align: center;
+      padding: 20px 4px 8px;
+    }
+
+    .cruise-icon {
+      color: var(--green);
+      width: 92px;
+      height: 92px;
+      margin: 0 auto 10px;
+      filter: drop-shadow(0 0 10px rgba(117,214,75,.25));
+    }
+
+    .cruise-header h2 {
+      margin: 0;
+      font-size: 30px;
+      letter-spacing: -.02em;
+    }
+
+    .cruise-header p {
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.45;
+      margin: 10px auto 0;
+      max-width: 360px;
+    }
+
+    .cruise-item .item-icon {
+      width: 46px;
+      height: 46px;
+      display: grid;
+      place-items: center;
+      color: var(--green);
+      font-size: 30px;
+      flex: 0 0 auto;
+    }
+
+    .cruise-item strong {
+      display: block;
+      font-size: 17px;
+    }
+
+    .cruise-item .amount {
+      color: var(--green);
+      font-size: 20px;
+      font-weight: 800;
+    }
+
+    .check {
+      margin-left: auto;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 2px solid var(--green);
+      display: grid;
+      place-items: center;
+      color: var(--green);
+      font-weight: 900;
+      flex: 0 0 auto;
+    }
+
+    .achievement {
+      margin: 16px 0 30px;
+      padding: 15px;
+      border-radius: 16px;
+      border: 1px solid rgba(117,214,75,.38);
+      background: linear-gradient(90deg, rgba(117,214,75,.15), rgba(117,214,75,.05));
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .achievement .trophy { font-size: 34px; }
+    .achievement strong { color: var(--green); display: block; }
+    .achievement p { margin: 3px 0 0; color: var(--muted); font-size: 14px; }
+
+    .bottom-pad { height: 20px; }
+
+    svg { width: 100%; height: 100%; }
+
+    .plan-card .card-title {
+      margin-bottom: 6px;
+    }
+
+    .gas-plan {
+      display: grid;
+      grid-template-columns: 170px 1fr;
+      gap: 18px;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    .gas-can-wrap {
+      position: relative;
+      width: 160px;
+      height: 190px;
+      margin: 0 auto;
+    }
+
+    .gas-can-handle {
+      position: absolute;
+      top: 5px;
+      left: 42px;
+      width: 77px;
+      height: 44px;
+      border: 14px solid #d8342c;
+      border-bottom: 0;
+      border-radius: 22px 22px 0 0;
+      z-index: 1;
+    }
+
+    .gas-can-spout {
+      position: absolute;
+      top: 38px;
+      right: 2px;
+      width: 46px;
+      height: 22px;
+      background: #d8342c;
+      border: 3px solid #ff6b61;
+      border-left: 0;
+      transform: rotate(-20deg);
+      transform-origin: left center;
+      border-radius: 0 12px 12px 0;
+      z-index: 3;
+    }
+
+    .gas-can-body {
+      position: absolute;
+      left: 14px;
+      bottom: 4px;
+      width: 132px;
+      height: 145px;
+      border: 4px solid #ff6b61;
+      border-radius: 24px 24px 18px 18px;
+      background: linear-gradient(180deg, #7b1915, #32100e);
+      overflow: hidden;
+      box-shadow:
+        inset 0 0 0 5px rgba(255,255,255,.04),
+        0 12px 24px rgba(0,0,0,.35);
+      z-index: 2;
+    }
+
+    .gas-fill {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 0%;
+      background: linear-gradient(180deg, rgba(255,212,59,.96), rgba(255,129,68,.98));
+      transition: height .5s ease;
+    }
+
+    .gas-fill::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: -5px;
+      height: 10px;
+      background: rgba(255,237,156,.92);
+      border-radius: 50%;
+    }
+
+    .gas-can-ribs {
+      position: absolute;
+      inset: 18px 24px;
+      border-left: 6px solid rgba(255,255,255,.12);
+      border-right: 6px solid rgba(0,0,0,.22);
+      transform: skewX(-7deg);
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    .gas-can-label {
+      position: absolute;
+      left: 34px;
+      bottom: 52px;
+      width: 92px;
+      padding: 7px 4px;
+      text-align: center;
+      border: 2px solid rgba(255,255,255,.75);
+      border-radius: 7px;
+      color: white;
+      background: rgba(0,0,0,.32);
+      font-weight: 900;
+      letter-spacing: .08em;
+      font-size: 13px;
+      z-index: 4;
+    }
+
+    .plan-progress {
+      min-width: 0;
+    }
+
+    .plan-progress strong {
+      display: block;
+      font-size: 30px;
+      color: var(--yellow);
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+
+    .plan-progress p {
+      margin: 0 0 12px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .plan-items {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .plan-item {
+      display: flex;
+      gap: 9px;
+      align-items: flex-start;
+      padding: 9px 10px;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 10px;
+      background: rgba(0,0,0,.17);
+      font-size: 13px;
+      line-height: 1.3;
+    }
+
+    .plan-item.done {
+      opacity: .68;
+      text-decoration: line-through;
+    }
+
+    .plan-mark {
+      flex: 0 0 auto;
+      font-size: 16px;
+    }
+
+    .plan-empty {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    @media (max-width: 420px) {
+      .gas-plan {
+        grid-template-columns: 1fr;
+      }
+
+      .plan-progress {
+        text-align: center;
+      }
+
+      .plan-items {
+        text-align: left;
+      }
+    }
+
+  </style>
+</head>
+<body>
+  <a class="back-link" href="index.html">←</a>
+
+  <section class="card">
+    <div class="card-title">
+      <div class="icon" style="color:var(--green)">⛽</div>
+      <div>
+        <h2>Fuel Gauge</h2>
+        <p id="objective-subtitle">Current financial objective</p>
+      </div>
+    </div>
+
+    <div class="fuel-wrap">
+      <div class="gauge">
+        <div class="arc"></div>
+        <div class="needle"></div>
+        <div class="gauge-center">
+          <div class="fuel-label">Objective Covered</div>
+          <div class="fuel-percent" id="fuel-percent">0%</div>
+          <div class="fuel-money" id="fuel-money">$0 planned of $0 needed</div>
+        </div>
+      </div>
+      <div class="fuel-ends"><span>E</span><span>F</span></div>
+    </div>
+
+    <div class="status-row">
+      <div style="font-size:34px;color:var(--green)">⛽</div>
+      <div>
+        <strong id="status-title">LOADING</strong>
+        <p id="status-text">Loading the current financial objective.</p>
+      </div>
+      <div class="chev">›</div>
+    </div>
+
+    <div class="money-grid">
+      <div class="money-box">
+        <strong id="planned-amount">$0</strong>
+        <span>Planned toward objective</span>
+      </div>
+      <div class="money-box">
+        <strong id="remaining-gap" style="color:var(--text)">$0</strong>
+        <span>Remaining gap</span>
+      </div>
+    </div>
+
+    <div class="next-step">
+      <div style="font-size:30px;color:var(--purple)">☑</div>
+      <div>
+        <strong>Objective Details</strong>
+        <p id="objective-details">Loading purpose and due date.</p>
+      </div>
+      <div class="chev">›</div>
+    </div>
+  </section>
+
+  <section class="card plan-card">
+    <div class="card-title">
+      <div class="icon" style="color:var(--yellow)">🛢️</div>
+      <div>
+        <h2>Action Plan</h2>
+        <p>Important items from the current brain dump</p>
+      </div>
+    </div>
+
+    <div class="gas-plan">
+      <div class="gas-can-wrap" aria-label="Important-item completion gas can">
+        <div class="gas-can-handle"></div>
+        <div class="gas-can-spout"></div>
+        <div class="gas-can-body">
+          <div class="gas-fill" id="gas-fill"></div>
+          <div class="gas-can-ribs"></div>
+        </div>
+        <div class="gas-can-label">PLAN FUEL</div>
+      </div>
+
+      <div class="plan-progress">
+        <strong id="plan-count">0 / 0</strong>
+        <p id="plan-summary">Important actions completed for this financial objective.</p>
+        <div class="plan-items" id="plan-items">
+          <div class="plan-empty">Loading important items…</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <section class="card">
+    <div class="card-title">
+      <div class="icon" style="color:var(--purple)">╂</div>
+      <div>
+        <h2>Financial Gear</h2>
+        <p>Operating mode</p>
+      </div>
+    </div>
+
+    <div class="gear-track">
+      <div class="gear-line"></div>
+      <div class="gear-dot r" id="gear-r"></div>
+      <div class="gear-dot n" id="gear-n"></div>
+      <div class="gear-dot d" id="gear-d"></div>
+      <div class="gear-dot od" id="gear-od"></div>
+      <div class="shifter" id="shifter"><div class="knob"></div><div class="stem"></div></div>   
+    </div>
+
+    <div class="gear-labels">
+      <div class="gear-label r"><strong>R</strong><small>Deficit</small></div>
+      <div class="gear-label n"><strong>N</strong><small>Survive</small></div>
+      <div class="gear-label d"><strong>D</strong><small>Positive</small></div>
+      <div class="gear-label od"><strong>OD</strong><small>Surplus</small></div>
+    </div>
+
+    <div class="mode-box">
+      <div class="mode-badge">D</div>
+      <div>
+        <strong>DRIVE — Cash flow positive</strong>
+        <p>You are generating more cash than you need to operate.</p>
+      </div>
+      <div class="chev">›</div>
+    </div>
+  </section>
+
+  <div class="page-break">Cruise control ↓</div>
+
+  <section class="card" id="cruise-control">
+    <div class="cruise-header">
+      <div class="cruise-icon" aria-hidden="true">
+        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 70a34 34 0 1 1 60 0"/>
+          <path d="M50 36v11"/>
+          <path d="M29 50l8 7"/>
+          <path d="M71 50l-8 7"/>
+          <path d="M50 62l-18-22"/>
+          <circle cx="50" cy="62" r="5" fill="currentColor" stroke="none"/>
+          <path d="M17 32l14-10-3 17" fill="currentColor" stroke="none"/>
+        </svg>
+      </div>
+      <h2>Cruise Control</h2>
+      <p>Cruise control means the business can run without constant attention. These are the conditions that make it possible.</p>
+    </div>
+
+    <div class="cruise-item">
+      <div class="item-icon">💳</div>
+      <div>
+        <strong>Bills on Autopay</strong>
+        <p>Recurring bills are assigned and handled without weekly panic.</p>
+      </div>
+      <div class="check">✓</div>
+    </div>
+
+    <div class="cruise-item">
+      <div class="item-icon">🏦</div>
+      <div>
+        <strong>Operating Expenses Account</strong>
+        <div class="amount">$5,000</div>
+        <p>1 month of operating expenses set aside.</p>
+      </div>
+      <div class="check">✓</div>
+    </div>
+
+    <div class="cruise-item">
+      <div class="item-icon">👤</div>
+      <div>
+        <strong>Owner's Draw Account</strong>
+        <div class="amount">$4,000</div>
+        <p>1 month of owner's draw set aside.</p>
+      </div>
+      <div class="check">✓</div>
+    </div>
+
+    <div class="cruise-item">
+      <div class="item-icon">🛡</div>
+      <div>
+        <strong>Obligations Account</strong>
+        <div class="amount">$2,500</div>
+        <p>1 month of obligations expenses set aside.</p>
+      </div>
+      <div class="check">✓</div>
+    </div>
+
+    <div class="achievement">
+      <div class="trophy">🏆</div>
+      <div>
+        <strong>Cruise Control Achieved</strong>
+        <p>The system has enough reserve to carry the load so you can focus on life and growth.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="bottom-pad"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+  const SUPABASE_URL = "https://pjquistiolcoqvcfmqjn.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_SrGvJETp3Bpm9i9n1wGheQ_3Ni7FdIv";
+  const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  function money(value) {
+    return "$" + Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function parseJsonObject(value) {
+    if (!value) return {};
+    if (typeof value === "object") return value;
+    try { return JSON.parse(value); }
+    catch (error) {
+      console.warn("Could not parse task_summary_json", error);
+      return {};
+    }
+  }
+
+  function formatDueDate(raw) {
+    if (!raw) return "No due date";
+    const value = String(raw).trim();
+    const lower = value.toLowerCase();
+    if (lower === "today" || lower === "tomorrow") {
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    }
+    const isoOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    const parsed = new Date(value + (isoOnly ? "T12:00:00" : ""));
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleDateString(undefined, {
+      month: "short", day: "numeric", year: "numeric"
+    });
+  }
+
+  function setNeedle(percent) {
+    const rotation = -180 + (clamp(percent, 0, 100) * 1.8);
+    document.querySelector(".needle").style.transform = `rotate(${rotation}deg)`;
+  }
+
+  function setStatus(status, remainingGap, objectiveAmount) {
+    const row = document.querySelector(".status-row");
+    const title = document.getElementById("status-title");
+    const body = document.getElementById("status-text");
+    const icon = row.querySelector("div");
+
+    let color = "var(--red)";
+    let label = "GAP OPEN";
+    let description =
+    totalImportantItems > 0
+        ? `${totalImportantItems} action${totalImportantItems === 1 ? "" : "s"} identified to close this objective.`
+        : `${money(remainingGap)} still needs a plan.`;
+    
+    if (objectiveAmount <= 0) {
+      color = "var(--muted)";
+      label = "NO OBJECTIVE";
+      description = "Run !mengine to set the current financial objective.";
+    } else if (status === "covered" || remainingGap <= 0) {
+      color = "var(--green)";
+      label = "OBJECTIVE COVERED";
+      description = "The current plan covers this financial objective.";
+    } else if (totalImportantItems > 0) {
+      color = "var(--yellow)";
+      label = "PLAN READY";
+  
+      if (completedImportantItems === totalImportantItems) {
+          description = "All planned actions are complete. Waiting for the money to arrive.";
+      } else {
+          description =
+              `${completedImportantItems}/${totalImportantItems} important actions completed.`;
+      }
+  }
+
+    title.textContent = label;
+    title.style.color = color;
+    body.textContent = description;
+    row.style.borderColor = color;
+    icon.style.color = color;
+  }
+
+  let totalImportantItems = 0;
+  let completedImportantItems = 0;
+    
+  function setGear(ratio, objectiveAmount, remainingGap) {
+    let gear = "R";
+    let left = "8%";
+    let title = "REVERSE — Gap open";
+    let body = "The current objective still needs a complete funding plan.";
+    let color = "var(--red)";
+
+    if (objectiveAmount <= 0) {
+      gear = "N";
+      left = "36%";
+      title = "NEUTRAL — No objective";
+      body = "Run !mengine to publish the next financial objective.";
+      color = "var(--yellow)";
+    } else if (remainingGap <= 0 || ratio >= 1) {
+      gear = "D";
+      left = "64%";
+      title = "DRIVE — Objective covered";
+      body = "The current objective is covered. Confirm the money arrives.";
+      color = "var(--green)";
+    } else if (ratio >= 0.4) {
+      gear = "N";
+      left = "36%";
+      title = "NEUTRAL — Partially covered";
+      body = "There is a plan in motion, but the objective is not fully covered.";
+      color = "var(--yellow)";
+    }
+
+    document.getElementById("shifter").style.left = left;
+    document.querySelector(".mode-badge").textContent = gear;
+    document.querySelector(".mode-box strong").textContent = title;
+    document.querySelector(".mode-box strong").style.color = color;
+    document.querySelector(".mode-box p").textContent = body;
+    document.querySelector(".mode-box").style.borderColor = color;
+  }
+
+  function renderExecution(execution) {
+    const objective = Number(execution.objective_amount || 0);
+    const planned = Number(execution.planned_amount || 0);
+    const calculatedGap = Math.max(0, objective - planned);
+    const remaining = execution.remaining_gap === null || execution.remaining_gap === undefined
+      ? calculatedGap
+      : Number(execution.remaining_gap || 0);
+
+    const ratio = objective > 0 ? clamp(planned / objective, 0, 1) : 0;
+    const percent = Math.round(ratio * 100);
+    const status = String(execution.status || (remaining <= 0 ? "covered" : "open"));
+    const purpose = execution.objective_reason || "Not specified";
+    const due = formatDueDate(execution.due_date);
+
+    document.getElementById("fuel-percent").textContent = `${percent}%`;
+    document.getElementById("fuel-percent").style.color =
+      percent >= 100 ? "var(--green)" : percent >= 40 ? "var(--yellow)" : "var(--red)";
+    document.getElementById("fuel-money").textContent =
+      `${money(planned)} planned of ${money(objective)} needed`;
+    document.getElementById("planned-amount").textContent = money(planned);
+    document.getElementById("remaining-gap").textContent = money(remaining);
+    document.getElementById("objective-subtitle").textContent = purpose;
+    document.getElementById("objective-details").textContent =
+      `Purpose: ${purpose}. Due: ${due}.`;
+
+    setNeedle(percent);
+    setStatus(status, remaining, objective);
+    setGear(ratio, objective, remaining);
+  }
+
+
+  function isCompletedStatus(status) {
+    return ["completed", "complete", "done", "closed"].includes(
+      String(status || "").toLowerCase()
+    );
+  }
+
+  function isVisiblePlanStatus(status) {
+    return !["cancelled", "canceled", "deleted", "removed"].includes(
+      String(status || "").toLowerCase()
+    );
+  }
+
+  function renderImportantPlan(items) {
+    const visible = (items || []).filter(item => isVisiblePlanStatus(item.status));
+    const doneItems = visible.filter(item => isCompletedStatus(item.status));
+
+    const total = visible.length;
+    const done = doneItems.length;
+    totalImportantItems = total;
+    completedImportantItems = done;
+    const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+
+    document.getElementById("plan-count").textContent = `${done} / ${total}`;
+    document.getElementById("gas-fill").style.height = `${percent}%`;
+
+    const summary = document.getElementById("plan-summary");
+
+    if (total === 0) {
+      summary.textContent = "No important-item plan is attached to this objective yet.";
+    } else if (done === total) {
+      summary.textContent = "All important actions in the plan are complete.";
+    } else {
+      const remaining = total - done;
+      summary.textContent = `${remaining} important action${remaining === 1 ? "" : "s"} remaining.`;
+    }
+
+    const list = document.getElementById("plan-items");
+    list.innerHTML = "";
+
+    if (total === 0) {
+      const empty = document.createElement("div");
+      empty.className = "plan-empty";
+      empty.textContent = "Use !mbraindump and place actions in Important to create the plan.";
+      list.appendChild(empty);
+      return;
+    }
+
+    visible.forEach(item => {
+      const completed = isCompletedStatus(item.status);
+
+      const row = document.createElement("div");
+      row.className = `plan-item${completed ? " done" : ""}`;
+
+      const mark = document.createElement("span");
+      mark.className = "plan-mark";
+      mark.textContent = completed ? "✅" : "⬜";
+
+      const label = document.createElement("span");
+      label.textContent = item.item || "(untitled item)";
+
+      row.appendChild(mark);
+      row.appendChild(label);
+      list.appendChild(row);
+    });
+  }
+
+  async function loadImportantPlan(objectiveRow) {
+    let query = supabaseClient
+      .from("metiche_important_items")
+      .select("id, item, status, created_at, discord_user, channel_id")
+      .order("created_at", { ascending: true });
+
+    if (objectiveRow.discord_user) {
+      query = query.eq("discord_user", objectiveRow.discord_user);
+    }
+
+    if (objectiveRow.channel_id) {
+      query = query.eq("channel_id", String(objectiveRow.channel_id));
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Important plan load failed:", error);
+      const list = document.getElementById("plan-items");
+      list.innerHTML = "";
+      const empty = document.createElement("div");
+      empty.className = "plan-empty";
+      empty.textContent = "Could not load important items.";
+      list.appendChild(empty);
+      return;
+    }
+
+    renderImportantPlan(data || []);
+  }
+
+  async function loadFinancialEngine() {
+    const { data, error } = await supabaseClient
+      .from("metiche_weekly")
+      .select("task_summary_json, created_at, discord_user, channel_id")
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Financial engine load failed:", error);
+      document.getElementById("status-title").textContent = "LOAD FAILED";
+      document.getElementById("status-text").textContent =
+        error.message || "Could not load the latest objective.";
+      return;
+    }
+
+    const summary = parseJsonObject(data?.task_summary_json);
+    let execution = summary.financial_execution || {};
+
+    if (!Object.keys(execution).length && summary.weekly_execution) {
+      const legacy = summary.weekly_execution;
+      const legacyAmount = Number(legacy.revenue_gap || legacy.target_amount || 0);
+      execution = {
+        objective_amount: legacyAmount,
+        planned_amount: 0,
+        remaining_gap: legacyAmount,
+        objective_reason: "Legacy financial target",
+        due_date: null,
+        status: legacyAmount > 0 ? "open" : "covered"
+      };
+    }
+
+    await loadImportantPlan(data);
+    renderExecution(execution);
+  }
+
+  loadFinancialEngine();
+  setInterval(loadFinancialEngine, 60000);
+  </script>
+
+</body>
+</html>

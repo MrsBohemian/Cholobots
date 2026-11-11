@@ -125,7 +125,7 @@ If a design doc exists, read it fully. Its sections map to the analysis:
 | **Transcripts** | The implementer's spec for the reply sequence. Point task descriptions at a transcript ("see `docs/designs/story-<ref>.md` § Transcripts > Happy path") instead of re-describing it. |
 | **Interaction Flows** | Each flow's trigger, Supabase reads/writes, cancel and timeout path become implementation detail and acceptance criteria in the relevant task. |
 | **Listener ownership** | Which `on_message` listener or `wait_for` consumes each reply; carry it into the task that adds the flow. |
-| **Dashboard changes** | Which `../Cholobots-Mobile` page changes and which tables/columns it reads. |
+| **Dashboard changes** | Which `mobile/` page changes and which tables/columns it reads. |
 | **Design Decisions** | Constraints the implementer must follow. Copy the relevant decision (with rationale) into each task it affects. |
 | **Open Questions** | If any remain unresolved, **stop and ask the user** before planning. Sync resolutions back into the doc (Step 4c). |
 
@@ -150,7 +150,7 @@ Gather all the context the implementer will need. The implementer should only ne
 - **Supabase tables** used through each module's own client; the schema is not in the repo (story #32 adds a baseline migration)
 - **Legacy storage**: `db/database.py` (SQLite, mostly dead), Crudobot's local JSON reports
 - **Config** (`config.py`): env vars, the shared OpenAI client
-- **Dashboards**: static HTML in `../Cholobots-Mobile` (or `mobile/` after story #64) reading Supabase with the publishable key
+- **Dashboards**: static HTML in `mobile/` reading Supabase with the publishable key
 
 ### 5b. Find existing patterns to follow
 
@@ -209,7 +209,7 @@ Plan tests at the lowest level that can prove each acceptance criterion:
    - Time-dependent tests pass a fixed aware `datetime` in `America/Chicago`; no test reads the wall clock.
    - No network: patch the Supabase client and OpenAI.
 2. **Integration tests against local Supabase** for queries, multi-step writes and cross-bot table contracts, once story #47 (local Supabase stack) and #51 (integration harness) exist. Until then, list the queries that would be covered here and move their verification to manual steps.
-3. **Manual test steps** for anything that needs a live bot: command parsing by discord.py, listener interplay, prompts, embeds, persona replies, and dashboard rendering. Write them as numbered steps for the test Discord server (story #31) with the exact messages to send and the expected replies (and for dashboards, the page in `../Cholobots-Mobile` and what it should show). These steps go into the plan's Verification section and the relevant task, so the `senior-manual-testing-specialist` can run them.
+3. **Manual test steps** for anything that needs a live bot: command parsing by discord.py, listener interplay, prompts, embeds, persona replies, and dashboard rendering. Write them as numbered steps for the test Discord server (story #31) with the exact messages to send and the expected replies (and for dashboards, the page in `mobile/` and what it should show). These steps go into the plan's Verification section and the relevant task, so the `senior-manual-testing-specialist` can run them.
 
 ### Step 6b: Validate the test plan against the testing strategy
 
@@ -260,7 +260,7 @@ Common ordering:
 3. **Data access** (the module's Supabase helper, offloaded per hazard 4)
 4. **Command / flow** (registration, prompts with timeouts, listener guards, attachment-gate entry)
 5. **Help text** (`!<persona>`, `!cholobots`)
-6. **Dashboard** (`../Cholobots-Mobile` page), if any
+6. **Dashboard** (`mobile/` page), if any
 7. **Documentation** (README, CLAUDE.md)
 
 Only create tasks for work that actually needs doing.

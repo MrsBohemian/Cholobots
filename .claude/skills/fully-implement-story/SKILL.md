@@ -195,7 +195,7 @@ It drives `python3 scripts/remediate_pr.py` (stability monitoring, failure count
 2. Spawn `senior-manual-testing-specialist` (`run_in_background: false`). The prompt includes:
    - Story ref, subject and acceptance criteria (from the story description), and the plan's manual test steps plus any posted on the tasks
    - PR number and branch, and the worktree `<wt>` to read code from (never `cd` to the main checkout)
-   - Where to test: Discord commands in the test Discord server (story #31) against a bot running this branch; dashboards from `../Cholobots-Mobile` (or `mobile/` after story #64) with the Chrome DevTools MCP. A local `python -m http.server` for the dashboards never exits: start it as a background Bash call and kill it at the end.
+   - Where to test: Discord commands in the test Discord server (story #31) against a bot running this branch; dashboards from `mobile/` with the Chrome DevTools MCP. A local `python -m http.server` for the dashboards never exits: start it as a background Bash call and kill it at the end.
    - "This is the **first pass**. Test all acceptance criteria and edge cases (cancel, timeout, unknown user, Supabase failure, other listeners in the channel). File bugs in Taiga for any deficiencies found, tagged `src:manual-test`."
    - "If the test environment is not available (no test server or test bot token yet), do not run the bot against production. End your final message with `MANUAL_TEST_UNAVAILABLE: <what is missing>`."
 3. Check its output:

@@ -52,7 +52,7 @@ codes and stdout contracts.
 One script per command (story #36): preconditions, numbered steps (what to type, which account,
 which channel), the expected reply, and the rows to check. Manual scripts own behaviour no fake can
 show honestly: three `on_message` listeners competing for one reply, the attachment gate, reply
-timing and abandoned prompts, persona voice, and the dashboards in `../Cholobots-Mobile` read
+timing and abandoned prompts, persona voice, and the dashboards in `mobile/` read
 alongside the bot.
 
 ## Ownership

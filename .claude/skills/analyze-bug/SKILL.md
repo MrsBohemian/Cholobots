@@ -75,7 +75,7 @@ Gather the root cause and all the context the fixer will need. The fixer should 
 
 ### 3a. Reproduce understanding
 
-Identify the expected and actual behaviour and where the bug likely lives: `cholobots.py` (startup, attachment gate, `on_message`), a persona module in `bots/`, `db/database.py`, `config.py`, or a dashboard page in `../Cholobots-Mobile`.
+Identify the expected and actual behaviour and where the bug likely lives: `cholobots.py` (startup, attachment gate, `on_message`), a persona module in `bots/`, `db/database.py`, `config.py`, or a dashboard page in `mobile/`.
 
 Reproduction is by reading code, or by sending the messages in the test Discord server (story #31) when it exists and the bug needs a live bot. Never run `python cholobots.py` against production from this skill. When you reproduce live, record the exact messages and replies in the plan.
 
