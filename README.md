@@ -43,6 +43,10 @@ Required variables: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE
 
 `.devcontainer/` builds one container with Python 3.14, the Supabase CLI 2.121.0, `gh`, Node 22, `psql`, Chrome (amd64 only) and its own Docker daemon (Docker-in-Docker). Each container runs a private Supabase stack on the default ports, so containers on one machine do not collide with each other or with a stack on the host.
 
+**Pre-built image.** `scripts/devcontainer/launch.sh` pulls `ghcr.io/mrsbohemian/cholobots/devcontainer:latest` instead of building. It adds the volatile tools (`claude`, `codex`, `chrome-devtools-mcp`, `uv`, and the pinned `pytaiga-mcp` in `/opt/pytaiga-mcp`) and a warm pip cache to the base image. Set `GH_TOKEN_FOR_PACKAGES` to a classic PAT with `read:packages` (keep it in your credentials vault, never in the repo); `launch.sh` falls back to `GH_TOKEN`, then `GITHUB_TOKEN`. Without pull access, or on Apple Silicon (the image is amd64 only), `launch.sh` builds both stages locally, which is slow, and tags them per workspace (`cholobots-devcontainer:local-<key>`). VS Code "Reopen in Container" builds only the base image, so it has no `claude` or `codex`.
+
+**Bumping a pin.** Every tool version is declared once: an `ARG` in `.devcontainer/Dockerfile.prebuild`, or the commit in `tools/pytaiga-mcp/install.sh`. `scripts/devcontainer/pins.sh` prints them all. Edit the one place and merge to `main`: the push-to-main run of `.github/workflows/build-devcontainer.yml` rebuilds and republishes `:base`, `:latest` and `:<sha>`. Pull requests, the weekly schedule and manual dispatch only build and check that the installed tool versions match the pins; they never publish. Only the `publish` job holds `packages: write`.
+
 Prerequisites: Docker, and either the pinned CLI or VS Code with the Dev Containers extension ("Reopen in Container"):
 
 ```bash
@@ -62,7 +66,7 @@ What happens:
 - **Slow or odd hosts.** On a host kernel with nftables only, `post-start.sh` switches `iptables` and `ip6tables` to the nft backend and restarts `dockerd`. After a container restart the stack needs a moment to become healthy, so `supabase start` and `db reset` are retried. Tunables, set on the host or in the container: `DOCKER_WAIT_LIMIT` (seconds to wait for dockerd, default 60), `SUPABASE_RETRY_ATTEMPTS` (default 30) and `SUPABASE_RETRY_DELAY` (seconds, default 2).
 - **Ports.** VS Code forwards 54321 (API) and 54323 (Studio); the headless CLI forwards nothing.
 - **Memory.** About 1 GB per container for the Supabase stack. `post-start.sh` skips `imgproxy`, `logflare`, `vector` and `mailpit`; set `SUPABASE_START_EXCLUDE=studio,imgproxy,...` to trim more, or `SUPABASE_START_EXCLUDE=` (empty) to start everything.
-- **Registry mirror.** `/etc/docker/daemon.json` points at `host.docker.internal:6000`; without a mirror running, Docker pulls from Docker Hub.
+- **Registry mirror.** `/etc/docker/daemon.json` points at `host.docker.internal:6000`; without a mirror running, Docker pulls from Docker Hub (`scripts/devcontainer/start-registry-mirror.sh` starts one). The pre-built image sets `SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io` so the Supabase images are pulled from Docker Hub and the mirror can cache them; they are not baked into the image. Known limitation: on Linux hosts the container cannot reach the host mirror because `host.docker.internal` is not mapped, so the Supabase images come straight from Docker Hub there (Taiga bug #202).
 - **Headless commands.** Inside the container the `make` targets use the installed CLI (`SUPABASE=supabase` is set).
 
 Safety: nothing in the container talks to the hosted Supabase project. Never put hosted credentials or the production Discord token in the container's environment or in `.env`. As in the Quickstart, test accounts fall back to Heaven's `daily_tasks` key, which is harmless in the local database.
