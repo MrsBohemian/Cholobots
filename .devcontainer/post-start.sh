@@ -5,8 +5,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# The docker-in-docker feature selects iptables-legacy. On a host kernel with nftables only, dockerd then
-# cannot create its NAT chain and never comes up. Switch to iptables-nft and start dockerd again.
+# The DinD feature selects iptables-legacy, which fails on nftables-only host kernels; switch to nft and restart dockerd.
 if ! sudo iptables -t nat -L -n >/dev/null 2>&1 && sudo iptables-nft -t nat -L -n >/dev/null 2>&1; then
     echo "Legacy iptables is unusable on this host; switching to iptables-nft."
     sudo update-alternatives --set iptables /usr/sbin/iptables-nft
@@ -33,8 +32,8 @@ SUPABASE_BIN="${SUPABASE:-supabase}"
 # Services nothing in this repo uses. Set SUPABASE_START_EXCLUDE= (empty) to start everything.
 exclude="${SUPABASE_START_EXCLUDE-imgproxy,logflare,vector,mailpit}"
 
-# After a container restart dockerd brings the stack's containers back. Until the db container is healthy,
-# `status` fails, `start` fails with "container is not ready: starting" and `db reset` fails, so each step retries.
+# After a container restart the stack's db container takes a while to become healthy; until then
+# `status`, `start` and `db reset` fail, so each step retries.
 attempts="${SUPABASE_RETRY_ATTEMPTS:-30}"
 delay="${SUPABASE_RETRY_DELAY:-2}"
 
@@ -65,7 +64,7 @@ start_stack() {
 
 retry "supabase start" start_stack
 
-# Container start means fresh seed data; stop the bot first if one is running.
+# Reseeds on every start; stop the bot first if one is running.
 retry "supabase db reset" "$SUPABASE_BIN" db reset
 
 "$SUPABASE_BIN" status -o env | python3 scripts/devcontainer/write_env.py .env

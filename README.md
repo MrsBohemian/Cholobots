@@ -60,10 +60,10 @@ What happens:
 - **Slow or odd hosts.** On a host kernel with nftables only, `post-start.sh` switches `iptables` and `ip6tables` to the nft backend and restarts `dockerd`. After a container restart the stack needs a moment to become healthy, so `supabase start` and `db reset` are retried. Tunables, set on the host or in the container: `DOCKER_WAIT_LIMIT` (seconds to wait for dockerd, default 60), `SUPABASE_RETRY_ATTEMPTS` (default 30) and `SUPABASE_RETRY_DELAY` (seconds, default 2).
 - **Ports.** VS Code forwards 54321 (API) and 54323 (Studio); the headless CLI forwards nothing.
 - **Memory.** About 1 GB per container for the Supabase stack. `post-start.sh` skips `imgproxy`, `logflare`, `vector` and `mailpit`; set `SUPABASE_START_EXCLUDE=studio,imgproxy,...` to trim more, or `SUPABASE_START_EXCLUDE=` (empty) to start everything.
-- **Registry mirror.** `/etc/docker/daemon.json` points at `host.docker.internal:6000`; without a mirror running, Docker pulls from Docker Hub (the mirror script comes with story #73).
+- **Registry mirror.** `/etc/docker/daemon.json` points at `host.docker.internal:6000`; without a mirror running, Docker pulls from Docker Hub.
 - **Headless commands.** Inside the container the `make` targets use the installed CLI (`SUPABASE=supabase` is set).
 
-Safety: nothing in the container talks to the hosted Supabase project. Never put hosted credentials or the production Discord token in the container's environment or in `.env`. As in the Quickstart, test accounts are not in `DISCORD_USER_TO_PERSON`, so they read and write Heaven's `daily_tasks` key in the local database (harmless locally; story #40).
+Safety: nothing in the container talks to the hosted Supabase project. Never put hosted credentials or the production Discord token in the container's environment or in `.env`. As in the Quickstart, test accounts fall back to Heaven's `daily_tasks` key, which is harmless in the local database.
 
 ### Seed data
 

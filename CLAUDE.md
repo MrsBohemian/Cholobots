@@ -18,7 +18,7 @@ make test-integration  # pytest tests/integration against the local stack (needs
 make run        # scripts/check_local_env.py, then python cholobots.py (production uses the Procfile)
 ```
 
-`.devcontainer/` (story #71) gives a container with the Supabase CLI and Docker-in-Docker; its `post-start.sh` resets the in-container database and rewrites `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`/`DISCORD_TOKEN`/`OPENAI_API_KEY` in `.env`, and never starts the bot. See the README's Devcontainer section.
+`.devcontainer/` gives a container with the Supabase CLI and Docker-in-Docker; its `post-start.sh` resets the in-container database and rewrites `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`/`DISCORD_TOKEN`/`OPENAI_API_KEY` in `.env`, and never starts the bot. See the README's Devcontainer section.
 
 `make help` lists the targets; `tests/scripts/test_makefile.py` pins each recipe. `scripts/check_local_env.py` refuses a non-local `SUPABASE_URL`, an empty required secret or a non-integer `TRANSPORTATION_CHANNEL_ID`. Agents never run `make run` or `python cholobots.py` (they start the bot); `make setup`, `make check`, `make -n <target>` and the `db-*` targets against the local Docker stack are fine.
 

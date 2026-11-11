@@ -22,9 +22,8 @@ POST_START="$REPO_ROOT/.devcontainer/post-start.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# The scripts read these from the environment, and README/Makefile tell developers to export them
-# (inside the devcontainer DISCORD_TOKEN and OPENAI_API_KEY are real secrets). An inherited
-# SUPABASE=/path/to/supabase would bypass the fake and reset a real local stack, so start clean.
+# Start clean: an inherited SUPABASE=/path/to/supabase would bypass the fake and reset a real local stack,
+# and inside the devcontainer DISCORD_TOKEN and OPENAI_API_KEY are real secrets.
 unset SUPABASE SUPABASE_START_EXCLUDE SUPABASE_RETRY_ATTEMPTS SUPABASE_RETRY_DELAY \
     DOCKER_WAIT_LIMIT DOCKER_INIT DISCORD_TOKEN OPENAI_API_KEY \
     FAKE_DOCKER_DOWN FAKE_DOCKER_DOWN_ONCE FAKE_STACK_STARTING FAKE_DB_RESET_FAILS FAKE_LEGACY_IPTABLES_BROKEN
@@ -254,8 +253,7 @@ else
     cat "$CALLS"
 fi
 
-# After a container restart dockerd brings the stack's containers back while its db container is still
-# starting: status, start and db reset all fail for a while. post-start retries each of them.
+# Stack still starting after a container restart: status, start and db reset fail for a while and are retried.
 : > "$CALLS"
 rm -f "$STATE/started" "$STATE/reset-count" "$STATE/starting-count"
 (cd "$WS" && PATH="$BIN:$PATH" DOCKER_WAIT_LIMIT=5 SUPABASE_RETRY_ATTEMPTS=5 SUPABASE_RETRY_DELAY=0 FAKE_STACK_STARTING=2 \
@@ -295,8 +293,7 @@ fi
 if calls_has "supabase status -o env"; then fail "no .env written when db reset keeps failing"; else pass "no .env written when db reset keeps failing"; fi
 rm -f "$STATE/reset-count"
 
-# Host kernel without legacy iptables (nftables only): the DinD feature selects iptables-legacy,
-# dockerd cannot create its NAT chain, so post-start switches to iptables-nft and restarts dockerd.
+# nftables-only host kernel: post-start switches to iptables-nft and restarts dockerd.
 : > "$CALLS"
 rm -f "$STATE/started" "$STATE/nft" "$STATE/dockerd"
 (cd "$WS" && PATH="$BIN:$PATH" FAKE_LEGACY_IPTABLES_BROKEN=1 FAKE_DOCKER_DOWN_ONCE=1 DOCKER_WAIT_LIMIT=5 \
