@@ -290,6 +290,58 @@ class TestFallbackToLogScanning:
         assert pr == "none"
         assert reason is None
 
+    def test_large_log_is_read_from_the_end_not_loaded_whole(self, tmp_path, monkeypatch):
+        """A multi-MB stream-json log must not be read in full: only a bounded
+        window at the end is read, and the marker is found in it."""
+        import builtins
+
+        log_file = tmp_path / "bug-404.log"
+        filler = ("x" * 99 + "\n") * 50_000  # ~5 MB
+        log_file.write_text("Ready for review (old, far from the tail)\n" + filler
+                            + "all done, escalation-needed\n")
+        assert log_file.stat().st_size > 4_000_000
+
+        bytes_read = []
+        real_open = builtins.open
+
+        def counting_open(file, *args, **kwargs):
+            f = real_open(file, *args, **kwargs)
+            if str(file) != str(log_file):
+                return f
+            real_read = f.read
+
+            class Spy:
+                def __getattr__(self, name):
+                    return getattr(f, name)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    f.close()
+
+                def read(self, *a):
+                    data = real_read(*a)
+                    bytes_read.append(len(data))
+                    return data
+
+                def readlines(self, *a):
+                    raise AssertionError("whole-file readlines() on the agent log")
+
+                def __iter__(self):
+                    raise AssertionError("whole-file iteration over the agent log")
+
+            return Spy()
+
+        monkeypatch.setattr(builtins, "open", counting_open)
+
+        outcome, _, _ = determine_outcome(
+            404, str(log_file), container_id=None, state_dir=str(tmp_path),
+        )
+
+        assert outcome == "escalated"
+        assert bytes_read and sum(bytes_read) <= 1_000_000
+
 
 # ── Orchestrator tests ───────────────────────────────────────────────
 

@@ -188,7 +188,9 @@ class StateManager:
 # Shared with orchestrate_epic (same logic, avoids duplication): the PID check,
 # PR-number validation and the host-repo base-branch resolution.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from orchestrate_epic import HostRepoBaseMixin, is_agent_process, valid_pr_number  # noqa: E402
+from orchestrate_epic import (  # noqa: E402
+    HostRepoBaseMixin, is_agent_process, read_log_tail, valid_pr_number,
+)
 
 
 def _classify_phase(phase, pr):
@@ -274,18 +276,14 @@ def determine_outcome(ref, log_file, container_id=None, state_dir="/tmp"):
                 pass
 
     # Fallback: scan log tail
-    if outcome == "error" and log_file and os.path.exists(log_file):
-        try:
-            with open(log_file) as f:
-                lines = f.readlines()
-            tail_text = "".join(lines[-100:])
-            lower_tail = tail_text.lower()
-            if "ready for test" in lower_tail or "ready for review" in lower_tail:
-                outcome = "complete"
-            elif "escalated" in lower_tail or "escalation-needed" in lower_tail:
-                outcome = "escalated"
-        except OSError:
-            pass
+    if outcome == "error" and log_file:
+        # Bounded read from the end: agent logs run to tens of MB and several
+        # bugs finish concurrently, so never load the whole file.
+        lower_tail = "".join(read_log_tail(log_file, 100)).lower()
+        if "ready for test" in lower_tail or "ready for review" in lower_tail:
+            outcome = "complete"
+        elif "escalated" in lower_tail or "escalation-needed" in lower_tail:
+            outcome = "escalated"
 
     return outcome, pr_number, escalation_reason
 
