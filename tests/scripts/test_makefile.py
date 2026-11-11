@@ -77,9 +77,18 @@ def test_setup_builds_venv_with_pinned_python_version():
     ("target", "command"),
     [("db-up", "start"), ("db-down", "stop"), ("db-reset", "db reset"), ("db-env", "status -o env")],
 )
-def test_supabase_targets_use_pinned_cli(target, command):
-    version = re.search(r"^SUPABASE_CLI_VERSION := (\S+)$", MAKEFILE.read_text(), re.M).group(1)
-    assert f"npx --yes supabase@{version} {command}" in dry_run(target)
+def test_supabase_targets_use_the_per_checkout_script(target, command):
+    assert f"scripts/supabase-local.sh {command}" in dry_run(target)
+
+
+def test_makefile_exports_the_pinned_cli_for_the_script():
+    text = MAKEFILE.read_text(encoding="utf-8")
+    version = re.search(r"^SUPABASE_CLI_VERSION := (\S+)$", text, re.M).group(1)
+    # The script's own default (used outside make) must pin the same CLI as the Makefile.
+    script = (ROOT / "scripts" / "supabase_local.py").read_text(encoding="utf-8")
+    assert f'DEFAULT_CLI = "npx --yes supabase@{version}"' in script
+    assert re.search(r"^SUPABASE_CLI \?= npx --yes supabase@\$\(SUPABASE_CLI_VERSION\)$", text, re.M)
+    assert re.search(r"^export SUPABASE_CLI$", text, re.M)
 
 
 def test_supabase_cli_can_be_overridden():
@@ -133,7 +142,7 @@ def test_integration_target_reports_missing_harness(tmp_path):
 
 def test_integration_target_exports_local_stack_env_and_requires_it():
     out = dry_run("test-integration")
-    assert "supabase@" in out
+    assert "scripts/supabase-local.sh status -o env" in out
     assert "--override-name api.url=SUPABASE_URL" in out
     assert "--override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY" in out
     assert "--override-name db.url=SUPABASE_DB_URL" in out

@@ -12,6 +12,7 @@ allowed-tools:
   - Bash(xargs grep *)
   - Bash(env -u GH_TOKEN gh *)
   - Bash(scripts/codex-review-pr.sh *)
+  - Bash(scripts/supabase-local.sh *)
   - Read(//tmp/**)
   - Read
   - Edit
@@ -40,7 +41,7 @@ Repo facts: branches are pushed to `upstream` (`MrsBohemian/Cholobots`) and PRs 
 
 ## Step 2: Setup branch
 
-Work in the current checkout, which is a git worktree when the orchestrator spawned you (`.claude/worktrees/bug-<ref>`). When nothing created one (an overseer spawn or a manual run in the main checkout), create it first and work only there: `git fetch upstream && git worktree add -b fix/<bug-ref>-<short-slug> <main checkout>/.claude/worktrees/bug-<bug-ref> upstream/main` (skip the add when that worktree already exists). Never `cd` to the main checkout, check out other branches, `git reset --hard` or `git stash` (the stash is shared across worktrees).
+Work in the current checkout, which is a git worktree when the orchestrator spawned you (`.claude/worktrees/bug-<ref>`). When nothing created one (an overseer spawn or a manual run in the main checkout), create it first and work only there: `git fetch upstream && git worktree add -b fix/<bug-ref>-<short-slug> <main checkout>/.claude/worktrees/bug-<bug-ref> upstream/main` (skip the add when that worktree already exists). Only when you created the worktree here, start its own local Supabase stack as its own Bash call (`scripts/supabase-local.sh start <main checkout>/.claude/worktrees/bug-<bug-ref> >/dev/null`; non-zero is a warning, not a stop) and report it in Step 7 so the caller stops it; a worktree the orchestrator created already has its stack, which the orchestrator stops. Never `cd` to the main checkout, check out other branches, `git reset --hard` or `git stash` (the stash is shared across worktrees).
 
 1. `git fetch upstream`
 2. If the current branch is already `fix/<bug-ref>-*`, keep it (resume). Otherwise the tree must be clean; create the branch from the fetched upstream tip: `git switch -c fix/<bug-ref>-<short-slug> upstream/main`. Slug from the issue subject (lowercase, hyphens, 3-4 words max).
@@ -149,6 +150,7 @@ Return:
 - Root cause (one sentence)
 - What regression tests were added, or where the manual test steps were posted
 - PR number and URL, and the branch name
+- The Supabase stack you started in Step 2 (the worktree path), or "none started", so the caller can run `scripts/supabase-local.sh stop <worktree>` when it removes the worktree
 - Codex review result (the `REVIEW_POSTED`/`REVIEW_SKIPPED` line)
 - Check results (py_compile, and pytest/ruff pass/fail or "not configured")
 - Merge side effects: whether the PR carries `mark-done-on-merge`, and why

@@ -6,6 +6,7 @@ disable-model-invocation: true  # human-only: unattended sweep orchestrator - a 
 allowed-tools:
   - Agent
   - Bash(scripts/taiga-story.sh *)
+  - Bash(scripts/supabase-local.sh *)
   - Bash(python3 scripts/taiga_select_issues.py *)
   - Bash(python3 scripts/taiga_project_setup.py --check)
   - Bash(mkdir *)
@@ -116,6 +117,7 @@ Print `INIT:<total>:<N>` (or `RESUMED:<active>:<queued>:<complete>:<escalated>:<
    git worktree add --detach "$REPO_ROOT/.claude/worktrees/bug-<ref>" upstream/main
    ```
    Skip the add if the worktree exists (resume). Record `worktreePath`. On failure set `status = "error"`, `escalationReason = "worktree creation failed"`, print `LAUNCH_FAIL:<ref>:<reason>` and go on to the next queued bug.
+   Then start the worktree's own Supabase stack (its own Bash call, run from `REPO_ROOT`, the main checkout): `scripts/supabase-local.sh start "$WT" >/dev/null`. A base without `supabase/config.toml` exits 0 with a note. A non-zero exit is a warning only: print `STACK_WARN:<ref>:<first stderr line>` and continue. Each active slot's stack costs about 1 GB RAM on top of its worker.
 4. Spawn the worker with the `Agent` tool:
    - **Agent type**: `senior-software-developer`
    - **Prompt**:
@@ -125,6 +127,7 @@ Print `INIT:<total>:<N>` (or `RESUMED:<active>:<queued>:<complete>:<escalated>:<
      Working directory: <WT> (a git worktree of this repo based on upstream/main). Do all file edits and git commands there (use absolute paths or `git -C <WT>`). Main checkout: <REPO_ROOT>.
      FORBIDDEN: cd to the main checkout, checking out other branches, `git reset --hard`, `git stash` (the stash is shared across worktrees).
      The skills and helper scripts live in the main checkout and may be absent from the worktree: read skill text from <REPO_ROOT>/.claude/skills/ and run helpers as `python3 <REPO_ROOT>/scripts/...` with <WT> as the working directory.
+     Local Supabase for this worktree: scripts/supabase-local.sh env <WT> prints its SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_DB_URL; make test-integration uses it automatically. Never use another checkout's stack.
      Never run `python cholobots.py`. Follow .claude/skills/shared/synchronous-worker-contract.md: foreground Bash and Agent calls only, return only after the state file /tmp/fix-and-remediate-<ref>.json is in a terminal phase.
 
      Return: the final phase, the PR number and URL, the branch name, and the escalation reason if any.
@@ -139,7 +142,7 @@ Print `INIT:<total>:<N>` (or `RESUMED:<active>:<queued>:<complete>:<escalated>:<
    - `escalated` -> `status = "escalated"`, store `escalationReason`
    - missing file, non-terminal phase, or an agent error -> `status = "escalated"`, `escalationReason = "worker ended without a terminal phase (<phase>)"`
 2. The worker normally does its own Taiga finalization (`Ready for review` and assignee, or `Blocked`, the `escalation-needed` tag and assignee). If it ended without a terminal phase, do the escalation yourself: re-read the issue, `update_issue(project=39, ref=<ref>, status="Blocked", tags=[<existing...>, "escalation-needed"])`, and `assign_item(project=39, ref=<ref>, username="Jon Roberts", entity_type="issue")`.
-3. Remove the worktree: `git worktree remove "$WT"` (no `--force`; the branch and PR stay). If it refuses because the tree is dirty, leave it, keep `worktreePath` and list it in the report.
+3. Stop the worktree's stack (its own Bash call; escalated and errored bugs included; failure is a `STACK_WARN:<ref>:<first stderr line>`): `scripts/supabase-local.sh stop "$WT"`. Then remove the worktree: `git worktree remove "$WT"` (no `--force`; the branch and PR stay). If it refuses because the tree is dirty, leave it, keep `worktreePath` and list it in the report.
 4. Print `COMPLETED:<ref>:<outcome>:<pr>`, update the state file, then run **Launch** again to fill the freed slot with the next queued bug.
 
 Print `WAITING:<active>:<queued>` whenever you are idle waiting for a completion notification. Never launch more than `N` at once. Never stop the whole run for one bug.
@@ -155,6 +158,7 @@ When no bug is `queued`, `launching` or `active`: set `phase = "complete"` and p
    - Bugs escalated (with reasons and Taiga links)
    - Bugs errored (with reasons)
    - Worktrees left in place (with paths)
+   - If any stack `stop` failed: run `scripts/supabase-local.sh prune` to stop stacks whose worktree is gone
 3. Remind the user to review PRs and handle escalations.
 
 ## Notes

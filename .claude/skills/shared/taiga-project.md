@@ -225,6 +225,34 @@ exports them through direnv from the SOPS vault). Default project is 39.
 Raw REST callers use `https://backlog.growthgarage.org/api/v1/...` with header
 `x-disable-pagination: True`; see `.claude/skills/shared/taiga-pagination.md`.
 
+## Local Supabase stacks
+
+Every checkout that runs integration tests gets its own local Supabase stack, never the hosted
+project. `scripts/supabase-local.sh` (core in `scripts/supabase_local.py`) manages it.
+
+- **Main checkout, CI and the devcontainer** use the default ports (API 54321, DB 54322) and project
+  id `cholobots`. The devcontainer (`CHOLOBOTS_DEVCONTAINER=1`) has its own Docker daemon, so
+  containers on one machine do not collide.
+- **Worktrees** (`.claude/worktrees/<story|bug>-<ref>`) each get project id
+  `cholobots-<directory name>-<8 hex of the full path's hash>` (same-named worktrees in different
+  places never share a stack) and a slot `n` (1 to 99) allocated on first `start`. Every port is the
+  default plus `10*n` (API `54321+10n`, DB `54322+10n`), except the inspector (8083 plus `n`). Slots are
+  recorded in `cholobots-supabase-slots.json` in the git common dir (flock-guarded); the rendered config
+  and a mirror of `supabase/` live in the worktree's git-ignored `.supabase-local/`. Worktree stacks
+  skip `studio`, `mailpit`, `imgproxy`, `logflare`, `vector` and `edge-runtime` unless
+  `SUPABASE_LOCAL_EXCLUDE` says otherwise.
+- **Commands.** `scripts/supabase-local.sh start|stop|status|env|prune [checkout-path]`. `env` prints
+  `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_DB_URL`. `stop` also frees the slot and
+  removes `.supabase-local/`. `prune` stops stacks whose worktree no longer exists, deleted directories
+  included. Only `db reset|diff|lint`, `migration new|list|up` and `test db` are forwarded to the
+  Supabase CLI, with the checkout path right after the command words; every other command and the
+  hosted flags (`--linked`, `--db-url`, `--project-ref`) are refused.
+- **Who starts and stops.** `/implement-story`, `/fully-implement-story`, `/implement-epic`,
+  `/fix-single-bug`, `/fully-fix-bugs` and `/parallel-fix-bugs` start the stack when they create a
+  worktree and stop it before removing the worktree; a failure is a warning (`STACK_WARN`), never a
+  stop. Pass the worktree path so the script acts on that worktree, not the main checkout. A worktree
+  must never use another checkout's stack. `make test-integration` picks up its own checkout's values.
+
 ## GitHub conventions
 
 - **Branches and PRs live on `upstream`** (`MrsBohemian/Cholobots`, Heaven's repo; this account has

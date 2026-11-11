@@ -24,6 +24,8 @@ whole scope on the PR: workflow `checks` (compile, lint, unit and script tests, 
 | Compile, lint, test | | `make check` | Before every push |
 | Whole suite | `python -m pytest -q` | | Once #34 lands |
 
+**Which database.** Integration tests run against the local stack of the checkout you are in: the default stack (API 54321) in the main checkout and the devcontainer, or the worktree's own stack (API `54321+10n`, DB `54322+10n`) in a worktree. `make db-up` starts it and `make test-integration` uses it. Without make: `eval "$(scripts/supabase-local.sh env | sed 's/^/export /')"` then `CHOLOBOTS_INTEGRATION_REQUIRED=1 python -m pytest tests/integration -q -m integration`. When `SUPABASE_URL` is not on port 54321 the harness also needs `SUPABASE_DB_URL` (`env` prints it). Never point a worktree at another checkout's stack or at the hosted project. Details: "Local Supabase stacks" in `.claude/skills/shared/taiga-project.md`.
+
 Set up the environment once with `make setup`. The `make` targets call `.venv/bin/python` directly, so no activation is needed.
 Never run `python cholobots.py` or `make run` from an automated run.
 
@@ -36,6 +38,7 @@ Never run `python cholobots.py` or `make run` from an automated run.
 | A command handler or listener with no automated test possible yet | Compile; write manual verification steps on the Taiga item and in the PR |
 | `scripts/**` | `python -m pytest tests/scripts -q` plus the matching `bash tests/scripts/test-*.sh` |
 | `tests/**` | The tests you changed |
+| `scripts/supabase_local.py`, `scripts/supabase-local.sh` | `python -m pytest tests/scripts -q` plus `SUPABASE_LOCAL_LIVE=1 bash tests/scripts/test-supabase-local.sh` (two-worktree isolation test; opt-in, so `make test` and CI skip it, and it skips without Docker; its data-isolation and concurrent-suite steps need a host where the stack's API routes correctly) |
 | `.devcontainer/**`, `scripts/devcontainer/**` | `python -m pytest tests/scripts -q -k devcontainer` and `bash tests/scripts/test-devcontainer-lifecycle.sh`; a `devcontainer up` smoke when the Dockerfile or lifecycle scripts change |
 | `.claude/**`, `docs/**` | Nothing to run |
 | `requirements.txt`, `requirements-dev.txt`, `.python-version` | Fresh venv, compile, `ruff check .`, script tests, whole suite once it exists |

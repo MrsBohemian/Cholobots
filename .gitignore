@@ -8,3 +8,4 @@ __pycache__/
 .envrc.local
 .claude/worktrees/
 output/
+.supabase-local/
