@@ -42,6 +42,7 @@ Never run `python cholobots.py` or `make run` from an automated run.
 | `scripts/devcontainer/*.sh`, `scripts/hooks/**` | `bash tests/scripts/test-devcontainer-scripts-lint.sh`, `bash tests/scripts/test-devcontainer-*.sh`, `test-reject-self-matching-pgrep.sh`, `test-launch-*.sh`, `test-start-registry-mirror.sh`, `test-prepare-clone.sh` and `test-worktree-add.sh` (stub `docker`, no daemon needed); `bash scripts/devcontainer/smoke-test.sh` only when a Docker daemon is available |
 | `.devcontainer/**`, `scripts/devcontainer/**` | `python -m pytest tests/scripts -q -k devcontainer` and `bash tests/scripts/test-devcontainer-lifecycle.sh`; a `devcontainer up` smoke when the Dockerfile or lifecycle scripts change |
 | `.devcontainer/**`, `tools/pytaiga-mcp/**`, `.github/workflows/build-devcontainer.yml` | `python -m pytest tests/scripts -q` plus `bash tests/scripts/test-pytaiga-mcp-install.sh`, `test-devcontainer-pins.sh`, `test-build-devcontainer-cache.sh`, `test-build-devcontainer-workflow.sh` and `test-launch-prebuild-image.sh` |
+| `scripts/devcontainer/orchestrate_*.py` | `python -m pytest tests/scripts -q` (includes the end-to-end test with fake `launch.sh`, `exec-skill.sh` and `teardown.sh`; no Docker needed) |
 | `.claude/**`, `docs/**` | Nothing to run |
 | `requirements.txt`, `requirements-dev.txt`, `.python-version` | Fresh venv, compile, `ruff check .`, script tests, whole suite once it exists |
 

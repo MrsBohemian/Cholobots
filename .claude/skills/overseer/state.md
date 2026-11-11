@@ -103,7 +103,7 @@ If your final action would leave `phase` at any in-progress value (`analyzing`, 
 
 **State-file ownership (cross-repo collision).** `~/.local/state/overseer/` is shared across every repo whose conductor uses it (the internal-infra and homelab conductors among them), and refs collide freely across Taiga projects, so a `~/.local/state/overseer/cholobots-<kind>-<ref>.json` you did not write may still belong to another repo's overseer run if that repo reused the `cholobots` prefix. Before resuming any state file, check its `"project"` field: if it is missing or **not `39`**, it is not yours — do not resume it, do not overwrite it, and route the ref through fresh routing (Step 1) instead. Always write `"project": 39` into every state file you create — the epic and sprint files follow the same rule.
 
-**Coexistence with the unattended orchestrators.** `implement-epic` / `fully-fix-bugs` / `parallel-fix-bugs` / `fully-implement-story` track their own runs in separate state files (all of them run in git worktrees here). Before routing a ref, read each of these:
+**Coexistence with the unattended orchestrators.** `implement-epic` / `fully-fix-bugs` / `parallel-fix-bugs` / `fully-implement-story` track their own runs in separate state files (in git worktrees or, for `implement-epic` and `parallel-fix-bugs` with n > 1, in devcontainers; the state paths and keys are the same). Before routing a ref, read each of these:
 
 | Orchestrator | State file | Ref list |
 |---|---|---|

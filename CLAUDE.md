@@ -42,6 +42,8 @@ Prerequisites: `python3 scripts/taiga_project_setup.py --check` must exit 0. If 
 
 Agents can also run in a devcontainer made by `scripts/devcontainer/launch.sh` (a clone, or a worktree with `--worktree`); the container's GitHub access is `CHOLOBOTS_CONTAINER_GH_TOKEN` only, never the host `GH_TOKEN`, and `launch.sh` refuses a main checkout (see `scripts/README.md`). The pre-built image `launch.sh` pulls is built by `.github/workflows/build-devcontainer.yml` (published only on a push to `main`); its tool pins live in `.devcontainer/Dockerfile.prebuild` and `tools/pytaiga-mcp/install.sh`, listed by `scripts/devcontainer/pins.sh`.
 
+`/implement-epic` and `/parallel-fix-bugs` run each item in its own devcontainer when n > 1 (`scripts/devcontainer/orchestrate_epic.py`, `orchestrate_bugs.py`; `--worktrees` keeps worktrees), and no pipeline run ever starts the bot.
+
 Each pipeline worktree runs its own local Supabase stack, started and stopped through `scripts/supabase-local.sh` (see `.claude/skills/shared/taiga-project.md`, "Local Supabase stacks"). Never point a worktree at another checkout's stack, and never at the hosted project.
 
 ## Architecture
