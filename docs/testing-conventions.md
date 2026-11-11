@@ -27,7 +27,9 @@ tests/
 
 Importing the wrong thing has side effects:
 
-- `cholobots.py` calls `bot.run()` at import. **Never import it in a test.**
+- `cholobots.py` guards `bot.run()` with `if __name__ == "__main__":`, but importing it still imports
+  `config` and every bot module and builds the bot. **Never import it in a test**; read its source
+  with `ast` instead (`tests/unit/test_cholobots_entrypoint.py`).
 - `config.py` runs `load_dotenv(override=True)`, so a developer's `.env` beats the test
   environment, and it raises without `DISCORD_TOKEN`/`OPENAI_API_KEY`.
 - `bots/chismebot.py`, `bots/guardabot.py` and `bots/crudobot.py` call `create_client` at import;

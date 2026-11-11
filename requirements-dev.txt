@@ -1,3 +1,5 @@
-# Development-only dependencies: the helper-script test suite (tests/scripts).
-# The scripts themselves are stdlib-only; the bot's runtime deps are in requirements.txt.
+# Dev-only: pytest (tests/scripts), ruff and pre-commit. The scripts are stdlib-only;
+# the bot's runtime deps are in requirements.txt.
 pytest==9.2.0
+ruff==0.17.4
+pre-commit==4.7.0

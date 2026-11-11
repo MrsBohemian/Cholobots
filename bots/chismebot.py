@@ -1,6 +1,5 @@
 import os
 import re
-import traceback
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -611,7 +610,6 @@ def try_link_lead_to_existing_contact(lead):
         return lead
 
     raw = lead.get("raw_notes") or ""
-    raw_lower = raw.lower()
 
     emails = set(re.findall(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", raw, flags=re.I))
     phone_candidates = set()
