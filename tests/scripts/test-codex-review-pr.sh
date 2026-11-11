@@ -1245,6 +1245,45 @@ else
 fi
 cleanup; MOCK_DIR=""; REPO_DIR=""
 
+# --- Test: the claim holds when `mkdir` swallows EEXIST ---
+# uutils coreutils can report mkdir success to both racers. A `mkdir -p` stub
+# simulates that for a second invocation against an already-claimed job: it must
+# join, not start a second worker (one codex call, one POST).
+info "Test: a second invocation joins the claim even when mkdir reports success for an existing dir"
+setup_repo
+setup_mock_gh
+echo 8 > "$MOCK_DIR/codex_sleep"
+cat > "$MOCK_DIR/mkdir" << 'MOCKMKDIR'
+#!/usr/bin/env bash
+PATH="${PATH#"$MOCK_DIR":}" exec mkdir -p "$@"
+MOCKMKDIR
+chmod +x "$MOCK_DIR/mkdir"
+mkdir_first_out=$(cd "$REPO_DIR" && PATH="$MOCK_DIR:$PATH" MOCK_DIR="$MOCK_DIR" CODEX_REVIEW_STATE_DIR="$MOCK_DIR/state" \
+    CODEX_REVIEW_WAIT_SECONDS=1 timeout "$INVOCATION_TIMEOUT" bash "$SCRIPT" 42)
+set +e
+mkdir_second_out=$(cd "$REPO_DIR" && PATH="$MOCK_DIR:$PATH" MOCK_DIR="$MOCK_DIR" CODEX_REVIEW_STATE_DIR="$MOCK_DIR/state" \
+    CODEX_REVIEW_WAIT_SECONDS=1 timeout "$INVOCATION_TIMEOUT" bash "$SCRIPT" 42 2>&1)
+mkdir_second_status=$?
+set -e
+if [[ "$mkdir_first_out" == "REVIEW_PENDING:1/3" && "$mkdir_second_status" -eq 0 && "$mkdir_second_out" == "REVIEW_PENDING:1/3" ]]; then
+    pass "the second invocation joined the live job and reported REVIEW_PENDING"
+else
+    fail "Expected both to report REVIEW_PENDING:1/3, got: [$mkdir_first_out] / [$mkdir_second_out] (status $mkdir_second_status)"
+fi
+wait_for "$POLL_DEADLINE" '[[ -f "$MOCK_DIR/post_calls.log" ]]' || true
+sleep 1
+if [[ "$(wc -l < "$MOCK_DIR/codex_calls.log" 2>/dev/null || echo 0)" -eq 1 ]]; then
+    pass "codex was invoked exactly once"
+else
+    fail "Expected exactly 1 codex invocation, got: $(wc -l < "$MOCK_DIR/codex_calls.log" 2>/dev/null || echo 0)"
+fi
+if [[ "$(wc -l < "$MOCK_DIR/post_calls.log" 2>/dev/null || echo 0)" -eq 1 ]]; then
+    pass "exactly one POST was made"
+else
+    fail "Expected exactly 1 POST, got: $(wc -l < "$MOCK_DIR/post_calls.log" 2>/dev/null || echo 0)"
+fi
+cleanup; MOCK_DIR=""; REPO_DIR=""
+
 # --- Test: pid is persisted via a temp file + rename, never a bare redirect ---
 # Regression guard for the atomic-pid-write fix: `echo "$X" > "$JOBDIR/pid"`
 # creates the (empty) file before writing its contents, so a joiner reading

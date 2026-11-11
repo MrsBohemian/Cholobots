@@ -577,7 +577,15 @@ mkdir -p "$CODEX_REVIEW_STATE_DIR" || {
 # mkdir call, rather than leaving a window at the default umask before a
 # separate chmod. See job_dir_is_ours(), which the worker and the
 # dead-worker reclaim path both check before trusting anything under here.
-if ! mkdir -m 700 "$JOBDIR" 2>/dev/null; then
+#
+# `mkdir` is not an atomic claim everywhere: uutils coreutils (Ubuntu 26.04, the
+# GitHub runners) can report success to two racers. The claim is the O_EXCL
+# (`noclobber`) creation of $JOBDIR/owner, which only one racer wins.
+claim_job_dir() {
+    mkdir -m 700 "$JOBDIR" 2>/dev/null || return 1
+    ( set -o noclobber; printf '%s\n' "$$" > "$JOBDIR/owner" ) 2>/dev/null
+}
+if ! claim_job_dir; then
     # mkdir fails for reasons other than "already exists" too (a read-only or
     # missing state dir, no space left, ...). Only join an existing, owned
     # job dir; anything else is a real setup error, not a job to wait on.
@@ -589,6 +597,7 @@ if ! mkdir -m 700 "$JOBDIR" 2>/dev/null; then
         echo "Error: job dir '$JOBDIR' exists but is not owned by the current user" >&2
         exit 1
     fi
+    # Also reached when mkdir succeeded but another invocation owns the job.
     wait_and_emit
 fi
 
