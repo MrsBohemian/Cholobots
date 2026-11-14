@@ -23,10 +23,34 @@ Run the bot against a Supabase stack on your own machine, never against the host
    - Supabase CLI 2.121.0: via Node 18+ (`alias supabase='npx --yes supabase@2.121.0'`), or Homebrew (`brew install supabase/tap/supabase`) or Scoop. `supabase --version` should print 2.121.0.
 2. **Start the stack.** `supabase start` (the first run pulls images and takes several minutes). It runs Postgres, Auth, Storage, the REST API and Studio in Docker and prints the API URL (`http://127.0.0.1:54321`), Studio (`http://127.0.0.1:54323`) and the keys; `supabase status -o env` prints them again. Edge Functions are off in `supabase/config.toml` because the repo has none.
 3. **Write `.env`** in the repo root with `SUPABASE_URL=<API_URL>` and `SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY>` copied from `supabase status -o env`, plus `DISCORD_TOKEN` (a **test** bot token, never the production one) and `OPENAI_API_KEY`. `.env` is loaded with `override=True`, so it silently wins over your shell: keep the hosted URL, the hosted service-role key and the production Discord token out of it. A wrong or empty value shows up as a `create_client` error when the process starts.
-4. **Know what is in the database.** The local database has the baseline schema (`supabase/migrations/`) and no data, so commands that read rows find nothing. `supabase db reset` rebuilds it from the migrations.
+4. **Know what is in the database.** The local database has the baseline schema (`supabase/migrations/`) plus the fictitious seed data described under [Seed data](#seed-data). `supabase db reset` rebuilds it from the migrations and the seed.
 5. **Run.** `python cholobots.py` (only with the test token), and `supabase stop` when you are done.
 
 Required variables: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. The full list, including optional variables and which ones crash the process at import, is in [CLAUDE.md](CLAUDE.md). There is no test suite yet; `python -m py_compile cholobots.py config.py db/database.py bots/*.py` is the only static check.
+
+### Seed data
+
+`supabase/seed.sql` loads one obviously fictitious contracting business, and `supabase db reset` runs it after the migrations (`[db.seed]` in `supabase/config.toml`). The reset is one command against the local Docker stack only, never with `--linked`:
+
+```bash
+npx --yes supabase@2.121.0 db reset
+```
+
+It takes about 30 s. Stop the bot first: its in-memory sessions would point at rows the reset deleted.
+
+What it seeds:
+
+- Chismebot: `Fern Fridgeman (Test)` (Fridge), `Stella Stovetop (Test)` (Stovetop, 80 degrees) and `Olive Ovenmitt (Test)` (Oven, burner 1) with a journal and notes. `chisme_dashboard_contacts` is a view, so it fills from these contacts.
+- Crudobot: two projects for Olive (`Olive kitchen faucet (Test)`, `Olive deck rail (Test)`) with tasks, labor entries and material purchases.
+- Guardabot: garage zones `Electrical Shelf (Test)` and `Plumbing Bin (Test)` with wire nuts and PEX elbows.
+- Metichebot: this week's `metiche_weekly` row and three `daily_tasks`.
+- Obi Juan: quest `test-gate-latch` with one assignment. Vueltabot: `Used Ladder (Test)` and a buyer interest in a ladder.
+
+`!mtoday` works out of the box. There is no profiles table yet, so any test account reaches Metichebot as `UNKNOWN:<id>`, which reads the `heaven` calendar key, and the seed puts today's tasks under that key. "Today" is fixed at reset time in America/Chicago, so run the reset again on a new day.
+
+Editing the seed: names end in ` (Test)`, phones are `210555 01xx`, emails are `@example.com`, Discord IDs are the placeholders `100000000000000001` to `100000000000000004`, and real customers or the production Discord IDs never appear. `tests/unit/test_seed_contract.py` enforces these rules.
+
+If a reset fails on a seed statement, the seed has drifted from the migrations: fix the seed.
 
 ### Linking to the hosted project (owner only)
 
