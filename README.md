@@ -37,7 +37,7 @@ Two local quirks: your test accounts are not in the bot's hardcoded user map, so
 
 Required variables: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. The full list, including optional variables and which ones crash the process at import, is in [CLAUDE.md](CLAUDE.md).
 
-**Without make.** The raw commands work too: `uv sync --locked && .venv/bin/pre-commit install`, `npx --yes supabase@2.121.0 start` / `db reset` / `status -o env` / `stop`, and the static checks `python -m py_compile cholobots.py config.py db/database.py bots/*.py` and `ruff check .`. `python cholobots.py` skips the local-stack check that `make run` does, so double-check `.env` first.
+**Without make.** The raw commands work too: `uv sync --locked && .venv/bin/pre-commit install`, `npx --yes supabase@2.121.0 start` / `db reset` / `status -o env` / `stop`, and the static checks `.venv/bin/python -m py_compile cholobots.py config.py db/database.py bots/*.py` and `.venv/bin/ruff check .` (or activate the environment first with `. .venv/bin/activate`). `.venv/bin/python cholobots.py` skips the local-stack check that `make run` does, so double-check `.env` first.
 
 ### Devcontainer
 
