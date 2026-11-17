@@ -7,22 +7,35 @@ import random
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TypedDict
 from urllib import request
 
 import discord
 from discord.ext import commands
+from openai.types.responses import (
+    EasyInputMessageParam,
+    ResponseInputContentParam,
+    ResponseTextConfigParam,
+)
 from config import client
 from supabase import create_client
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 # ---------- CRUDOBOT RECEIPT SCANNING ----------
 
-receipt_parse_sessions = {}
+class ReceiptSession(TypedDict):
+    project: Dict[str, Any]
+    customer_name: str
+    parsed: Dict[str, Any]
+    filename: str
+    sha256: str
+
+
+receipt_parse_sessions: Dict[int, ReceiptSession] = {}
 RECEIPT_MODEL = os.getenv("CRUDOBOT_RECEIPT_MODEL", "gpt-5-mini")
 SUPPORTED_RECEIPT_TYPES = {
     "application/pdf",
@@ -31,7 +44,7 @@ SUPPORTED_RECEIPT_TYPES = {
     "image/webp",
 }
 
-RECEIPT_JSON_SCHEMA = {
+RECEIPT_JSON_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
@@ -102,14 +115,14 @@ def now_iso() -> str:
     return datetime.now().isoformat()
 
 
-def load_json(path: Path, default):
+def load_json(path: Path, default: Any) -> Any:
     if path.exists():
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     return default
 
 
-def save_json(path: Path, data):
+def save_json(path: Path, data: Any) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
@@ -137,7 +150,7 @@ def crudo_phrase() -> str:
     return random.choice(CRUDOBOT_PHRASES)
 
 
-def fetch_json_url(url: str, default):
+def fetch_json_url(url: str, default: Any) -> Any:
     try:
         with request.urlopen(url, timeout=8) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -155,7 +168,7 @@ def load_narratives() -> List[Dict[str, Any]]:
     return load_json(NARRATIVE_FILE, [])
 
 
-def save_narratives(items: List[Dict[str, Any]]):
+def save_narratives(items: List[Dict[str, Any]]) -> None:
     save_json(NARRATIVE_FILE, items)
 
 
@@ -163,7 +176,7 @@ def load_estimate_history() -> List[Dict[str, Any]]:
     return load_json(ESTIMATE_HISTORY_FILE, [])
 
 
-def save_estimate_history(items: List[Dict[str, Any]]):
+def save_estimate_history(items: List[Dict[str, Any]]) -> None:
     save_json(ESTIMATE_HISTORY_FILE, items)
 
 
@@ -224,6 +237,7 @@ def parse_receipt_with_openai(filename: str, content_type: str, file_bytes: byte
         "missing values. Use 0 for unknown numeric values and null for unknown identifiers or dates."
     )
 
+    receipt_input: ResponseInputContentParam
     if content_type == "application/pdf":
         uploaded = client.files.create(
             file=(filename, file_bytes, content_type),
@@ -238,18 +252,21 @@ def parse_receipt_with_openai(filename: str, content_type: str, file_bytes: byte
             "detail": "high",
         }
 
+    prompt_input: ResponseInputContentParam = {"type": "input_text", "text": prompt}
+    receipt_message: EasyInputMessageParam = {
+        "role": "user",
+        "content": [receipt_input, prompt_input],
+    }
+    receipt_format: ResponseTextConfigParam = {"format": {
+        "type": "json_schema",
+        "name": "crudobot_contractor_receipt",
+        "strict": True,
+        "schema": RECEIPT_JSON_SCHEMA,
+    }}
     response = client.responses.create(
         model=RECEIPT_MODEL,
-        input=[{
-            "role": "user",
-            "content": [receipt_input, {"type": "input_text", "text": prompt}],
-        }],
-        text={"format": {
-            "type": "json_schema",
-            "name": "crudobot_contractor_receipt",
-            "strict": True,
-            "schema": RECEIPT_JSON_SCHEMA,
-        }},
+        input=[receipt_message],
+        text=receipt_format,
     )
     raw = response.output_text
     if not raw:
@@ -290,7 +307,7 @@ def format_receipt_preview(project: Dict[str, Any], customer_name: str, parsed: 
     return "\n".join(lines)
 
 
-def save_crudo_receipt(session: Dict[str, Any]):
+def save_crudo_receipt(session: ReceiptSession) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     parsed = session["parsed"]
     project = session["project"]
     tx_payload = {
@@ -365,7 +382,7 @@ def find_projects_for_receipt(query: str) -> List[Tuple[Dict[str, Any], str]]:
             if not any(p.get("id") == project.get("id") for p in projects):
                 projects.append(project)
 
-    contact_ids = list({p.get("contact_id") for p in projects if p.get("contact_id")})
+    contact_ids = list({p["contact_id"] for p in projects if p.get("contact_id")})
     names = {}
     if contact_ids:
         contact_rows = sb_rows(
@@ -381,7 +398,9 @@ def find_projects_for_receipt(query: str) -> List[Tuple[Dict[str, Any], str]]:
     return result
 
 
-async def choose_project_for_receipt(ctx: commands.Context, bot: commands.Bot, query: str):
+async def choose_project_for_receipt(
+    ctx: commands.Context, bot: commands.Bot, query: str
+) -> Optional[Tuple[Dict[str, Any], str]]:
     matches = find_projects_for_receipt(query)
     if not matches:
         await ctx.send(f"I couldn't find a Crudobot project matching `{query}`.")
@@ -406,7 +425,7 @@ async def choose_project_for_receipt(ctx: commands.Context, bot: commands.Bot, q
 def require_supabase() -> bool:
     return supabase is not None
 
-def sb_rows(response) -> List[Dict[str, Any]]:
+def sb_rows(response: object) -> List[Dict[str, Any]]:
     return getattr(response, "data", None) or []
 
 def find_chisme_contacts(query: str) -> List[Dict[str, Any]]:
@@ -611,7 +630,7 @@ def format_minutes(minutes: int) -> str:
 
 async def review_project_task_times(ctx: commands.Context, bot: commands.Bot,
                                     project: Dict[str, Any], customer_name: str,
-                                    review_all: bool = False):
+                                    review_all: bool = False) -> None:
     tasks = [
         t for t in get_crudo_project_tasks(project["id"])
         if t.get("status") == "completed" and t.get("completed_at")
@@ -737,7 +756,7 @@ async def choose_contact(ctx: commands.Context, bot: commands.Bot, query: str) -
         return None
     return matches[int(reply) - 1]
 
-async def project_workspace(ctx: commands.Context, bot: commands.Bot, customer: Dict[str, Any], project: Dict[str, Any]):
+async def project_workspace(ctx: commands.Context, bot: commands.Bot, customer: Dict[str, Any], project: Dict[str, Any]) -> None:
     while True:
         tasks = get_crudo_project_tasks(project["id"])
         await ctx.send(format_live_project(project, customer.get("name", "Unknown customer"), tasks)[:1900])
@@ -956,7 +975,7 @@ def save_payment(project_id: str, amount_collected: float):
     )
 
 
-def save_customer_followup(project: Dict[str, Any], notes: str):
+def save_customer_followup(project: Dict[str, Any], notes: str) -> None:
     supabase.table("crudo_projects").update({
         "customer_followup_at": now_iso(),
         "customer_followup_notes": notes.strip(),
@@ -964,7 +983,7 @@ def save_customer_followup(project: Dict[str, Any], notes: str):
     }).eq("id", project["id"]).execute()
 
 
-def save_future_customer_followup(contact_id: str, note: str, followup_date: Optional[str] = None):
+def save_future_customer_followup(contact_id: str, note: str, followup_date: Optional[str] = None) -> None:
     payload = {
         "next_action": note.strip(),
         "chisme_summary": note.strip(),
@@ -1013,7 +1032,7 @@ def format_closeout_snapshot(snapshot: Dict[str, Any], customer_name: str) -> st
 
 
 async def closeout_workspace(ctx: commands.Context, bot: commands.Bot,
-                             customer: Dict[str, Any], project: Dict[str, Any]):
+                             customer: Dict[str, Any], project: Dict[str, Any]) -> None:
     while True:
         snapshot = project_job_cost_snapshot(project["id"])
         project = snapshot["project"]
@@ -1414,7 +1433,7 @@ def grounded_theory_summary(reports: List[Dict[str, Any]], narratives: List[Dict
 async def ask(ctx: commands.Context, bot: commands.Bot, prompt: str) -> str:
     await ctx.send(prompt)
 
-    def check(m: discord.Message):
+    def check(m: discord.Message) -> bool:
         return (m.author.id == ctx.author.id) and (m.channel.id == ctx.channel.id)
 
     msg = await bot.wait_for("message", check=check)
@@ -1423,10 +1442,10 @@ async def ask(ctx: commands.Context, bot: commands.Bot, prompt: str) -> str:
 
 # ---------- CRUDOBOT COMMANDS ----------
 
-def register_crudo(bot: commands.Bot):
+def register_crudo(bot: commands.Bot) -> None:
 
     @bot.command(name="crudobot")
-    async def crudobot_help(ctx: commands.Context):
+    async def crudobot_help(ctx: commands.Context) -> None:
         await ctx.send(
             "💰 CRUDOBOT COMMANDS\n\n"
             "`!crudoproject [customer]`\n"
@@ -1446,7 +1465,7 @@ def register_crudo(bot: commands.Bot):
         )
 
     @bot.group(name="crudo", invoke_without_command=True)
-    async def crudo_group(ctx: commands.Context):
+    async def crudo_group(ctx: commands.Context) -> None:
         await ctx.send(
             "Crudobot commands:\n"
             "- `!crudoproject [customer]` — create/open a live project + punch list\n"
@@ -1461,7 +1480,7 @@ def register_crudo(bot: commands.Bot):
         )
 
     @bot.command(name="crudoproject")
-    async def crudoproject(ctx: commands.Context, *, customer_query: str = ""):
+    async def crudoproject(ctx: commands.Context, *, customer_query: str = "") -> None:
         if not require_supabase():
             await ctx.send("Crudobot live projects need the Supabase client configured.")
             return
@@ -1532,7 +1551,7 @@ def register_crudo(bot: commands.Bot):
 
 
     @bot.command(name="crudomaterial")
-    async def crudomaterial(ctx: commands.Context, *, project_query: str = ""):
+    async def crudomaterial(ctx: commands.Context, *, project_query: str = "") -> None:
         """Manually add a purchase or return to Crudobot job costing."""
         if not require_supabase():
             await ctx.send("Crudobot materials need Supabase configured.")
@@ -1562,7 +1581,7 @@ def register_crudo(bot: commands.Bot):
 
 
     @bot.command(name="crudotime")
-    async def crudotime(ctx: commands.Context, *, project_query: str = ""):
+    async def crudotime(ctx: commands.Context, *, project_query: str = "") -> None:
         """Review/correct Crudobot's actual time for completed punch-list tasks."""
         if not require_supabase():
             await ctx.send("Crudobot time review needs Supabase configured.")
@@ -1576,7 +1595,7 @@ def register_crudo(bot: commands.Bot):
         await review_project_task_times(ctx, bot, project, customer_name)
 
     @bot.command(name="crudoclose")
-    async def crudoclose(ctx: commands.Context, *, project_query: str = ""):
+    async def crudoclose(ctx: commands.Context, *, project_query: str = "") -> None:
         """Open closeout for a completed-punch-list Crudobot project."""
         if not require_supabase():
             await ctx.send("Crudobot closeout needs Supabase configured.")
@@ -1602,7 +1621,7 @@ def register_crudo(bot: commands.Bot):
         await closeout_workspace(ctx, bot, customer, project)
 
     @bot.command(name="crudoreceipt")
-    async def crudoreceipt(ctx: commands.Context, *, project_query: str = ""):
+    async def crudoreceipt(ctx: commands.Context, *, project_query: str = "") -> None:
         """Scan one purchase or return receipt directly into a live Crudobot project."""
         if not require_supabase():
             await ctx.send("Crudobot receipt scanning needs Supabase configured.")
@@ -1664,7 +1683,7 @@ def register_crudo(bot: commands.Bot):
             await ctx.send(preview[start:start + 1900])
 
     @bot.listen("on_message")
-    async def handle_crudobot_receipt_confirmation(message):
+    async def handle_crudobot_receipt_confirmation(message: discord.Message) -> None:
         if message.author.bot or message.content.startswith("!"):
             return
         session = receipt_parse_sessions.get(message.author.id)
@@ -1698,7 +1717,7 @@ def register_crudo(bot: commands.Bot):
         )
 
     @bot.command(name="crudojc")
-    async def crudojc(ctx: commands.Context):
+    async def crudojc(ctx: commands.Context) -> None:
         reports = load_job_costing_reports()
 
         if not reports:
@@ -1712,7 +1731,7 @@ def register_crudo(bot: commands.Bot):
         lines.append("\nReply with a number or search term.")
         await ctx.send("\n".join(lines))
 
-        def check(m: discord.Message):
+        def check(m: discord.Message) -> bool:
             return (m.author.id == ctx.author.id) and (m.channel.id == ctx.channel.id)
 
         msg = await bot.wait_for("message", check=check)
@@ -1735,7 +1754,7 @@ def register_crudo(bot: commands.Bot):
         save_narratives(narratives)
 
     @bot.command(name="crudoestimate")
-    async def crudoestimate(ctx: commands.Context):
+    async def crudoestimate(ctx: commands.Context) -> None:
         reports = load_job_costing_reports()
 
         if not reports:
@@ -1770,7 +1789,7 @@ def register_crudo(bot: commands.Bot):
         save_estimate_history(history)
 
     @bot.command(name="crudoreport")
-    async def crudoreport(ctx: commands.Context):
+    async def crudoreport(ctx: commands.Context) -> None:
         reports = load_job_costing_reports()
         narratives = load_narratives()
 
@@ -1781,11 +1800,11 @@ def register_crudo(bot: commands.Bot):
 
     # Backward-compatible old commands.
     @crudo_group.command(name="report")
-    async def crudo_report_old(ctx: commands.Context):
+    async def crudo_report_old(ctx: commands.Context) -> None:
         await crudoreport(ctx)
 
     @crudo_group.command(name="close")
-    async def crudo_close_old(ctx: commands.Context):
+    async def crudo_close_old(ctx: commands.Context) -> None:
         await ctx.send(
             "Crudobot is now report/retrieval first.\n"
             "Use `!crudojc` for job costing reports or `!crudoreport` for business analysis."
