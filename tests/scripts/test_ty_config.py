@@ -3,6 +3,8 @@
 import tomllib
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[2]
 TY = tomllib.loads((REPO / "pyproject.toml").read_text())["tool"]["ty"]
 
@@ -16,12 +18,15 @@ def test_ty_fails_on_warnings():
     assert TY["terminal"]["error-on-warning"] is True
 
 
-def test_ty_tightened_rules_are_errors():
-    for name in (
+@pytest.mark.parametrize(
+    "rule",
+    [
         "blanket-ignore-comment",
         "division-by-zero",
         "possibly-missing-attribute",
         "possibly-missing-import",
         "possibly-unresolved-reference",
-    ):
-        assert TY["rules"][name] == "error", name
+    ],
+)
+def test_ty_tightened_rule_is_an_error(rule):
+    assert TY["rules"][rule] == "error", rule
