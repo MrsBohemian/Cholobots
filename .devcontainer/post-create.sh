@@ -19,6 +19,9 @@ if ! command -v uv >/dev/null 2>&1; then
     eval "$(scripts/devcontainer/pins.sh)"
     python3 -m pip install --user "uv==${UV_VERSION}"
     PATH="$HOME/.local/bin:$PATH"
+    # Later terminals and agent commands do not inherit this script's PATH.
+    sudo ln -sf "$HOME/.local/bin/uv" /usr/local/bin/uv
+    [ -x "$HOME/.local/bin/uvx" ] && sudo ln -sf "$HOME/.local/bin/uvx" /usr/local/bin/uvx
 fi
 if [ -x .venv/bin/python ]; then
     echo "Reusing .venv"

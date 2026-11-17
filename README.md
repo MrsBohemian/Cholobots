@@ -157,8 +157,8 @@ The launcher reads `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` from t
 
 ```bash
 make setup   # or: uv sync --locked && .venv/bin/pre-commit install (pytest, ruff and the ruff-check commit hook)
-python -m pytest tests/scripts -q
-python3 scripts/taiga_project_setup.py --check   # exit 0 when the Taiga project has the statuses and tags the pipeline needs
+.venv/bin/python -m pytest tests/scripts -q
+.venv/bin/python scripts/taiga_project_setup.py --check   # exit 0 when the Taiga project has the statuses and tags the pipeline needs
 ```
 
 The setup script is run once by a project admin with `--apply`. Like the other helper scripts it reads the `TAIGA_*` variables from the shell, which direnv loads from Jon's dev-env vault; `scripts/README.md` has the admin command.
