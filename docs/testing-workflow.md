@@ -21,6 +21,7 @@ whole scope on the PR: workflow `checks` (compile, lint, type check, unit and sc
 | Script tests | `python -m pytest tests/scripts -q` and `bash tests/scripts/test-<name>.sh` | (in `make test`, which stops at the first failing `.sh`) | Exist today |
 | Lint | `ruff check .` (also the pre-commit hook) | `make lint` | Always. Config and exceptions in `ruff.toml` |
 | Type check | `uv run --frozen ty check` (also the pre-commit hook) | `make typecheck` | Always. Any diagnostic fails; there is no baseline. Config in `pyproject.toml` `[tool.ty]` |
+| Type check, informational | `.venv/bin/python -m pyrefly check` | `make typecheck-pyrefly` | Optional. Never fails `make check` or CI; spike #216 has the rationale. Config in `pyproject.toml` `[tool.pyrefly]` |
 | Unit + script tests | `python -m pytest -q tests/unit tests/scripts`, then `for t in tests/scripts/test-*.sh; do bash "$t" || exit 1; done` | `make test` | Same scope as CI's `Unit tests` and `Script tests` steps |
 | Compile, lint, type check, test | | `make check` | Before every push |
 | Whole suite | `python -m pytest -q` | | Once #34 lands |
@@ -47,6 +48,7 @@ Never run `python cholobots.py` or `make run` from an automated run.
 | `.devcontainer/**`, `tools/pytaiga-mcp/**`, `.github/workflows/build-devcontainer.yml` | `python -m pytest tests/scripts -q` plus `bash tests/scripts/test-pytaiga-mcp-install.sh`, `test-devcontainer-pins.sh`, `test-build-devcontainer-cache.sh`, `test-build-devcontainer-workflow.sh` and `test-launch-prebuild-image.sh` |
 | `scripts/devcontainer/orchestrate_*.py` | `python -m pytest tests/scripts -q` (includes the end-to-end test with fake `launch.sh`, `exec-skill.sh` and `teardown.sh`; no Docker needed) |
 | `pyproject.toml` `[tool.ty]`, or a ty version bump | `make typecheck`; fix every new diagnostic in the same PR (a ty bump is its own PR) |
+| `pyproject.toml` `[tool.pyrefly]`, or a pyrefly version bump | `make typecheck-pyrefly`; compare the error count, no fix required |
 | `.claude/**`, `docs/**` | Nothing to run |
 | `pyproject.toml`, `uv.lock`, `requirements.txt`, `.python-version` | `make lock-check`, fresh `make setup`, compile, `ruff check .`, `make typecheck`, script tests, whole suite |
 
