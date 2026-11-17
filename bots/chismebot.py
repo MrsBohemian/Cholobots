@@ -1,23 +1,33 @@
 import os
 import re
 from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, cast
 from zoneinfo import ZoneInfo
 
 from config import client
-from supabase import create_client
+from supabase import PostgrestAPIResponse, create_client
 
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Multi-step Discord sessions
-cremove_sessions = {}
-hotlist_note_sessions = {}
-stovetop_sessions = {}
-chisme_sessions = {}
-lead_sessions = {}
-lead_processing_sessions = {}
+Row = Dict[str, Any]
+
+
+def response_rows(response: PostgrestAPIResponse) -> List[Row]:
+    """Rows of a table query. PostgREST types them as JSON, but table rows are always objects."""
+    return cast(List[Row], response.data or [])
+
+
+# Multi-step Discord sessions, keyed by Discord user id. Each flow adds keys as its steps advance.
+Session = Dict[str, Any]
+cremove_sessions: Dict[int, Session] = {}
+hotlist_note_sessions: Dict[int, Session] = {}
+stovetop_sessions: Dict[int, Session] = {}
+chisme_sessions: Dict[int, Session] = {}
+lead_sessions: Dict[int, Session] = {}
+lead_processing_sessions: Dict[int, Session] = {}
 
 
 # ------------------------------------------------------------
@@ -162,30 +172,30 @@ def find_contacts(lookup, limit=5):
     phone = phone_digits(lookup)
 
     if phone:
-        rows = (
+        rows = response_rows(
             supabase.table("chisme_contacts")
             .select("*")
             .ilike("phone", f"%{phone}%")
             .limit(limit)
             .execute()
-        ).data or []
+        )
         if rows:
             return rows
 
-    return (
+    return response_rows(
         supabase.table("chisme_contacts")
         .select("*")
         .ilike("name", f"%{lookup}%")
         .limit(limit)
         .execute()
-    ).data or []
+    )
 
 
 def create_contact_stub(label, raw_note=""):
     phone = phone_digits(label) or phone_digits(raw_note)
     name = label.strip() or phone or "Unknown customer"
 
-    rows = (
+    rows = response_rows(
         supabase.table("chisme_contacts")
         .insert({
             "name": name,
@@ -199,7 +209,7 @@ def create_contact_stub(label, raw_note=""):
             "updated_at": now_iso(),
         })
         .execute()
-    ).data or []
+    )
 
     contact = rows[0] if rows else None
     if contact:
@@ -224,22 +234,22 @@ def format_match_list(matches):
 # ------------------------------------------------------------
 
 def ensure_journal(contact_id):
-    existing = (
+    existing = response_rows(
         supabase.table("chisme_journals")
         .select("*")
         .eq("contact_id", contact_id)
         .limit(1)
         .execute()
-    ).data or []
+    )
 
     if existing:
         return existing[0]
 
-    rows = (
+    rows = response_rows(
         supabase.table("chisme_journals")
         .insert({"contact_id": contact_id})
         .execute()
-    ).data or []
+    )
 
     return rows[0] if rows else None
 
@@ -249,14 +259,14 @@ def get_journal(contact_id, limit=10):
     if not journal:
         return None, []
 
-    notes = (
+    notes = response_rows(
         supabase.table("chisme_notes")
         .select("*")
         .eq("journal_id", journal["id"])
         .order("created_at", desc=True)
         .limit(limit)
         .execute()
-    ).data or []
+    )
 
     return journal, notes
 
@@ -299,7 +309,7 @@ def add_note(contact, note, created_by=None, note_type="chisme"):
     if not journal:
         return None
 
-    rows = (
+    rows = response_rows(
         supabase.table("chisme_notes")
         .insert({
             "journal_id": journal["id"],
@@ -310,7 +320,7 @@ def add_note(contact, note, created_by=None, note_type="chisme"):
             "created_by": created_by,
         })
         .execute()
-    ).data or []
+    )
 
     summary = synthesize_summary(contact, note)
     followup = extract_followup_date(note)
@@ -339,13 +349,13 @@ def add_note(contact, note, created_by=None, note_type="chisme"):
 # ------------------------------------------------------------
 
 def get_active():
-    return (
+    return response_rows(
         supabase.table("chisme_active")
         .select("*, chisme_contacts(*)")
         .order("burner_position", desc=False)
         .order("next_followup_date", desc=False)
         .execute()
-    ).data or []
+    )
 
 
 def next_available_burner():
@@ -359,13 +369,13 @@ def next_available_burner():
 
 def set_active(contact, reason=None, burner_position=4, owner="Daniel"):
     followup = extract_followup_date(reason or "")
-    existing = (
+    existing = response_rows(
         supabase.table("chisme_active")
         .select("*")
         .eq("contact_id", contact["id"])
         .limit(1)
         .execute()
-    ).data or []
+    )
 
     payload = {
         "contact_id": contact["id"],
@@ -563,24 +573,24 @@ def clear_user_sessions(user_id):
 # ------------------------------------------------------------
 
 def get_unprocessed_leads(limit=50):
-    return (
+    return response_rows(
         supabase.table("chisme_leads")
         .select("*")
         .eq("status", "unprocessed")
         .order("captured_at", desc=False)
         .limit(limit)
         .execute()
-    ).data or []
+    )
 
 
 def get_lead_by_id(lead_id):
-    rows = (
+    rows = response_rows(
         supabase.table("chisme_leads")
         .select("*")
         .eq("id", lead_id)
         .limit(1)
         .execute()
-    ).data or []
+    )
     return rows[0] if rows else None
 
 
@@ -623,11 +633,11 @@ def try_link_lead_to_existing_contact(lead):
     if not emails and not phone_candidates:
         return lead
 
-    contacts = (
+    contacts = response_rows(
         supabase.table("chisme_contacts")
         .select("id,name,phone,email")
         .execute()
-    ).data or []
+    )
 
     matches = []
     for contact in contacts:
@@ -669,7 +679,7 @@ def sync_lead_callback_to_contact(lead):
 
 def lead_opportunity_name(lead, label):
     if lead and lead.get("contact_id"):
-        rows=(supabase.table("chisme_contacts").select("name").eq("id",lead["contact_id"]).limit(1).execute()).data or []
+        rows=response_rows(supabase.table("chisme_contacts").select("name").eq("id",lead["contact_id"]).limit(1).execute())
         if rows and rows[0].get("name"):
             return f"{rows[0]['name']} — {label}"[:160]
     return label[:160]
@@ -679,14 +689,14 @@ def promote_lead_to_opportunity(lead, label="Lead opportunity"):
     if not lead:
         return None
     lead=sync_lead_callback_to_contact(try_link_lead_to_existing_contact(lead))
-    existing=(supabase.table("chisme_opportunities").select("*").eq("lead_id",lead["id"]).limit(1).execute()).data or []
+    existing=response_rows(supabase.table("chisme_opportunities").select("*").eq("lead_id",lead["id"]).limit(1).execute())
     payload={"contact_id":lead.get("contact_id"),"scope_notes":lead.get("raw_notes") or "","next_action":lead.get("next_action"),"callback_date":lead.get("callback_date"),"status":"open","updated_at":now_iso()}
     if existing:
         opp=existing[0]
         supabase.table("chisme_opportunities").update(payload).eq("id",opp["id"]).execute()
     else:
         payload.update({"lead_id":lead["id"],"opportunity_name":lead_opportunity_name(lead,label),"pipeline_stage":"New Opportunity","temperature":50})
-        rows=supabase.table("chisme_opportunities").insert(payload).execute().data or []
+        rows=response_rows(supabase.table("chisme_opportunities").insert(payload).execute())
         if not rows:
             return None
         opp=rows[0]
@@ -695,7 +705,7 @@ def promote_lead_to_opportunity(lead, label="Lead opportunity"):
 
 
 def auto_promote_callback_leads():
-    rows=(supabase.table("chisme_leads").select("*").eq("status","unprocessed").execute()).data or []
+    rows=response_rows(supabase.table("chisme_leads").select("*").eq("status","unprocessed").execute())
     for lead in rows:
         if lead.get("callback_date"):
             promote_lead_to_opportunity(lead,"Callback / follow-up")
@@ -708,13 +718,13 @@ def lead_menu_text(lead):
     customer_label = "Not linked"
 
     if linked:
-        rows = (
+        rows = response_rows(
             supabase.table("chisme_contacts")
             .select("name")
             .eq("id", linked)
             .limit(1)
             .execute()
-        ).data or []
+        )
         customer_label = rows[0].get("name") if rows else "Linked"
 
     return (
@@ -987,13 +997,13 @@ def register_chisme(bot):
         c = matches[0]
         journal, notes = get_journal(c["id"])
 
-        active = (
+        active = response_rows(
             supabase.table("chisme_active")
             .select("*")
             .eq("contact_id", c["id"])
             .limit(1)
             .execute()
-        ).data or []
+        )
 
         lines = [
             f"📇 **{c.get('name')}**",
@@ -1035,21 +1045,21 @@ def register_chisme(bot):
         raw = (raw or "").strip()
 
         if not raw:
-            active_rows = (
+            active_rows = response_rows(
                 supabase.table("chisme_active")
                 .select("contact_id")
                 .execute()
-            ).data or []
+            )
             active_ids = {r["contact_id"] for r in active_rows}
 
-            rows = (
+            rows = response_rows(
                 supabase.table("chisme_contacts")
                 .select("*")
                 .gte("hotlist_temperature", 51)
                 .lt("hotlist_temperature", 100)
                 .order("hotlist_temperature", desc=True)
                 .execute()
-            ).data or []
+            )
 
             rows = [c for c in rows if c["id"] not in active_ids][:15]
 
@@ -1389,7 +1399,7 @@ def register_chisme(bot):
                     if not contact: await message.channel.send("I couldn't create the customer card."); return
                 if updates:
                     supabase.table("chisme_contacts").update(updates).eq("id",contact["id"]).execute()
-                    refreshed=(supabase.table("chisme_contacts").select("*").eq("id",contact["id"]).limit(1).execute()).data or []
+                    refreshed=response_rows(supabase.table("chisme_contacts").select("*").eq("id",contact["id"]).limit(1).execute())
                     if refreshed: contact=refreshed[0]
                 supabase.table("chisme_leads").update({"contact_id":contact["id"],"updated_at":now_iso()}).eq("id",lead["id"]).execute()
                 lead=get_lead_by_id(lead["id"])
@@ -1482,7 +1492,7 @@ def register_chisme(bot):
                     return
 
                 raw_notes = "\n".join(notes)
-                rows = (
+                rows = response_rows(
                     supabase.table("chisme_leads")
                     .insert({
                         "raw_notes": raw_notes,
@@ -1493,7 +1503,7 @@ def register_chisme(bot):
                         "updated_at": now_iso(),
                     })
                     .execute()
-                ).data or []
+                )
 
                 lead_sessions.pop(message.author.id, None)
 
@@ -1524,13 +1534,13 @@ def register_chisme(bot):
             content = message.content.strip()
             step = chisme_session.get("step")
 
-            contact_rows = (
+            contact_rows = response_rows(
                 supabase.table("chisme_contacts")
                 .select("*")
                 .eq("id", chisme_session.get("contact_id"))
                 .limit(1)
                 .execute()
-            ).data or []
+            )
 
             if not contact_rows:
                 chisme_sessions.pop(message.author.id, None)
@@ -1835,13 +1845,13 @@ def register_chisme(bot):
                 )
                 return
 
-            contact_rows = (
+            contact_rows = response_rows(
                 supabase.table("chisme_contacts")
                 .select("*")
                 .eq("id", stovetop_session.get("contact_id"))
                 .limit(1)
                 .execute()
-            ).data or []
+            )
 
             if not contact_rows:
                 stovetop_sessions.pop(message.author.id, None)
@@ -2102,13 +2112,13 @@ def register_chisme(bot):
         if hotlist_session:
             content = message.content.strip()
 
-            contact_rows = (
+            contact_rows = response_rows(
                 supabase.table("chisme_contacts")
                 .select("*")
                 .eq("id", hotlist_session["contact_id"])
                 .limit(1)
                 .execute()
-            ).data or []
+            )
 
             if not contact_rows:
                 del hotlist_note_sessions[message.author.id]
