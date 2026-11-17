@@ -75,7 +75,7 @@ In that worktree, run each check as a foreground Bash call with `timeout: 600000
 2. `ruff check .` — only if ruff is configured (`ruff.toml` or `[tool.ruff]` in `pyproject.toml`); else note "no linter yet (#33)".
 3. `python -m pytest -q` — only if `tests/` exists; else note "no test suite yet (#34)". `tests/integration` needs the local Supabase stack (story #47); if it is not running, record that as an environment limitation, not a failure.
 
-If a venv is needed: `python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt` inside the worktree.
+If a venv is needed: `uv sync --locked` inside the worktree (then use `.venv/bin/python`).
 
 If every check passes, report "PR #<number> passes all locally runnable checks" and stop. Otherwise take the failing command's output as your log and continue at Step 3. Remove the worktree when done: `git worktree remove --force .claude/worktrees/analyze-pr-<number>`.
 

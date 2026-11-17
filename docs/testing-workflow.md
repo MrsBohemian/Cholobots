@@ -44,7 +44,7 @@ Never run `python cholobots.py` or `make run` from an automated run.
 | `.devcontainer/**`, `tools/pytaiga-mcp/**`, `.github/workflows/build-devcontainer.yml` | `python -m pytest tests/scripts -q` plus `bash tests/scripts/test-pytaiga-mcp-install.sh`, `test-devcontainer-pins.sh`, `test-build-devcontainer-cache.sh`, `test-build-devcontainer-workflow.sh` and `test-launch-prebuild-image.sh` |
 | `scripts/devcontainer/orchestrate_*.py` | `python -m pytest tests/scripts -q` (includes the end-to-end test with fake `launch.sh`, `exec-skill.sh` and `teardown.sh`; no Docker needed) |
 | `.claude/**`, `docs/**` | Nothing to run |
-| `requirements.txt`, `requirements-dev.txt`, `.python-version` | Fresh venv, compile, `ruff check .`, script tests, whole suite once it exists |
+| `pyproject.toml`, `uv.lock`, `requirements.txt`, `.python-version` | `make lock-check`, fresh `make setup`, compile, `ruff check .`, script tests, whole suite |
 
 ## When each level runs
 

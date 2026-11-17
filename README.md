@@ -17,13 +17,13 @@ Data lives in Supabase. `mobile/` holds static dashboards that read the same Sup
 
 From a fresh clone to the bot answering in your own test Discord server, against a Supabase stack on your machine, never the hosted project. `make help` lists every target.
 
-1. **Prerequisites.** git, GNU make, Python 3.14 (the version in `.python-version`), Docker running (Docker Engine on Linux, Docker Desktop or OrbStack on macOS) and Node 18+ for `npx`. The shell tests also need `jq`, `curl`, GNU `timeout` and `setsid` (`make setup` and `make test` name any that is missing). On macOS: `brew install jq coreutils util-linux`, then put `$(brew --prefix coreutils)/libexec/gnubin` and `$(brew --prefix util-linux)/bin` on your `PATH`. On Debian or Ubuntu: `apt install jq curl coreutils util-linux`. On Windows, use WSL2 with Docker Desktop's WSL integration and run everything from the WSL shell. The Makefile runs the Supabase CLI as `npx --yes supabase@2.121.0`; if you installed that version with Homebrew (`brew install supabase/tap/supabase`) or Scoop, add `SUPABASE=supabase` to each `make db-*` command. `supabase --version` should print 2.121.0.
+1. **Prerequisites.** git, GNU make, [uv](https://docs.astral.sh/uv/) at the version `scripts/devcontainer/pins.sh` prints as `UV_VERSION` (declared in `.devcontainer/Dockerfile.prebuild`; install it with `brew install uv` or the [astral installer](https://docs.astral.sh/uv/getting-started/installation/), and `make check-tools` names it when missing), Python 3.14 (the version in `.python-version`; uv can fetch it for you), Docker running (Docker Engine on Linux, Docker Desktop or OrbStack on macOS) and Node 18+ for `npx`. The shell tests also need `jq`, `curl`, GNU `timeout` and `setsid` (`make setup` and `make test` name any that is missing). On macOS: `brew install jq coreutils util-linux`, then put `$(brew --prefix coreutils)/libexec/gnubin` and `$(brew --prefix util-linux)/bin` on your `PATH`. On Debian or Ubuntu: `apt install jq curl coreutils util-linux`. On Windows, use WSL2 with Docker Desktop's WSL integration and run everything from the WSL shell. The Makefile runs the Supabase CLI as `npx --yes supabase@2.121.0`; if you installed that version with Homebrew (`brew install supabase/tap/supabase`) or Scoop, add `SUPABASE=supabase` to each `make db-*` command. `supabase --version` should print 2.121.0.
 2. **Install.**
    ```bash
    git clone https://github.com/MrsBohemian/Cholobots.git && cd Cholobots
    make setup
    ```
-   This creates `.venv`, installs the pinned requirements and the pre-commit hook, and copies [.env.example](.env.example) to `.env` (an existing `.env` is left alone).
+   This creates `.venv`, installs the locked dependencies from `uv.lock` with `uv sync --locked`, installs the pre-commit hook, and copies [.env.example](.env.example) to `.env` (an existing `.env` is left alone).
 3. **Start the database.** `make db-up` (the first run pulls images and takes several minutes). It runs Postgres, Auth, Storage, the REST API and Studio in Docker: the API is at `http://127.0.0.1:54321` and Studio at `http://127.0.0.1:54323`. Edge Functions are off in `supabase/config.toml` because the repo has none. Then `make db-reset` rebuilds the database from the baseline schema in `supabase/migrations/` plus the fictitious seed data described under [Seed data](#seed-data).
 4. **Point `.env` at it.** `make db-env` prints a `SUPABASE_URL=` and a `SUPABASE_SERVICE_ROLE_KEY=` line; paste both into `.env`, replacing the lines already there. `.env` is loaded with `override=True`, so it silently wins over your shell: keep the hosted URL, the hosted service-role key and the production Discord token out of it. A wrong or empty value shows up as a `create_client` error when the process starts.
 5. **Discord.** Create your own test application, bot and server as [docs/test-discord-server.md](docs/test-discord-server.md) describes. Turn on the bot's **Message Content Intent** (without it no `!` command is seen) and put its token in `DISCORD_TOKEN`. Never the production token.
@@ -37,13 +37,13 @@ Two local quirks: your test accounts are not in the bot's hardcoded user map, so
 
 Required variables: `DISCORD_TOKEN`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. The full list, including optional variables and which ones crash the process at import, is in [CLAUDE.md](CLAUDE.md).
 
-**Without make.** The raw commands work too: `python3.14 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt -r requirements-dev.txt && pre-commit install`, `npx --yes supabase@2.121.0 start` / `db reset` / `status -o env` / `stop`, and the static checks `python -m py_compile cholobots.py config.py db/database.py bots/*.py` and `ruff check .`. `python cholobots.py` skips the local-stack check that `make run` does, so double-check `.env` first.
+**Without make.** The raw commands work too: `uv sync --locked && .venv/bin/pre-commit install`, `npx --yes supabase@2.121.0 start` / `db reset` / `status -o env` / `stop`, and the static checks `python -m py_compile cholobots.py config.py db/database.py bots/*.py` and `ruff check .`. `python cholobots.py` skips the local-stack check that `make run` does, so double-check `.env` first.
 
 ### Devcontainer
 
 `.devcontainer/` builds one container with Python 3.14, the Supabase CLI 2.121.0, `gh`, Node 22, `psql`, Chrome (amd64 only) and its own Docker daemon (Docker-in-Docker). Each container runs a private Supabase stack on the default ports, so containers on one machine do not collide with each other or with a stack on the host.
 
-**Pre-built image.** `scripts/devcontainer/launch.sh` pulls `ghcr.io/mrsbohemian/cholobots/devcontainer:latest` instead of building. It adds the volatile tools (`claude`, `codex`, `chrome-devtools-mcp`, `uv`, and the pinned `pytaiga-mcp` in `/opt/pytaiga-mcp`) and a warm pip cache to the base image. Set `GH_TOKEN_FOR_PACKAGES` to a classic PAT with `read:packages` (keep it in your credentials vault, never in the repo); `launch.sh` falls back to `GH_TOKEN`, then `GITHUB_TOKEN`. Without pull access, or on Apple Silicon (the image is amd64 only), `launch.sh` builds both stages locally, which is slow, and tags them per workspace (`cholobots-devcontainer:local-<key>`). VS Code "Reopen in Container" builds only the base image, so it has no `claude` or `codex`.
+**Pre-built image.** `scripts/devcontainer/launch.sh` pulls `ghcr.io/mrsbohemian/cholobots/devcontainer:latest` instead of building. It adds the volatile tools (`claude`, `codex`, `chrome-devtools-mcp`, `uv`, and the pinned `pytaiga-mcp` in `/opt/pytaiga-mcp`) and a warm uv cache to the base image. Set `GH_TOKEN_FOR_PACKAGES` to a classic PAT with `read:packages` (keep it in your credentials vault, never in the repo); `launch.sh` falls back to `GH_TOKEN`, then `GITHUB_TOKEN`. Without pull access, or on Apple Silicon (the image is amd64 only), `launch.sh` builds both stages locally, which is slow, and tags them per workspace (`cholobots-devcontainer:local-<key>`). VS Code "Reopen in Container" builds only the base image, so it has no `claude` or `codex`.
 
 **Bumping a pin.** Every tool version is declared once: an `ARG` in `.devcontainer/Dockerfile.prebuild`, or the commit in `tools/pytaiga-mcp/install.sh`. `scripts/devcontainer/pins.sh` prints them all. Edit that one place and merge to `main`; `.github/workflows/build-devcontainer.yml` then rebuilds and publishes `:base`, `:latest` and `:<sha>`. Pull requests, the weekly schedule and manual dispatch only build and check the installed versions against the pins.
 
@@ -61,7 +61,7 @@ Host environment it reads (all optional for starting the container; the bot need
 
 What happens:
 
-- **Create (once).** `post-create.sh` builds `.venv`, a Docker volume separate from any `.venv` on the host, and installs `requirements.txt` and `requirements-dev.txt`.
+- **Create (once).** `post-create.sh` builds `.venv`, a Docker volume separate from any `.venv` on the host, and runs `uv sync --locked` into it (installing the pinned uv first on a base-only image that lacks it).
 - **Every start.** `post-start.sh` waits for the Docker daemon, runs `supabase start`, then **`supabase db reset`: fresh migrations and seed data on every container start, so stop the bot first and expect local edits to the data to be gone.** It then runs `scripts/devcontainer/write_env.py`, which sets `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to the in-container stack and `DISCORD_TOKEN` and `OPENAI_API_KEY` to the passed values, and leaves every other `.env` line alone. `.env` is the same file as in the host checkout. The script never starts the bot.
 - **Slow or odd hosts.** On a host kernel with nftables only, `post-start.sh` switches `iptables` and `ip6tables` to the nft backend and restarts `dockerd`. After a container restart the stack needs a moment to become healthy, so `supabase start` and `db reset` are retried. Tunables, set on the host or in the container: `DOCKER_WAIT_LIMIT` (seconds to wait for dockerd, default 60), `SUPABASE_RETRY_ATTEMPTS` (default 30) and `SUPABASE_RETRY_DELAY` (seconds, default 2).
 - **Ports.** VS Code forwards 54321 (API) and 54323 (Studio); the headless CLI forwards nothing.
@@ -105,6 +105,16 @@ Owner only, once per machine. `supabase login` stores the access token in the CL
 
 To browse the dashboards locally: `python -m http.server 8000 --directory mobile` (open http://localhost:8000/).
 
+## Dependencies
+
+Dependencies are declared in `pyproject.toml` (runtime `dependencies`, dev tools in the `dev` group) and locked in `uv.lock`. `make setup` and CI install them with `uv sync --locked`, which fails when the lock is stale.
+
+To add or upgrade a package, edit its `==` pin in `pyproject.toml` (or `uv add <pkg>==<ver>`, `uv add --dev <pkg>==<ver>`), or for a transitive package run `uv lock --upgrade-package <pkg>`. Then run `make lock` and commit `pyproject.toml`, `uv.lock` and `requirements.txt` in one pull request. CI's `make lock-check` fails otherwise. Use the pinned uv version so the lock does not churn. When ruff changes, bump the `rev` in `.pre-commit-config.yaml` too; `tests/unit/test_dependency_contract.py` checks it.
+
+## Production
+
+Railway (Heaven's account) deploys the `main` branch with the `Procfile` (`worker: python cholobots.py`) and the Python from `.python-version`. Its build installs either `requirements.txt` with pip or `uv.lock` with uv; both hold the same locked tree. `requirements.txt` is generated by `make lock`: never edit it by hand, and do not delete it while Railway may build from it.
+
 ## Resetting data
 
 `make db-reset` (or `npx --yes supabase@2.121.0 db reset`) rebuilds the local database from `supabase/migrations/` and reloads the fictitious [seed data](#seed-data). It only touches the local Docker stack. Stop the bot first.
@@ -146,7 +156,7 @@ The launcher reads `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` from t
 **Agent pipeline.** `.claude/` contains the skills, agents and shared includes that let Claude Code take a Taiga story or bug through analysis, implementation, PR, review and merge; `.claude/autonomous-pipeline.md` is the overview and `.claude/skills/shared/taiga-project.md` pins this project's Taiga configuration. The supporting scripts live in `scripts/` (see `scripts/README.md`) with tests in `tests/scripts/`:
 
 ```bash
-pip install -r requirements-dev.txt && pre-commit install   # pytest, ruff and the ruff-check commit hook
+make setup   # or: uv sync --locked && .venv/bin/pre-commit install (pytest, ruff and the ruff-check commit hook)
 python -m pytest tests/scripts -q
 python3 scripts/taiga_project_setup.py --check   # exit 0 when the Taiga project has the statuses and tags the pipeline needs
 ```

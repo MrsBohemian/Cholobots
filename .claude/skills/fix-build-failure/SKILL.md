@@ -5,8 +5,7 @@ argument-hint: "pr-<number> or build-<run-id>"
 allowed-tools:
   - Bash(python -m py_compile *)
   - Bash(python -m pytest *)
-  - Bash(python -m venv *)
-  - Bash(pip install *)
+  - Bash(uv sync *)
   - Bash(ruff *)
   - Bash(git *)
   - Bash(find *)
@@ -88,7 +87,7 @@ Complete Step 3 first (check out the PR branch), then run each check as a foregr
 2. `ruff check .` — only if ruff is configured (`ruff.toml` or `[tool.ruff]` in `pyproject.toml`); else note "no linter yet (#33)".
 3. `python -m pytest -q` — only if `tests/` exists; else note "no test suite yet (#34)". `tests/integration` needs the local Supabase stack (story #47); if it is not running, that is an environment limitation, not a failure.
 
-If a venv is needed: `python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt`.
+If a venv is needed: `uv sync --locked` (then use `.venv/bin/python`).
 
 If every check passes, report "PR #<number> passes all locally runnable checks; nothing to fix" and stop. Otherwise use the failing command's output as your log and continue at Step 4.
 
