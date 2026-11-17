@@ -38,6 +38,9 @@ A few more habits:
 - Run `make check` before opening the pull request; it matches the `checks` workflow in CI.
 - The labels `close-tasks-on-merge` and `mark-done-on-merge` close Taiga work on merge; see
   [.claude/skills/shared/merge-side-effects.md](.claude/skills/shared/merge-side-effects.md).
+- Dependencies live in `pyproject.toml` and `uv.lock`. Change a pin there, run `make lock`, and commit
+  `pyproject.toml`, `uv.lock` and the generated `requirements.txt` (Railway's production install) in one
+  pull request; CI's `make lock-check` fails otherwise. See the README's Dependencies section.
 - Never commit `.env`, and never put the production Supabase keys or Discord token in it.
   `config.py` loads it with `override=True`, so it wins over anything your shell exports.
 

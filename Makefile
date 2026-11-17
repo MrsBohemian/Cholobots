@@ -9,27 +9,36 @@ SUPABASE_CLI ?= npx --yes supabase@$(SUPABASE_CLI_VERSION)
 export SUPABASE_CLI
 # One stack per checkout; make SUPABASE=supabase <target> bypasses the script.
 SUPABASE ?= scripts/supabase-local.sh
-PYTHON ?= python$(shell cat .python-version 2>/dev/null || echo 3)
 VENV_PY := .venv/bin/python
+# Production (Railway) installs requirements.txt, generated from uv.lock; --no-header keeps the file and stdout identical.
+UV_EXPORT := uv export --frozen --no-dev --no-hashes --no-header --no-emit-project
 
 .DEFAULT_GOAL := help
-.PHONY: help setup check-tools db-up db-down db-reset db-env run compile lint test test-integration check
+.PHONY: help setup lock lock-check check-tools db-up db-down db-reset db-env run compile lint test test-integration check
 
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "%-17s %s\n", $$1, $$2}'
 
-setup: check-tools ## Create .venv, install requirements and the pre-commit hook, create .env
-	$(PYTHON) -m venv .venv
-	$(VENV_PY) -m pip install -r requirements.txt -r requirements-dev.txt
+setup: check-tools ## Install the locked dependencies into .venv with uv, the pre-commit hook, and .env
+	uv sync --locked
 	$(VENV_PY) -m pre_commit install
 	[ -f .env ] || cp .env.example .env
 
-check-tools: ## Check the system tools the shell tests need (jq, timeout, setsid, curl)
+lock: ## Re-lock after editing pyproject.toml and regenerate requirements.txt (for Railway)
+	uv lock
+	$(UV_EXPORT) -o requirements.txt
+
+lock-check: ## Fail when uv.lock or requirements.txt is stale against pyproject.toml
+	uv lock --check
+	$(UV_EXPORT) | diff -u requirements.txt -
+
+check-tools: ## Check the system tools setup and the tests need (uv, jq, timeout, setsid, curl)
 	@missing=0; \
-	for tool in jq timeout setsid curl; do \
+	for tool in uv jq timeout setsid curl; do \
 		command -v $$tool >/dev/null 2>&1 && continue; \
 		missing=1; \
 		case $$tool in \
+			uv) hint='brew install uv (macOS) or curl -LsSf https://astral.sh/uv/install.sh | sh; the version to use is the uv pin in scripts/devcontainer/pins.sh';; \
 			jq) hint='brew install jq (macOS) or apt install jq (Debian/Ubuntu)';; \
 			timeout) hint='brew install coreutils, then put "$$(brew --prefix coreutils)/libexec/gnubin" on PATH (macOS); part of coreutils on Linux';; \
 			setsid) hint='brew install util-linux, then put "$$(brew --prefix util-linux)/bin" on PATH (macOS); part of util-linux on Linux';; \
@@ -71,4 +80,4 @@ test-integration: ## Run the integration tests against the local stack (make db-
 		CHOLOBOTS_INTEGRATION_REQUIRED=1 $(VENV_PY) -m pytest -q -m integration tests/integration; \
 	else echo "No integration tests yet (#51)."; fi
 
-check: compile lint test ## Run compile, lint and test
+check: compile lint lock-check test ## Run compile, lint, lock-check and test

@@ -1,5 +1,5 @@
 # ABOUTME: CI gate run on every pull request (any base, so stacked PRs too) and on pushes to main.
-# ABOUTME: Mirrors `make compile lint test`: py_compile, ruff, unit tests, script pytest tests and every tests/scripts/test-*.sh.
+# ABOUTME: Mirrors `make check`: the uv.lock and requirements.txt check, py_compile, ruff, unit tests, script pytest tests and every tests/scripts/test-*.sh.
 #
 # The workflow and its job are both named "checks": branch protection requires the
 # job name as a context, and scripts/monitor-pr-stability.sh matches those contexts
@@ -34,17 +34,32 @@ jobs:
       OPENAI_API_KEY: ci-dummy
       SUPABASE_URL: http://127.0.0.1:54321
       SUPABASE_SERVICE_ROLE_KEY: ci-dummy
+      # Use setup-python's interpreter; never download one.
+      UV_PYTHON_DOWNLOADS: never
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version-file: .python-version
-          cache: pip
-          cache-dependency-path: requirements*.txt
+      - name: Read the uv pin
+        id: pins
+        # UV_VERSION lives only in .devcontainer/Dockerfile.prebuild; pins.sh reads it.
+        run: |
+          eval "$(scripts/devcontainer/pins.sh)"
+          echo "uv=$UV_VERSION" >> "$GITHUB_OUTPUT"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ steps.pins.outputs.uv }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+        run: |
+          uv sync --locked
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Check shell-test tools
         run: make check-tools
+      - name: Lockfile
+        run: make lock-check
       - name: Compile
         run: python -m py_compile cholobots.py config.py db/database.py bots/*.py
       - name: Lint

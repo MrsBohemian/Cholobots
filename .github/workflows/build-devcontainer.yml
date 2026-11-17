@@ -9,14 +9,18 @@ on:
     branches: [main]
     paths:
       - '.devcontainer/**'
-      - 'requirements*.txt'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.python-version'
       - 'tools/pytaiga-mcp/**'
       - '.dockerignore'
       - '.github/workflows/build-devcontainer.yml'
   pull_request:
     paths:
       - '.devcontainer/**'
-      - 'requirements*.txt'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.python-version'
       - 'tools/pytaiga-mcp/**'
       - '.dockerignore'
       - '.github/workflows/build-devcontainer.yml'

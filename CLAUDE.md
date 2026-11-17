@@ -13,12 +13,16 @@ Work is tracked in Taiga project `cholo-bots` (id 39) on https://backlog.growthg
 ## Running
 
 ```bash
-make setup      # .venv (Python pinned in .python-version), == pins from requirements*.txt, pre-commit hook, .env from .env.example
+make setup      # .venv via `uv sync --locked` (Python from .python-version, every package pinned in uv.lock), pre-commit hook, .env from .env.example
+make lock       # after editing pyproject.toml: re-lock and regenerate requirements.txt
+make lock-check # fails when uv.lock or requirements.txt is stale (CI runs it)
 make db-up      # local Supabase stack; make db-reset rebuilds it, make db-env prints the two .env lines, make db-down stops it
 make check      # compile, ruff, pytest tests/unit + tests/scripts, then every tests/scripts/test-*.sh
 make test-integration  # pytest tests/integration against the local stack (needs make db-up)
 make run        # scripts/check_local_env.py, then python cholobots.py (production uses the Procfile)
 ```
+
+`requirements.txt` is a generated export of `uv.lock` for Railway's production build; `make lock` writes it, never edit it by hand.
 
 `.devcontainer/` gives a container with the Supabase CLI and Docker-in-Docker; its `post-start.sh` resets the in-container database and rewrites `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`/`DISCORD_TOKEN`/`OPENAI_API_KEY` in `.env`, and never starts the bot. See the README's Devcontainer section.
 
@@ -40,7 +44,7 @@ Integration tests (`tests/integration/`) drive command callbacks and `on_message
 
 `.claude/` holds the Claude Code pipeline ported from the you-thon repo (Taiga story #70): skills (`/analyze-story`, `/fully-implement-story`, `/fix-single-bug`, `/triage-bugs`, `/overseer`, ...), agents, shared includes and `.claude/autonomous-pipeline.md`, which is the overview. Everything Taiga-specific (project 39's statuses and ids, the pipeline tags, the MCP tool mapping, the branch and PR conventions) is in `.claude/skills/shared/taiga-project.md`; update that file first when the project configuration changes.
 
-Prerequisites: `python3 scripts/taiga_project_setup.py --check` must exit 0. If it exits 2, Jon runs it with `--apply` using the admin scope of his `~/work/utils/jon-dev-env` vault, because the agent account cannot change project settings; `scripts/README.md` has the command. The helper scripts in `scripts/` read `TAIGA_API_URL`, `TAIGA_USERNAME`, `TAIGA_PASSWORD` from the shell only. The git-ignored `.envrc` exports the agent account's values through direnv from that vault's `project/taiga-growthgarage-slave1-codex` scope. Every `gh` call is `env -u GH_TOKEN gh ... --repo MrsBohemian/Cholobots`; pipeline branches are pushed to the `upstream` remote and PRs open there. Script tests: `pip install -r requirements-dev.txt && python -m pytest tests/scripts -q`.
+Prerequisites: `python3 scripts/taiga_project_setup.py --check` must exit 0. If it exits 2, Jon runs it with `--apply` using the admin scope of his `~/work/utils/jon-dev-env` vault, because the agent account cannot change project settings; `scripts/README.md` has the command. The helper scripts in `scripts/` read `TAIGA_API_URL`, `TAIGA_USERNAME`, `TAIGA_PASSWORD` from the shell only. The git-ignored `.envrc` exports the agent account's values through direnv from that vault's `project/taiga-growthgarage-slave1-codex` scope. Every `gh` call is `env -u GH_TOKEN gh ... --repo MrsBohemian/Cholobots`; pipeline branches are pushed to the `upstream` remote and PRs open there. Script tests: `make setup && .venv/bin/python -m pytest tests/scripts -q`.
 
 Agents can also run in a devcontainer made by `scripts/devcontainer/launch.sh` (a clone, or a worktree with `--worktree`); the container's GitHub access is `CHOLOBOTS_CONTAINER_GH_TOKEN` only, never the host `GH_TOKEN`, and `launch.sh` refuses a main checkout (see `scripts/README.md`). The pre-built image `launch.sh` pulls is built by `.github/workflows/build-devcontainer.yml` (published only on a push to `main`); its tool pins live in `.devcontainer/Dockerfile.prebuild` and `tools/pytaiga-mcp/install.sh`, listed by `scripts/devcontainer/pins.sh`.
 

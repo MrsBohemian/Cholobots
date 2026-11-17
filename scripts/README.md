@@ -129,9 +129,9 @@ for a scope that does not exist.
 ## Tests
 
 ```bash
-python -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt
-python -m pytest tests/scripts -q
+make setup   # or: uv sync --locked
+.venv/bin/python -m pytest tests/scripts -q
 for t in tests/scripts/test-*.sh; do bash "$t" || echo "FAILED: $t"; done
 ```
 
-The tests mock `curl`, `gh` and `codex`; none of them needs network access or credentials. The `.env`-file cases in `test_check_local_env.py` skip unless python-dotenv is installed (`requirements.txt`).
+The tests mock `curl`, `gh` and `codex`; none of them needs network access or credentials. The `.env`-file cases in `test_check_local_env.py` skip unless python-dotenv is installed (`uv sync`).

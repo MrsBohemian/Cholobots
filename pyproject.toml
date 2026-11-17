@@ -1,0 +1,25 @@
+[project]
+name = "cholobots"
+version = "0.1.0"
+description = "Discord bot hosting the Cholobots personas for Handley Man"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "discord.py==2.7.1",
+    "python-dotenv==1.2.4",
+    "openai==3.46.0",
+    "supabase==2.34.1",
+]
+
+[dependency-groups]
+# pytest-asyncio and psycopg are for tests/integration; the scripts tests are stdlib-only.
+dev = [
+    "pytest==9.2.0",
+    "pytest-asyncio==1.4.1",
+    "psycopg[binary]==3.3.6",
+    "ruff==0.17.4",
+    "pre-commit==4.7.0",
+]
+
+[tool.uv]
+# An application: uv installs the dependencies into .venv but never builds or installs cholobots itself.
+package = false

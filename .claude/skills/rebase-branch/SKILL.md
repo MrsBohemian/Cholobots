@@ -130,7 +130,7 @@ git diff --name-only --diff-filter=U
 3. **Determine resolution strategy** using this priority order:
 
    **a. Additive / non-overlapping changes** (most common for this codebase):
-   Both sides add new content (e.g., new commands appended to the same bot module, new entries in the attachment-gate whitelist or the `on_ready` load order in `cholobots.py`, new lines in a bot's hand-written `!<name>` help text, new packages in `requirements.txt`, new rows in the same doc). **Keep both.** Combine the additions, keeping the file's existing ordering (alphabetical for requirements and imports, logical grouping for commands and help text).
+   Both sides add new content (e.g., new commands appended to the same bot module, new entries in the attachment-gate whitelist or the `on_ready` load order in `cholobots.py`, new lines in a bot's hand-written `!<name>` help text, new dependencies in `pyproject.toml` (lockfiles are regenerated, not merged: re-run `make lock` instead of hand-merging `uv.lock` or `requirements.txt`), new rows in the same doc). **Keep both.** Combine the additions, keeping the file's existing ordering (alphabetical for requirements and imports, logical grouping for commands and help text).
 
    **b. Epic boundary rules** (if epic context is available):
    The epic description defines which story "owns" which code. If the conflict involves code owned by a specific story, that story's version wins. Example: if the epic says "#51 owns the Supabase client factory in `db/`", and this PR is for #47, use #51's version of the factory.
