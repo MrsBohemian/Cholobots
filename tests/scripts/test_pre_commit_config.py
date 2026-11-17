@@ -32,3 +32,7 @@ def test_ty_hook_runs_on_python_and_config_changes():
 
 def test_ty_hook_has_no_baseline():
     assert "baseline" not in ty_hook_block()
+
+
+def test_no_pyrefly_hook():
+    assert "pyrefly" not in CONFIG, "pyrefly is informational; a hook would block commits"

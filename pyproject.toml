@@ -19,6 +19,7 @@ dev = [
     "ruff==0.17.4",
     "pre-commit==4.7.0",
     "ty==0.0.105",
+    "pyrefly==1.4.1",
 ]
 
 [tool.uv]
@@ -48,3 +49,11 @@ possibly-unresolved-reference = "error"
 
 [tool.ty.terminal]
 error-on-warning = true
+
+[tool.pyrefly]
+# Informational second checker (spike #216): reported by make typecheck-pyrefly and a non-failing CI step; ty stays the gate.
+# Kept aligned with [tool.ty.environment]; tests and tests/scripts stand in for ty resolving conftest via the importing file's directory.
+project-includes = ["**/*.py"]
+python-version = "3.14"
+python-platform = "linux"
+search-path = [".", "scripts", "scripts/lib", "scripts/devcontainer", "tests", "tests/scripts"]

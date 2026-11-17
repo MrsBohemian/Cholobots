@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-DEV_TOOLS = ("pytest", "pytest-asyncio", "psycopg", "ruff", "pre-commit", "ty")
+DEV_TOOLS = ("pytest", "pytest-asyncio", "psycopg", "ruff", "pre-commit", "ty", "pyrefly")
 
 
 def _pyproject():
@@ -57,3 +57,9 @@ def test_dev_tool_is_not_exported_to_requirements_txt(tool):
 
 def test_project_is_not_packaged():
     assert _pyproject()["tool"]["uv"]["package"] is False
+
+
+def test_pyrefly_is_pinned_exactly_and_locked():
+    assert "pyrefly==1.4.1" in _pyproject()["dependency-groups"]["dev"]
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    assert [p["version"] for p in lock["package"] if p["name"] == "pyrefly"] == ["1.4.1"]
