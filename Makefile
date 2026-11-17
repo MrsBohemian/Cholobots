@@ -12,11 +12,13 @@ SUPABASE ?= scripts/supabase-local.sh
 VENV_PY := .venv/bin/python
 # ty runs from the locked dev group; overridable (tests/scripts/test-typecheck.sh points it at a copy).
 TY ?= $(VENV_PY) -m ty
+# pyrefly is informational (spike #216): its own target, never part of check; CI runs it with continue-on-error.
+PYREFLY ?= $(VENV_PY) -m pyrefly
 # Production (Railway) installs requirements.txt, generated from uv.lock; --no-header keeps the file and stdout identical.
 UV_EXPORT := uv export --frozen --no-dev --no-hashes --no-header --no-emit-project
 
 .DEFAULT_GOAL := help
-.PHONY: help setup lock lock-check check-tools db-up db-down db-reset db-env run compile lint typecheck test test-integration check
+.PHONY: help setup lock lock-check check-tools db-up db-down db-reset db-env run compile lint typecheck typecheck-pyrefly test test-integration check
 
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "%-17s %s\n", $$1, $$2}'
@@ -73,6 +75,9 @@ lint: ## Run ruff
 
 typecheck: ## Type-check with ty (any diagnostic fails)
 	$(TY) check
+
+typecheck-pyrefly: ## Run pyrefly, the informational second checker (exits non-zero on errors; not in check)
+	$(PYREFLY) check --summary
 
 test: check-tools ## Run pytest (unit + scripts) and every tests/scripts/test-*.sh
 	$(VENV_PY) -m pytest -q tests/unit tests/scripts
