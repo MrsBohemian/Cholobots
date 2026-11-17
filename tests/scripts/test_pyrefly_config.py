@@ -28,4 +28,4 @@ def test_pyrefly_finds_the_venv_itself():
 
 
 def test_pyrefly_has_no_baseline():
-    assert "baseline" not in PYREFLY, "fix the diagnostic instead of baselining it"
+    assert "baseline" not in PYREFLY, "a baseline would hide errors from the informational count"

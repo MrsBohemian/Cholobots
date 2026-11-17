@@ -60,6 +60,8 @@ def test_project_is_not_packaged():
 
 
 def test_pyrefly_is_pinned_exactly_and_locked():
-    assert "pyrefly==1.4.1" in _pyproject()["dependency-groups"]["dev"]
+    specs = [s for s in _pyproject()["dependency-groups"]["dev"] if _requirement_name(s) == "pyrefly"]
+    assert len(specs) == 1 and re.fullmatch(r"pyrefly==\d+(\.\d+)+", specs[0]), specs
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
-    assert [p["version"] for p in lock["package"] if p["name"] == "pyrefly"] == ["1.4.1"]
+    locked = [p["version"] for p in lock["package"] if p["name"] == "pyrefly"]
+    assert locked == [specs[0].split("==", 1)[1]]
