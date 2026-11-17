@@ -3,9 +3,10 @@
 import json
 import os
 import tempfile
+from typing import Any
 
 
-def write_json_private(path, data):
+def write_json_private(path: str | os.PathLike[str], data: Any) -> None:
     """Write ``data`` as JSON to ``path`` atomically, leaving the file mode 0600.
 
     A plain ``open(tmp, "w")`` creates the temp file with 0666 & ~umask, and

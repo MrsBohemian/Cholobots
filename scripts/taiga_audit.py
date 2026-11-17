@@ -8,7 +8,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Protocol, Tuple
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 
@@ -309,12 +309,20 @@ def build_candidate_missing_links(
     )
 
 
-def build_report(client: TaigaClient, roadmap_text: str) -> dict:
+class TaigaReader(Protocol):
+    """The two read calls build_report makes; TaigaClient and test fakes both satisfy it."""
+
+    def get(self, path: str, **params: object) -> Any: ...
+
+    def list_all(self, path: str, **params: object) -> List[dict]: ...
+
+
+def build_report(client: TaigaReader, roadmap_text: str) -> dict:
     roadmap_assignments, reviewed_outside_refs = parse_roadmap_assignments(roadmap_text)
     open_story_cache: Dict[Tuple[int, int], dict] = {}
     all_epic_expectations: List[EpicExpectation] = []
     project_key = f"project{PROJECT_ID}"
-    report = {
+    report: Dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "summary": {},
         project_key: {

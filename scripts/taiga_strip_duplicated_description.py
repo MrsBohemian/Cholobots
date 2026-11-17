@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
 from taiga_html_to_markdown import html_to_markdown
@@ -102,6 +102,7 @@ class Reconstruction:
     """What a re-clean pass decided for one item.
 
     `description` is the text to write, or None when there is nothing to write.
+    It is always a str when `decision` is DECISION_REPAIRED.
     """
 
     decision: str
@@ -252,7 +253,7 @@ def run_json_command(
     cmd: List[str],
     attempts: int = REQUEST_ATTEMPTS,
     stdin_text: Optional[str] = None,
-) -> object:
+) -> Any:
     """Run a curl command and parse its JSON, retrying transport failures."""
     result = _run_curl(cmd, attempts, stdin_text)
 
@@ -336,7 +337,7 @@ class TaigaClient:
 
         return url
 
-    def get(self, path: str, **params: object) -> object:
+    def get(self, path: str, **params: object) -> Any:
         # The bearer token goes in a curl config on stdin, keeping it out of argv.
         return run_json_command(
             ["curl", "-sf", "-K", "-", self._url(path, params)],
@@ -745,7 +746,12 @@ def process_reclean_items(
             plan = plan_reconstruction(description, change[0], threshold)
 
         decision = plan.decision
-        new_description = plan.description if plan.decision == DECISION_REPAIRED else description
+
+        if plan.decision == DECISION_REPAIRED:
+            assert plan.description is not None  # plan_reconstruction returns REPAIRED only with text
+            new_description = plan.description
+        else:
+            new_description = description
 
         if plan.decision == DECISION_REPAIRED and not dry_run:
             decision = apply_write(client, kind, detail, new_description, DECISION_REPAIRED)

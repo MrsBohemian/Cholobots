@@ -76,6 +76,7 @@ class FakeTaiga:
             if path == "/api/v1/wiki":
                 return 200, list(self.wiki)
         if method == "POST" and self._collection(path) is not None:
+            assert payload is not None
             item = dict(payload, id=self.next_id)
             self.next_id += 1
             self._collection(path).append(item)
@@ -87,9 +88,11 @@ class FakeTaiga:
                     item.update(payload)
                     return 200, item
         if method == "POST" and path == "/api/v1/projects/39/create_tag":
+            assert payload is not None
             self.tags[payload["tag"]] = payload["color"]
             return 200, None
         if method == "POST" and path == "/api/v1/wiki":
+            assert payload is not None
             self.wiki.append({"id": self.next_id, "slug": payload["slug"], "project": payload["project"]})
             return 201, payload
         return 404, {"detail": "not found"}

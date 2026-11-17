@@ -34,7 +34,7 @@ import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 DEFAULT_PROJECT_ID = 39
 EXIT_OK = 0
@@ -162,7 +162,7 @@ class TaigaApi:
         self.token: Optional[str] = None
         self.writes: List[str] = []
 
-    def _call(self, method: str, path: str, payload: Optional[dict] = None) -> object:
+    def _call(self, method: str, path: str, payload: Optional[dict] = None) -> Any:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
@@ -182,13 +182,13 @@ class TaigaApi:
             raise SetupError("Taiga auth response did not include auth_token")
         self.token = data["auth_token"]
 
-    def get(self, path: str) -> object:
+    def get(self, path: str) -> Any:
         return self._call("GET", path)
 
-    def post(self, path: str, payload: dict) -> object:
+    def post(self, path: str, payload: dict) -> Any:
         return self._call("POST", path, payload)
 
-    def patch(self, path: str, payload: dict) -> object:
+    def patch(self, path: str, payload: dict) -> Any:
         return self._call("PATCH", path, payload)
 
 

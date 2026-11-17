@@ -47,6 +47,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any, NotRequired, TypedDict, cast
 
 # Add shared lib to path for dependency_parser import
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
@@ -188,30 +189,84 @@ def log(msg):
     print(f"[orchestrate] {msg}", file=sys.stderr, flush=True)
 
 
+class StoryRecord(TypedDict):
+    """One story's entry in the state file's `stories` list.
+
+    Keys marked NotRequired are the ones older state files, or a story that has
+    not reached that point yet, may lack; the code reads them with `.get`.
+    """
+
+    ref: int
+    id: int
+    subject: str
+    status: str
+    clonePath: str
+    pid: int | None
+    logFile: str
+    startedAt: str | None
+    completedAt: str | None
+    outcome: str | None
+    prNumber: Any
+    containerId: str | None
+    launchAttempts: int
+    transientRetries: NotRequired[int]
+    holdsPreservedWork: bool
+    notBefore: NotRequired[str | None]
+    dependencies: NotRequired[list[int]]
+    branch: str | None
+    baseBranch: str | None
+    integrationBranch: NotRequired[str]
+    teardownFailed: NotRequired[bool]
+
+
+class EpicState(TypedDict):
+    """The orchestrator state file."""
+
+    mode: NotRequired[str]
+    dryRun: NotRequired[bool]
+    epicRef: str
+    concurrency: int
+    baseBranch: str
+    phase: str
+    baseDir: str
+    stories: list[StoryRecord]
+
+
 class StateManager:
     """Manages the orchestrator state file with atomic writes."""
 
     def __init__(self, state_file):
         self.state_file = state_file
-        self._state = None
+        self._state: EpicState | None = None
         # Launches run on worker threads, so the poll loop and several launches
         # read and write this state concurrently. RLock, not Lock: count_status
         # calls stories_with_status and update_story calls save.
         self._lock = threading.RLock()
 
-    @property
-    def state(self):
+    def _current(self) -> EpicState:
+        if self._state is None:
+            raise RuntimeError("orchestrator state not initialised: call load() or init_from_stories() first")
         return self._state
+
+    @property
+    def state(self) -> EpicState:
+        return self._current()
+
+    @property
+    def loaded(self) -> bool:
+        """True once load() or init_from_stories() has set the state."""
+        return self._state is not None
 
     def load(self):
         """Load state from disk, backfilling fields older state files lack."""
         with self._lock:
             with open(self.state_file) as f:
                 self._state = json.load(f)
-            for story in self._state["stories"]:
+            state = self._current()
+            for story in state["stories"]:
                 story.setdefault(
                     "holdsPreservedWork", self._infer_legacy_preserved_work(story))
-            return self._state
+            return state
 
     @staticmethod
     def _infer_legacy_preserved_work(story):
@@ -272,7 +327,7 @@ class StateManager:
             log(f"Dependency graph: {json.dumps({str(k): v for k, v in sorted(deps_map.items())})}")
         return deps_map
 
-    def _new_story_record(self, s, base_dir, deps):
+    def _new_story_record(self, s, base_dir, deps) -> StoryRecord:
         """Build a fresh queued story record (shared by init and reconcile)."""
         return {
             "ref": s["ref"],
@@ -333,14 +388,15 @@ class StateManager:
             return self._reconcile_locked(stories, base_dir, deps_map)
 
     def _reconcile_locked(self, stories, base_dir, deps_map):
-        existing = {s["ref"]: s for s in self._state["stories"]}
+        state = self._current()
+        existing = {s["ref"]: s for s in state["stories"]}
         requeued, added = [], []
 
         for s in stories:
             ref = s["ref"]
             story = existing.get(ref)
             if story is None:
-                self._state["stories"].append(
+                state["stories"].append(
                     self._new_story_record(s, base_dir, deps_map.get(ref, []))
                 )
                 added.append(ref)
@@ -364,23 +420,24 @@ class StateManager:
 
         # Reset phase so a state loaded at "complete" doesn't stay stale on
         # disk if the process dies before run() finishes.
-        self._state["phase"] = "running"
+        state["phase"] = "running"
         self.save()
         return requeued, added
 
-    def update_story(self, ref, **kwargs):
+    def update_story(self, ref, **kwargs: Any):
         """Update fields on a story by ref number."""
         with self._lock:
-            for story in self._state["stories"]:
+            for story in self._current()["stories"]:
                 if story["ref"] == ref:
-                    story.update(kwargs)
+                    # kwargs are the record's own keys, spelled at each call site.
+                    story.update(cast(StoryRecord, kwargs))
                     break
             self.save()
 
     def get_story(self, ref):
         """Get a story dict by ref number."""
         with self._lock:
-            for story in self._state["stories"]:
+            for story in self._current()["stories"]:
                 if story["ref"] == ref:
                     return story
             return None
@@ -388,7 +445,7 @@ class StateManager:
     def stories_with_status(self, status):
         """Return list of story dicts with the given status."""
         with self._lock:
-            return [s for s in self._state["stories"] if s["status"] == status]
+            return [s for s in self._current()["stories"] if s["status"] == status]
 
     def count_status(self, status):
         """Count stories with the given status."""
@@ -420,7 +477,7 @@ class StateManager:
         the concurrency limit — then by ref number.
         """
         with self._lock:
-            completed_refs = {s["ref"] for s in self._state["stories"] if s["status"] == "complete"}
+            completed_refs = {s["ref"] for s in self._current()["stories"] if s["status"] == "complete"}
             now = now or utcnow_iso()
             queued = sorted(self.stories_with_status("queued"),
                             key=lambda s: (s.get("transientRetries", 0) == 0, s["ref"]))
@@ -446,7 +503,7 @@ class StateManager:
             changed = True
             while changed:
                 changed = False
-                for story in self._state["stories"]:
+                for story in self._current()["stories"]:
                     if story["status"] != "queued":
                         continue
                     deps = story.get("dependencies", [])
@@ -465,7 +522,7 @@ class StateManager:
     def set_phase(self, phase):
         """Set the overall phase."""
         with self._lock:
-            self._state["phase"] = phase
+            self._current()["phase"] = phase
             self.save()
 
 
@@ -710,8 +767,11 @@ class HostRepoBaseMixin:
     """Resolve a base branch in the host repo before launch.sh clones from it.
 
     Shared by both orchestrators. The host class provides `repo_root` (a Path)
-    and `git_lock` (a threading.Lock serialising git runs against that repo).
+    and `git_lock` (a threading.RLock serialising git runs against that repo).
     """
+
+    repo_root: Path
+    git_lock: threading.RLock
 
     def _run_git(self, *args, timeout=15):
         """Run a git command against the host repo (not a story's clone) and
@@ -887,7 +947,7 @@ class Orchestrator(HostRepoBaseMixin):
         log("Signal received, shutting down...")
 
         # Guard against signals arriving before state is initialized
-        if self.sm.state is None:
+        if not self.sm.loaded:
             emit("DONE:0:0:0:0")
             sys.exit(2)
 
@@ -1875,9 +1935,9 @@ class Orchestrator(HostRepoBaseMixin):
                 return False
         else:
             story_branches = {
-                s["ref"]: s.get("branch")
+                s["ref"]: branch
                 for s in self.sm.state["stories"]
-                if s.get("status") == "complete" and s.get("branch")
+                if s.get("status") == "complete" and (branch := s.get("branch"))
             }
             try:
                 base, _reason = select_base_branch(

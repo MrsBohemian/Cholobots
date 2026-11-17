@@ -1,8 +1,9 @@
 # ABOUTME: Shared parser for monitor-pr-stability.sh output lines.
 # ABOUTME: Converts raw stability check results into structured dicts for consumers.
+from typing import Any
 
 
-def parse_stability_result(result_line):
+def parse_stability_result(result_line: str) -> dict[str, Any]:
     """Parse the output of monitor-pr-stability.sh into a structured dict.
 
     Possible result lines:

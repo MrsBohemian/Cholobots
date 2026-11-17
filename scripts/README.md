@@ -135,3 +135,7 @@ for t in tests/scripts/test-*.sh; do bash "$t" || echo "FAILED: $t"; done
 ```
 
 The tests mock `curl`, `gh` and `codex`; none of them needs network access or credentials. The `.env`-file cases in `test_check_local_env.py` skip unless python-dotenv is installed (`uv sync`).
+
+## Typing
+
+`scripts/` and `tests/scripts/` are type-checked by ty (`make typecheck`) with no entries in `ty-baseline.json`, and `tests/scripts/test_ty_baseline.py` fails if one appears. Annotate new code. When ty reports a new diagnostic here, fix it instead of running `make typecheck-baseline` to absorb it, and do not add `# ty: ignore`.

@@ -19,6 +19,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 _IDENT = r'(?:"([A-Za-z_][A-Za-z0-9_$]*)"|([A-Za-z_][A-Za-z0-9_$]*))'
 _QUALIFIED = rf"(?:{_IDENT}\s*\.\s*)?{_IDENT}"
@@ -70,9 +71,15 @@ def dashboard_tables(paths):
     return _refs(_DASHBOARD_REF, paths)
 
 
+class SchemaObject(TypedDict):
+    kind: str
+    rls: bool
+    policies: int
+
+
 def schema_objects(sql):
     """Map each public table/view defined in `sql` to its kind, RLS state and policy count."""
-    objects = {}
+    objects: dict[str, SchemaObject] = {}
     for match in _CREATE_TABLE.finditer(sql):
         name = _public_name(match, 1)
         if name:

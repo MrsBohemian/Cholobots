@@ -36,6 +36,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, NotRequired, TypedDict, cast
 
 
 MAX_LAUNCH_ATTEMPTS = 3
@@ -75,27 +76,67 @@ def log(msg):
     print(f"[orchestrate-bugs] {msg}", file=sys.stderr, flush=True)
 
 
+class BugRecord(TypedDict):
+    """One bug's entry in the state file's `bugs` list."""
+
+    ref: int
+    id: int
+    subject: str
+    status: str
+    clonePath: str
+    pid: int | None
+    logFile: str
+    startedAt: str | None
+    completedAt: str | None
+    outcome: str | None
+    prNumber: Any
+    containerId: str | None
+    launchAttempts: NotRequired[int]
+    teardownFailed: NotRequired[bool]
+
+
+class BugsState(TypedDict):
+    """The bug-fix orchestrator state file."""
+
+    mode: NotRequired[str]
+    concurrency: int
+    baseBranch: str
+    phase: str
+    baseDir: str
+    bugs: list[BugRecord]
+
+
 class StateManager:
     """Manages the orchestrator state file with atomic writes."""
 
     def __init__(self, state_file):
         self.state_file = state_file
-        self._state = None
+        self._state: BugsState | None = None
         # Launches run on worker threads, so the poll loop and several launches
         # read and write this state concurrently. RLock, not Lock: count_status
         # calls bugs_with_status and update_bug calls save.
         self._lock = threading.RLock()
 
-    @property
-    def state(self):
+    def _current(self) -> BugsState:
+        if self._state is None:
+            raise RuntimeError("orchestrator state not initialised: call load() or init_from_bugs() first")
         return self._state
+
+    @property
+    def state(self) -> BugsState:
+        return self._current()
+
+    @property
+    def loaded(self) -> bool:
+        """True once load() or init_from_bugs() has set the state."""
+        return self._state is not None
 
     def load(self):
         """Load state from disk."""
         with self._lock:
             with open(self.state_file) as f:
                 self._state = json.load(f)
-            return self._state
+            return self._current()
 
     def save(self):
         """Save state to disk atomically (write temp + rename)."""
@@ -138,19 +179,20 @@ class StateManager:
             }
             self.save()
 
-    def update_bug(self, ref, **kwargs):
+    def update_bug(self, ref, **kwargs: Any):
         """Update fields on a bug by ref number."""
         with self._lock:
-            for bug in self._state["bugs"]:
+            for bug in self._current()["bugs"]:
                 if bug["ref"] == ref:
-                    bug.update(kwargs)
+                    # kwargs are the record's own keys, spelled at each call site.
+                    bug.update(cast(BugRecord, kwargs))
                     break
             self.save()
 
     def get_bug(self, ref):
         """Get a bug dict by ref number."""
         with self._lock:
-            for bug in self._state["bugs"]:
+            for bug in self._current()["bugs"]:
                 if bug["ref"] == ref:
                     return bug
             return None
@@ -158,7 +200,7 @@ class StateManager:
     def bugs_with_status(self, status):
         """Return list of bug dicts with the given status."""
         with self._lock:
-            return [b for b in self._state["bugs"] if b["status"] == status]
+            return [b for b in self._current()["bugs"] if b["status"] == status]
 
     def count_status(self, status):
         """Count bugs with the given status."""
@@ -177,7 +219,7 @@ class StateManager:
             queued = sorted(
                 (
                     (b.get("launchAttempts", 0), position, b["ref"])
-                    for position, b in enumerate(self._state["bugs"])
+                    for position, b in enumerate(self._current()["bugs"])
                     if b["status"] == "queued"
                 ),
             )
@@ -188,7 +230,7 @@ class StateManager:
     def set_phase(self, phase):
         """Set the overall phase."""
         with self._lock:
-            self._state["phase"] = phase
+            self._current()["phase"] = phase
             self.save()
 
 
@@ -350,7 +392,7 @@ class Orchestrator(HostRepoBaseMixin):
         self.shutting_down = True
         log("Signal received, shutting down...")
 
-        if self.sm.state is None:
+        if not self.sm.loaded:
             emit("DONE:0:0:0")
             sys.exit(2)
 

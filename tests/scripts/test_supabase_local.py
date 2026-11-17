@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -778,7 +779,7 @@ def test_rest_server_reports_the_server_header_and_sends_the_key():
         def version_string(self):
             return "postgrest/16.4"
 
-        def log_message(self, *args):
+        def log_message(self, format: str, *args: Any) -> None:
             pass
 
     server = http.server.HTTPServer(("127.0.0.1", 0), Handler)

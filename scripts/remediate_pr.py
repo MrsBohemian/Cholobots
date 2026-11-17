@@ -38,6 +38,7 @@ import os
 import shlex
 import subprocess
 import sys
+from typing import Any, TypedDict, Unpack
 
 # Add shared lib to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
@@ -134,16 +135,41 @@ def parse_args(argv):
     return args
 
 
+class RemediateState(TypedDict):
+    prNumber: int
+    maxFailures: int
+    buildFailureCount: int
+    phase: str
+    taigaId: int | None
+    taigaType: str | None
+    lastResult: Any
+
+
+class RemediateStateUpdate(TypedDict, total=False):
+    prNumber: int
+    maxFailures: int
+    buildFailureCount: int
+    phase: str
+    taigaId: int | None
+    taigaType: str | None
+    lastResult: Any
+
+
 class StateManager:
     """Manages the remediation state file with atomic writes."""
 
     def __init__(self, state_path):
         self.state_path = state_path
-        self._state = None
+        self._state: RemediateState | None = None
+
+    def _current(self) -> RemediateState:
+        if self._state is None:
+            raise RuntimeError("remediate-pr state not initialised: call init() or load() first")
+        return self._state
 
     @property
-    def state(self):
-        return self._state
+    def state(self) -> RemediateState:
+        return self._current()
 
     def init(self, pr_number, max_failures, taiga_id=None, taiga_type=None):
         """Initialize a new state file."""
@@ -163,20 +189,20 @@ class StateManager:
         with open(self.state_path) as f:
             self._state = json.load(f)
         # Validate prNumber to prevent injection via tampered state files
-        pr = self._state.get("prNumber")
+        state = self._current()
+        pr = state.get("prNumber")
         if not isinstance(pr, int):
             raise ValueError(f"Invalid prNumber in state file: {pr!r} (expected int)")
-        return self._state
+        return state
 
-    def update(self, **kwargs):
+    def update(self, **kwargs: Unpack[RemediateStateUpdate]):
         """Update state fields and persist."""
-        for key, value in kwargs.items():
-            self._state[key] = value
+        self._current().update(kwargs)
         self._save()
 
     def _save(self):
         """Save state to disk atomically (write temp + rename)."""
-        write_json_private(self.state_path, self._state)
+        write_json_private(self.state_path, self._current())
 
 
 def log(msg):

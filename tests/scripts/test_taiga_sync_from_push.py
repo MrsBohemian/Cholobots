@@ -5,6 +5,8 @@ import json
 import os
 import sys
 import urllib.error
+from email.message import Message
+from types import TracebackType
 
 import pytest
 
@@ -294,8 +296,13 @@ class FakeResponse(io.BytesIO):
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
-        return False
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        return None
 
 
 def test_fetch_pulls_requests_upstream_commit_pulls(monkeypatch):
@@ -315,7 +322,7 @@ def test_fetch_pulls_requests_upstream_commit_pulls(monkeypatch):
 
 def test_fetch_pulls_http_error_names_the_status(monkeypatch):
     def urlopen(request, timeout):
-        raise urllib.error.HTTPError(request.full_url, 404, "Not Found", {}, io.BytesIO(b"{}"))
+        raise urllib.error.HTTPError(request.full_url, 404, "Not Found", Message(), io.BytesIO(b"{}"))
 
     monkeypatch.setattr(sync.urllib.request, "urlopen", urlopen)
     with pytest.raises(GitHubError, match="HTTP 404"):

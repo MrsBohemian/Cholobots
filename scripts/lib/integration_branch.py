@@ -5,12 +5,12 @@ import re
 INTEGRATION_BRANCH_RE = re.compile(r"^epic/(\d+)-integration-(\d+)$")
 
 
-def integration_branch_name(epic_ref, story_ref):
+def integration_branch_name(epic_ref: int | str, story_ref: int | str) -> str:
     """Branch that merges every parent of a multi-parent story."""
     return f"epic/{epic_ref}-integration-{story_ref}"
 
 
-def parse_integration_branch(branch):
+def parse_integration_branch(branch: str | None) -> tuple[int, int] | None:
     """Return (epic_ref, story_ref) as ints, or None if not an integration branch."""
     if not branch:
         return None
