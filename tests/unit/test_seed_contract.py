@@ -53,7 +53,12 @@ def production_discord_ids():
         else:
             continue
         if any(isinstance(t, ast.Name) and t.id == "DISCORD_USER_TO_PERSON" for t in targets):
-            return [str(k.value) for k in node.value.keys]
+            assert isinstance(node.value, ast.Dict), "DISCORD_USER_TO_PERSON must be a dict literal"
+            ids = []
+            for key in node.value.keys:
+                assert isinstance(key, ast.Constant), "DISCORD_USER_TO_PERSON keys must be literals"
+                ids.append(str(key.value))
+            return ids
     raise AssertionError("DISCORD_USER_TO_PERSON not found in bots/metichebot.py")
 
 

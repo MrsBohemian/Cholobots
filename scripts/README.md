@@ -138,4 +138,4 @@ The tests mock `curl`, `gh` and `codex`; none of them needs network access or cr
 
 ## Typing
 
-`scripts/` and `tests/scripts/` are type-checked by ty (`make typecheck`) with no entries in `ty-baseline.json`, and `tests/scripts/test_ty_baseline.py` fails if one appears. Annotate new code. When ty reports a new diagnostic here, fix it instead of running `make typecheck-baseline` to absorb it, and do not add `# ty: ignore`.
+`scripts/` and `tests/scripts/` are type-checked by ty (`make typecheck`) with no baseline, and `tests/scripts/test_ty_config.py` fails if one appears. Annotate new code. When ty reports a diagnostic here, fix it, and do not add `# ty: ignore`.

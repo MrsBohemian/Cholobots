@@ -10,13 +10,13 @@ export SUPABASE_CLI
 # One stack per checkout; make SUPABASE=supabase <target> bypasses the script.
 SUPABASE ?= scripts/supabase-local.sh
 VENV_PY := .venv/bin/python
-# ty runs from the locked dev group; overridable (tests/scripts/test-typecheck-baseline.sh points it at a copy).
+# ty runs from the locked dev group; overridable (tests/scripts/test-typecheck.sh points it at a copy).
 TY ?= $(VENV_PY) -m ty
 # Production (Railway) installs requirements.txt, generated from uv.lock; --no-header keeps the file and stdout identical.
 UV_EXPORT := uv export --frozen --no-dev --no-hashes --no-header --no-emit-project
 
 .DEFAULT_GOAL := help
-.PHONY: help setup lock lock-check check-tools db-up db-down db-reset db-env run compile lint typecheck typecheck-baseline test test-integration check
+.PHONY: help setup lock lock-check check-tools db-up db-down db-reset db-env run compile lint typecheck test test-integration check
 
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "%-17s %s\n", $$1, $$2}'
@@ -71,14 +71,8 @@ compile: ## Byte-compile the bot modules
 lint: ## Run ruff
 	$(VENV_PY) -m ruff check .
 
-typecheck: ## Type-check with ty: fails on errors not in ty-baseline.json, and on baseline entries that are fixed
+typecheck: ## Type-check with ty (any diagnostic fails)
 	$(TY) check
-	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
-	$(TY) check --baseline "$$tmp/baseline.json" --update-baseline >/dev/null && \
-	if ! cmp -s "$$tmp/baseline.json" ty-baseline.json; then echo "ty-baseline.json still lists errors that are fixed: run make typecheck-baseline and commit it" >&2; exit 1; fi
-
-typecheck-baseline: ## Rewrite ty-baseline.json for the whole project (only to drop fixed errors)
-	$(TY) check --update-baseline
 
 test: check-tools ## Run pytest (unit + scripts) and every tests/scripts/test-*.sh
 	$(VENV_PY) -m pytest -q tests/unit tests/scripts

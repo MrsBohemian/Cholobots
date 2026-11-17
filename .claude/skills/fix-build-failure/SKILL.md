@@ -107,7 +107,7 @@ env -u GH_TOKEN gh run view <run-id> --repo MrsBohemian/Cholobots --json jobs --
 The CI steps that can fail are:
 - `checks` / **Compile** — `py_compile` syntax errors
 - `checks` / **Lint** — ruff violations
-- `checks` / **Type check** — `make typecheck`: a new ty error, or a `ty-baseline.json` that still lists fixed errors
+- `checks` / **Type check** — `make typecheck`: a ty diagnostic
 - `checks` / **Unit tests** — `pytest tests/unit` failures
 - `checks` / **Script tests** — `pytest tests/scripts` or a `tests/scripts/test-*.sh` failure
 - `integration` / **Start local Supabase** — a migration or `seed.sql` that does not apply, or a CLI/Docker problem
@@ -182,7 +182,7 @@ The log lists rule codes per file. Undefined names (`F821`) and unused imports (
 
 ### Type check failures
 
-The log names file, line and rule of each error not in `ty-baseline.json`. Fix the error in code; never add it to the baseline. If the message says the baseline still lists fixed errors, run `make typecheck-baseline` (whole project, no paths) and commit the shrunk file.
+The log names file, line and rule of each diagnostic. Fix it in code; there is no baseline.
 
 ### Test failures
 
@@ -226,7 +226,7 @@ Run `ruff check --fix .` for auto-fixable rules and fix the rest by hand, then r
 
 ### For type check failures
 
-Fix the new error; `make typecheck` must pass. Do not grow `ty-baseline.json` or add `# ty: ignore`.
+Fix the diagnostic; `make typecheck` must pass. Do not add `# ty: ignore`.
 
 ### For test failures
 
