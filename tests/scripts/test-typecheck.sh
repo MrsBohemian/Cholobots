@@ -56,6 +56,34 @@ else
 fi
 cp "$TMP/crudobot.orig" "$TMP/bots/crudobot.py"
 
+info "Case 3: a possibly-unbound name fails and is named"
+{ cat "$TMP/crudobot.orig"; printf '\n\ndef _probe2(flag: bool) -> int:\n    if flag:\n        value = 1\n    return value\n'; } > "$TMP/bots/crudobot.py"
+if out="$(run_typecheck)"; then
+    fail "a possibly-unbound name exits non-zero"
+else
+    pass "a possibly-unbound name exits non-zero"
+    if grep -q 'possibly-unresolved-reference' <<< "$out"; then
+        pass "output names possibly-unresolved-reference"
+    else
+        fail "output names possibly-unresolved-reference"; echo "$out"
+    fi
+fi
+cp "$TMP/crudobot.orig" "$TMP/bots/crudobot.py"
+
+info "Case 4: a blanket ty: ignore fails and is named"
+{ cat "$TMP/crudobot.orig"; printf '\nx = 1  # ty: ignore\n'; } > "$TMP/bots/crudobot.py"
+if out="$(run_typecheck)"; then
+    fail "a blanket ignore exits non-zero"
+else
+    pass "a blanket ignore exits non-zero"
+    if grep -q 'blanket-ignore-comment' <<< "$out"; then
+        pass "output names blanket-ignore-comment"
+    else
+        fail "output names blanket-ignore-comment"; echo "$out"
+    fi
+fi
+cp "$TMP/crudobot.orig" "$TMP/bots/crudobot.py"
+
 if [ "$FAILURES" -ne 0 ]; then
     echo -e "${RED}$FAILURES failure(s)${NC}"
     exit 1

@@ -14,3 +14,14 @@ def test_ty_has_no_baseline():
 
 def test_ty_fails_on_warnings():
     assert TY["terminal"]["error-on-warning"] is True
+
+
+def test_ty_tightened_rules_are_errors():
+    for name in (
+        "blanket-ignore-comment",
+        "division-by-zero",
+        "possibly-missing-attribute",
+        "possibly-missing-import",
+        "possibly-unresolved-reference",
+    ):
+        assert TY["rules"][name] == "error", name

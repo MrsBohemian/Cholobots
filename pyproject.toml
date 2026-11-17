@@ -37,5 +37,14 @@ python-platform = "linux"
 # tests/scripts put these on sys.path before importing the module under test.
 extra-paths = ["scripts", "scripts/lib", "scripts/devcontainer"]
 
+[tool.ty.rules]
+# Default "ignore" in ty; each catches a runtime NameError/AttributeError/ImportError/ZeroDivisionError,
+# or a `# ty: ignore` without a rule code. All passed with 0 diagnostics when enabled (#212).
+blanket-ignore-comment = "error"
+division-by-zero = "error"
+possibly-missing-attribute = "error"
+possibly-missing-import = "error"
+possibly-unresolved-reference = "error"
+
 [tool.ty.terminal]
 error-on-warning = true
