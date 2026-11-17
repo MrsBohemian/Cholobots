@@ -1285,22 +1285,6 @@
         "lineCount": 1
       }
     ],
-    "scripts/lib/dependency_satisfaction.py": [
-      {
-        "rule": "missing-union-attribute",
-        "startColumn": 32,
-        "endColumn": 50,
-        "lineCount": 1
-      }
-    ],
-    "scripts/lib/taiga_client.py": [
-      {
-        "rule": "missing-attribute",
-        "startColumn": 16,
-        "endColumn": 28,
-        "lineCount": 1
-      }
-    ],
     "scripts/merge_train.py": [
       {
         "rule": "invalid-argument-type",

@@ -3,7 +3,7 @@
 import json
 import os
 import subprocess
-from typing import List
+from typing import Any, List
 from urllib.parse import urlencode
 
 
@@ -41,7 +41,7 @@ def redact_cmd(cmd: List[str]) -> str:
     return " ".join(redacted)
 
 
-def run_json_command(cmd: List[str]) -> object:
+def run_json_command(cmd: List[str]) -> Any:
     result = subprocess.run(cmd, check=False, capture_output=True, text=True)
 
     if result.returncode != 0:
@@ -70,7 +70,7 @@ def _quote_config_value(value: str) -> str:
     return f'"{escaped}"'
 
 
-def _request_json(curl_args: List[str], stdin_text: str) -> object:
+def _request_json(curl_args: List[str], stdin_text: str) -> Any:
     """Run curl with the given args (sensitive data on stdin) and return the parsed JSON body."""
     url = curl_args[-1]
     cmd = ["curl", "-sS", "-w", "\n%{http_code}", *curl_args]
@@ -144,7 +144,7 @@ class TaigaClient:
 
         return token
 
-    def get(self, path: str, **params: object) -> object:
+    def get(self, path: str, **params: object) -> Any:
         url = f"{self.base_url}{path}"
 
         if params:

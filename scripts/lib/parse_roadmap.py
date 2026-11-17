@@ -27,7 +27,7 @@ from dependency_parser import parse_dependency_diagram  # noqa: E402
 _NAMESPACE_SLUG = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 
 
-def namespace_slug(value):
+def namespace_slug(value: str) -> str:
     if not _NAMESPACE_SLUG.fullmatch(value):
         raise argparse.ArgumentTypeError(
             f"invalid namespace slug {value!r} (expected a letter followed by letters, digits, '_' or '-')"
@@ -35,7 +35,7 @@ def namespace_slug(value):
     return value
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Parse a '## Dependency Diagram' section into a JSON dependency graph."
     )

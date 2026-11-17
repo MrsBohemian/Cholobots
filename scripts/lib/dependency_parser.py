@@ -1,9 +1,11 @@
 # ABOUTME: Shared dependency diagram parser for epic and cross-project wiki markdown.
 # ABOUTME: Extracts inter-story dependency trees from ## Dependency Diagram sections; supports opt-in namespaced refs.
 import re
+from collections.abc import Callable, Iterable, Mapping
+from typing import Any
 
 
-def parse_dependency_diagram(description, default_namespace=None):
+def parse_dependency_diagram(description: str | None, default_namespace: str | None = None) -> dict[Any, list[Any]]:
     """Parse a dependency diagram from an epic description's markdown.
 
     Looks for a ``## Dependency Diagram``, ``## Dependency Graph``, or
@@ -86,7 +88,7 @@ _REF = r"#\d+"  # legacy token
 _NS_REF = r"(?:[A-Za-z][A-Za-z0-9_-]*)?#\d+"  # namespaced token
 
 
-def split_ref(ref):
+def split_ref(ref: str) -> tuple[str, int]:
     """Split a namespaced ref (``"cholobots#24"``) into ``("cholobots", 24)``.
 
     Namespace -> Taiga project id: ``cholobots``=39. Used as the sort key in namespaced mode so the
@@ -97,7 +99,7 @@ def split_ref(ref):
     return namespace, int(number)
 
 
-def _make_node_refs(default_namespace):
+def _make_node_refs(default_namespace: str | None) -> Callable[[str], list[Any]]:
     """Build a node-ref extractor for the given mode.
 
     Returns a function mapping line text to the leading run of refs it
@@ -124,7 +126,7 @@ def _make_node_refs(default_namespace):
     return node_refs
 
 
-def _parse_dependency_tree(code_block, default_namespace=None):
+def _parse_dependency_tree(code_block: str, default_namespace: str | None = None) -> dict[Any, list[Any]]:
     """Parse a dependency tree from a code block into a ref->deps mapping.
 
     Processes lines containing ref tokens and tracks indentation to
@@ -179,7 +181,7 @@ def _parse_dependency_tree(code_block, default_namespace=None):
     return {ref: sorted(dep_set, key=sort_key) for ref, dep_set in deps.items()}
 
 
-def find_dependency_cycle(deps_map):
+def find_dependency_cycle(deps_map: Mapping[Any, Iterable[Any]]) -> list[Any] | None:
     """Return a cycle as a list of refs [a, ..., a], or None if the graph is acyclic.
 
     Refs that appear only as dependencies (not as keys) are ignored — they
@@ -213,7 +215,9 @@ def find_dependency_cycle(deps_map):
     return None
 
 
-def resolve_out_of_run_dependencies(deps_map, eligible_refs, satisfied_refs):
+def resolve_out_of_run_dependencies(
+    deps_map: Mapping[Any, Iterable[Any]], eligible_refs: Iterable[Any], satisfied_refs: Iterable[Any]
+) -> tuple[dict[Any, list[Any]], dict[Any, Any]]:
     """Split a run's dependencies into resolved in-run deps and blocked stories.
 
     ``deps_map`` maps ref -> [dep refs], as returned by

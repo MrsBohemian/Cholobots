@@ -34,6 +34,8 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
+from typing import Any
 
 LIB_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS_DIR = os.path.dirname(LIB_DIR)
@@ -53,22 +55,22 @@ class LookupFailed(Exception):
     """A Taiga or GitHub lookup failed; the dependency counts as not satisfied."""
 
 
-def has_gate_section(description):
+def has_gate_section(description: str | None) -> bool:
     """True when a task description has a ``## Gate`` heading (it stays open after merge by design)."""
     return bool(GATE_HEADING.search(description or ""))
 
 
-def claimed_refs(pr):
+def claimed_refs(pr: dict[str, Any]) -> Any:
     """Taiga refs a PR claims, by the same rules as taiga-sync.yml."""
     return extract_closing_refs(pr.get("headRefName", ""), pr.get("title", ""), pr.get("body", ""))
 
 
-def _status_name(story):
+def _status_name(story: dict[str, Any]) -> str:
     info = story.get("status_extra_info") or {}
     return info.get("name") or str(story.get("status", "unknown"))
 
 
-def _open_tasks(story):
+def _open_tasks(story: dict[str, Any]) -> list[dict[str, Any]]:
     tasks = []
     for t in story.get("tasks") or []:
         info = t.get("status_extra_info") or {}
@@ -77,7 +79,15 @@ def _open_tasks(story):
     return tasks
 
 
-def classify_dependency(ref, story, prs, base_branch="main", story_error=None, prs_error=None, gated_tasks=None):
+def classify_dependency(
+    ref: int,
+    story: dict[str, Any] | None,
+    prs: list[dict[str, Any]] | None,
+    base_branch: str = "main",
+    story_error: str | None = None,
+    prs_error: str | None = None,
+    gated_tasks: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
     """Classify one out-of-run dependency.
 
     ``story`` is the ``scripts/taiga-story.sh <ref> 39 --with-tasks`` JSON, or
@@ -140,7 +150,12 @@ def classify_dependency(ref, story, prs, base_branch="main", story_error=None, p
     return result
 
 
-def _check_tasks_after_merge(result, status, base_branch, gated_tasks):
+def _check_tasks_after_merge(
+    result: dict[str, Any],
+    status: str,
+    base_branch: str,
+    gated_tasks: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None,
+) -> None:
     """Merged path: satisfied only when every open task is gated."""
     merged = ", ".join(f"#{n}" for n in result["merged_prs"])
     open_tasks = result["open_tasks"]
@@ -168,11 +183,11 @@ def _check_tasks_after_merge(result, status, base_branch, gated_tasks):
         result["reason"] += f"; only gated tasks open: {gated}"
 
 
-def _run(cmd):
+def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=False)
 
 
-def fetch_story(ref):
+def fetch_story(ref: int) -> dict[str, Any]:
     """The story JSON from scripts/taiga-story.sh, with its tasks."""
     proc = _run(["scripts/taiga-story.sh", str(ref), str(PROJECT_ID), "--with-tasks"])
     if proc.returncode == TAIGA_NOT_FOUND_EXIT:
@@ -185,7 +200,7 @@ def fetch_story(ref):
         raise LookupFailed(f"taiga-story.sh printed invalid JSON: {exc}") from exc
 
 
-def fetch_prs(limit=PR_LIST_LIMIT):
+def fetch_prs(limit: int = PR_LIST_LIMIT) -> list[dict[str, Any]]:
     """Every PR on the upstream repo, open, closed or merged."""
     proc = _run([
         "env", "-u", "GH_TOKEN", "gh", "pr", "list",
@@ -207,7 +222,7 @@ def fetch_prs(limit=PR_LIST_LIMIT):
     return prs
 
 
-def fetch_gated_tasks(open_tasks):
+def fetch_gated_tasks(open_tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Open tasks whose description has a ``## Gate`` section (human or live steps)."""
     from taiga_client import TaigaClient, TaigaError
 
@@ -223,7 +238,13 @@ def fetch_gated_tasks(open_tasks):
         raise LookupFailed(f"task lookup failed: {exc}") from exc
 
 
-def resolve(refs, base_branch="main", fetch_story=fetch_story, fetch_prs=fetch_prs, gated_tasks=fetch_gated_tasks):
+def resolve(
+    refs: list[int],
+    base_branch: str = "main",
+    fetch_story: Callable[[int], dict[str, Any]] = fetch_story,
+    fetch_prs: Callable[[], list[dict[str, Any]]] = fetch_prs,
+    gated_tasks: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = fetch_gated_tasks,
+) -> dict[str, Any]:
     """Classify every ref. The PR list is fetched at most once, and only when needed."""
     stories = {}
     for ref in refs:
@@ -255,7 +276,7 @@ def resolve(refs, base_branch="main", fetch_story=fetch_story, fetch_prs=fetch_p
     return {"base_branch": base_branch, "satisfied_refs": satisfied, "dependencies": dependencies}
 
 
-def parse_args(argv):
+def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base", default=os.environ.get("BASE_BRANCH") or "main",
                         help="base branch a merged PR must target (default: $BASE_BRANCH or main)")
@@ -264,7 +285,7 @@ def parse_args(argv):
     return parser.parse_args(argv)
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     print(json.dumps(resolve(args.refs, base_branch=args.base), indent=2))
     return 0

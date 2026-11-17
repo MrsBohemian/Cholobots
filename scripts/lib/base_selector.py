@@ -1,5 +1,6 @@
 # ABOUTME: Chooses the base branch for a story from the epic dependency graph.
 # ABOUTME: Shared by the /implement-epic skill, whose parallel slots are git worktrees.
+from collections.abc import Mapping, Sequence
 
 
 class UnresolvedDependencyError(Exception):
@@ -11,7 +12,12 @@ class MultiParentDependencyError(Exception):
     branch built by the caller (integration_branch.py), never one parent's branch."""
 
 
-def select_base_branch(story_ref, dependencies, story_branches, default_base="main"):
+def select_base_branch(
+    story_ref: int | str,
+    dependencies: Sequence[int | str],
+    story_branches: Mapping[int, str] | Mapping[str, str],
+    default_base: str = "main",
+) -> tuple[str, str]:
     """Return (base_branch, reason) for story_ref.
 
     dependencies   -- refs this story depends on, from parse_dependency_diagram()
