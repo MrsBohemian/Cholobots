@@ -29,23 +29,25 @@ register_guard(bot)
 register_crudo(bot)
 
 metiche = None
+_obijuan_loaded: bool = False
+_vuelta_loaded: bool = False
 
 @bot.event
-async def on_ready():
-    global metiche
+async def on_ready() -> None:
+    global metiche, _obijuan_loaded, _vuelta_loaded
     init_guardabot_db()
     ensure_guardabot_schema()
     init_metiche_db()
     
     init_crudobot_db()
-    if not hasattr(bot, "obijuan_loaded"):
+    if not _obijuan_loaded:
         await setup_obijuan(bot)
-        bot.obijuan_loaded = True
+        _obijuan_loaded = True
         print("✅ ObiJuan loaded")
         
-    if not hasattr(bot, "vuelta_loaded"):
+    if not _vuelta_loaded:
         await bot.load_extension("bots.vueltabot")
-        bot.vuelta_loaded = True
+        _vuelta_loaded = True
         print("✅ Vueltabot loaded")
             
     print(f"✅ Logged in as {bot.user} | Guardabot DB: {GUARDABOT_DB}")
@@ -56,7 +58,7 @@ async def on_ready():
             metiche.loop_task = bot.loop.create_task(metiche.start_loop())
         
 @bot.event
-async def on_message(message: discord.Message):
+async def on_message(message: discord.Message) -> None:
 
     # Ignore the bot's own messages
     if message.author == bot.user:
@@ -114,7 +116,7 @@ async def on_message(message: discord.Message):
 
         
 @bot.command(name="cholobots")
-async def cholobots(ctx):
+async def cholobots(ctx: commands.Context) -> None:
     msg = """
     🤖 WHO ARE THE CHOLOBOTS?
     The Cholobots are hustlers who can be your best friends for life. If you need to grind as an entrepreneur, or to set a goal, these guys can help!

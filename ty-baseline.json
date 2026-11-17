@@ -2383,20 +2383,6 @@
         "lineCount": 1
       }
     ],
-    "cholobots.py": [
-      {
-        "rule": "invalid-assignment",
-        "startColumn": 8,
-        "endColumn": 26,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-assignment",
-        "startColumn": 8,
-        "endColumn": 25,
-        "lineCount": 1
-      }
-    ],
     "scripts/check_schema_coverage.py": [
       {
         "rule": "unsupported-operator",
