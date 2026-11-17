@@ -18,28 +18,32 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, asdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import discord
 from discord.ext import commands
 import os
 from zoneinfo import ZoneInfo
-from supabase import create_client
+from supabase import Client, PostgrestAPIResponse, create_client
 
 LOCAL_TZ = ZoneInfo("America/Chicago")
 
-def local_now():
+def local_now() -> dt.datetime:
     return dt.datetime.now(LOCAL_TZ)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+supabase: Optional[Client] = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
-def require_supabase() -> bool:
-    return supabase is not None
+Row = Dict[str, Any]
 
-async def find_wtp_category(text: str):
-    if not require_supabase():
+
+def response_rows(response: PostgrestAPIResponse) -> List[Row]:
+    """Rows of a table query. PostgREST types them as JSON, but table rows are always objects."""
+    return cast(List[Row], response.data or [])
+
+async def find_wtp_category(text: str) -> Optional[Dict[str, Any]]:
+    if supabase is None:
         return None
 
     response = (
@@ -49,9 +53,9 @@ async def find_wtp_category(text: str):
     )
 
     text = text.lower()
-    scores = {}
+    scores: Dict[str, Any] = {}
 
-    for row in response.data:
+    for row in response_rows(response):
         keyword = row["keyword"].lower()
 
         if keyword in text:
@@ -63,15 +67,15 @@ async def find_wtp_category(text: str):
     if not scores:
         return None
 
-    best_category = max(scores, key=scores.get)
+    best_category = max(scores, key=scores.__getitem__)
 
     return {
         "category": best_category,
         "score": scores[best_category]
     }
 
-async def get_wtp_pricing(category: str):
-    if not require_supabase():
+async def get_wtp_pricing(category: str) -> Optional[Row]:
+    if supabase is None:
         return None
 
     response = (
@@ -82,11 +86,11 @@ async def get_wtp_pricing(category: str):
         .execute()
     )
 
-    rows = response.data or []
+    rows = response_rows(response)
 
     return rows[0] if rows else None
 
-async def build_wtp_summary(text: str):
+async def build_wtp_summary(text: str) -> Dict[str, Any]:
     match = await find_wtp_category(text)
 
     if not match:
@@ -118,7 +122,7 @@ async def build_wtp_summary(text: str):
         "category": pricing["category"]
     }
     
-async def get_risk_factors(category: Optional[str]):
+async def get_risk_factors(category: Optional[str]) -> List[str]:
     """
     Placeholder for future Crudobot risk intelligence.
 
@@ -175,12 +179,12 @@ async def save_quest(quest: Quest) -> Dict[str, Any]:
     data = asdict(quest)
     QUESTS[quest.quest_id] = data
 
-    if require_supabase():
-        rows = (
+    if supabase is not None:
+        rows = response_rows(
             supabase.table("obijuan_quests")
             .upsert(data, on_conflict="quest_id")
             .execute()
-        ).data or []
+        )
         if rows:
             return rows[0]
 
@@ -190,14 +194,14 @@ async def save_quest(quest: Quest) -> Dict[str, Any]:
 async def get_quest(quest_id: str) -> Optional[Dict[str, Any]]:
     quest_id = slugify(quest_id)
 
-    if require_supabase():
-        rows = (
+    if supabase is not None:
+        rows = response_rows(
             supabase.table("obijuan_quests")
             .select("*")
             .eq("quest_id", quest_id)
             .limit(1)
             .execute()
-        ).data or []
+        )
         if rows:
             QUESTS[quest_id] = rows[0]
             return rows[0]
@@ -209,13 +213,13 @@ async def update_quest(quest_id: str, **fields: Any) -> Optional[Dict[str, Any]]
     quest_id = slugify(quest_id)
     fields["updated_at"] = now_iso()
 
-    if require_supabase():
-        rows = (
+    if supabase is not None:
+        rows = response_rows(
             supabase.table("obijuan_quests")
             .update(fields)
             .eq("quest_id", quest_id)
             .execute()
-        ).data or []
+        )
         if rows:
             QUESTS[quest_id] = rows[0]
             return rows[0]
@@ -238,8 +242,8 @@ async def add_note(quest_id: str, author: discord.User | discord.Member, note_ty
         "created_at": now_iso(),
     }
 
-    if require_supabase():
-        rows = supabase.table("obijuan_quest_notes").insert(note).execute().data or []
+    if supabase is not None:
+        rows = response_rows(supabase.table("obijuan_quest_notes").insert(note).execute())
         if rows:
             return rows[0]
 
@@ -256,8 +260,8 @@ async def add_update(quest_id: str, author: discord.User | discord.Member, body:
         "created_at": now_iso(),
     }
 
-    if require_supabase():
-        rows = supabase.table("obijuan_quest_updates").insert(update).execute().data or []
+    if supabase is not None:
+        rows = response_rows(supabase.table("obijuan_quest_updates").insert(update).execute())
         if rows:
             return rows[0]
 
@@ -268,14 +272,14 @@ async def add_update(quest_id: str, author: discord.User | discord.Member, body:
 async def get_notes_for_quest(quest_id: str) -> List[Dict[str, Any]]:
     quest_id = slugify(quest_id)
 
-    if require_supabase():
-        return (
+    if supabase is not None:
+        return response_rows(
             supabase.table("obijuan_quest_notes")
             .select("*")
             .eq("quest_id", quest_id)
             .order("created_at")
             .execute()
-        ).data or []
+        )
 
     return [note for note in QUEST_NOTES if note["quest_id"] == quest_id]
 
@@ -283,14 +287,14 @@ async def get_notes_for_quest(quest_id: str) -> List[Dict[str, Any]]:
 async def get_updates_for_quest(quest_id: str) -> List[Dict[str, Any]]:
     quest_id = slugify(quest_id)
 
-    if require_supabase():
-        return (
+    if supabase is not None:
+        return response_rows(
             supabase.table("obijuan_quest_updates")
             .select("*")
             .eq("quest_id", quest_id)
             .order("created_at")
             .execute()
-        ).data or []
+        )
 
     return [update for update in QUEST_UPDATES if update["quest_id"] == quest_id]
 
@@ -313,14 +317,14 @@ async def save_quest_assignment(
         "updated_at": now_iso(),
     }
 
-    if not require_supabase():
+    if supabase is None:
         return {"ok": False, "reason": "Supabase not configured"}
 
-    rows = (
+    rows = response_rows(
         supabase.table("obijuan_quest_assignments")
         .upsert(payload, on_conflict="quest_id,worker_id")
         .execute()
-    ).data or []
+    )
 
     return {"ok": True, "data": rows[0] if rows else payload}
 
@@ -331,23 +335,23 @@ async def update_quest_payout(
     paid_amount: float,
     notes: str = "",
 ) -> Dict[str, Any]:
-    if not require_supabase():
+    if supabase is None:
         return {"ok": False, "reason": "Supabase not configured"}
 
-    matches = (
+    matches = response_rows(
         supabase.table("obijuan_quest_assignments")
         .select("*")
         .eq("quest_id", slugify(quest_id))
         .ilike("worker_name", f"%{worker_name}%")
         .limit(5)
         .execute()
-    ).data or []
+    )
 
     if not matches:
         return {"ok": False, "reason": "No matching accepted quest assignment"}
 
     assignment = matches[0]
-    rows = (
+    rows = response_rows(
         supabase.table("obijuan_quest_assignments")
         .update({
             "paid_amount": float(paid_amount or 0),
@@ -358,7 +362,7 @@ async def update_quest_payout(
         })
         .eq("id", assignment["id"])
         .execute()
-    ).data or []
+    )
 
     return {"ok": True, "data": rows[0] if rows else assignment}
 
@@ -371,7 +375,7 @@ async def save_owner_time(
     notes: str,
     created_by: str,
 ) -> Dict[str, Any]:
-    if not require_supabase():
+    if supabase is None:
         return {"ok": False, "reason": "Supabase not configured"}
 
     payload = {
@@ -384,31 +388,31 @@ async def save_owner_time(
         "created_at": now_iso(),
     }
 
-    rows = supabase.table("obijuan_owner_time").insert(payload).execute().data or []
+    rows = response_rows(supabase.table("obijuan_owner_time").insert(payload).execute())
     return {"ok": True, "data": rows[0] if rows else payload}
 
 
 async def get_quest_labor_summary(quest_id: str) -> Dict[str, Any]:
     quest_id = slugify(quest_id)
 
-    if not require_supabase():
+    if supabase is None:
         return {"assignments": [], "owner_time": []}
 
-    assignments = (
+    assignments = response_rows(
         supabase.table("obijuan_quest_assignments")
         .select("*")
         .eq("quest_id", quest_id)
         .order("accepted_at")
         .execute()
-    ).data or []
+    )
 
-    owner_time = (
+    owner_time = response_rows(
         supabase.table("obijuan_owner_time")
         .select("*")
         .eq("quest_id", quest_id)
         .order("created_at")
         .execute()
-    ).data or []
+    )
 
     return {"assignments": assignments, "owner_time": owner_time}
 
@@ -475,8 +479,14 @@ async def crudobot_estimate_brain(quest: Dict[str, Any], notes: List[Dict[str, A
         "6. Good / better / best options if budget is uncertain"
     )
 
-async def save_timecard_clockin(channel_id, discord_user_id, person, customer, project):
-    if not require_supabase():
+async def save_timecard_clockin(
+    channel_id: int,
+    discord_user_id: int,
+    person: str,
+    customer: str,
+    project: str,
+) -> Dict[str, Any]:
+    if supabase is None:
         return {"ok": False, "reason": "Supabase not configured"}
 
     response = (
@@ -495,8 +505,8 @@ async def save_timecard_clockin(channel_id, discord_user_id, person, customer, p
     return {"ok": True, "data": response.data}
 
 
-async def fetch_open_timecard(discord_user_id):
-    if not require_supabase():
+async def fetch_open_timecard(discord_user_id: int) -> Optional[Row]:
+    if supabase is None:
         return None
 
     response = (
@@ -509,12 +519,12 @@ async def fetch_open_timecard(discord_user_id):
         .execute()
     )
 
-    rows = response.data or []
+    rows = response_rows(response)
     return rows[0] if rows else None
 
 
-async def close_timecard(timecard_id):
-    if not require_supabase():
+async def close_timecard(timecard_id: str) -> Dict[str, Any]:
+    if supabase is None:
         return {"ok": False, "reason": "Supabase not configured"}
 
     response = (
