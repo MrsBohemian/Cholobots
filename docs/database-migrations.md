@@ -32,7 +32,7 @@ Everything the change needs, not only DDL: tables, columns, indexes, constraints
 
 ## 4. Local loop
 
-1. `supabase start` (Docker; see README "Local development").
+1. `supabase start` (Docker; see README "Quickstart").
 2. `supabase migration new <name>`, write the SQL.
 3. `supabase db reset` to replay the baseline plus your migration.
 4. `supabase db diff --local` must print no changes.
