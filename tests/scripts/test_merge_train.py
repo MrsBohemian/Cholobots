@@ -2589,7 +2589,9 @@ class TestTaigaGateRunsBeforeCiAndRebase:
 
         assert result == EXIT_OK
         assert sm.state["prs"][0]["status"] == "skipped"
-        assert "no Taiga item reference" in sm.state["prs"][0]["error"]
+        error = sm.state["prs"][0]["error"]
+        assert error is not None
+        assert "no Taiga item reference" in error
         for forbidden in ("monitor-pr-stability.sh", "git checkout", "git push"):
             assert not any(forbidden in c for c in calls), forbidden
 
@@ -3064,7 +3066,9 @@ class TestRestoreChildrenBase:
         # GitHub base is still the target, and reprocessing it as if nothing
         # happened would let it arm and land the unlanded parent's commits.
         assert sm.state["prs"][0]["status"] == "failed"
-        assert "could not restore" in sm.state["prs"][0]["error"]
+        error = sm.state["prs"][0]["error"]
+        assert error is not None
+        assert "could not restore" in error
         assert sm.state["prs"][1]["status"] != "failed"
 
     def test_unqueued_child_restore_failure_warns_and_is_returned(self, tmp_path, monkeypatch):
@@ -3460,11 +3464,13 @@ class TestSweepDocstringsMatchBehaviour:
 
     def test_find_open_children_does_not_claim_the_sweep_records_stacked(self):
         doc = find_open_children.__doc__
+        assert doc is not None
         assert "records the child as stacked" not in doc
         assert "--squash when the queue reaches it" not in doc
 
     def test_restore_children_base_does_not_claim_deletion_closes_children(self):
         doc = restore_children_base.__doc__
+        assert doc is not None
         assert "cannot close it" not in doc
         assert "the closure this sweep exists to prevent" not in doc
 

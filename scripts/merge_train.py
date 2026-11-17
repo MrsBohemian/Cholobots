@@ -41,6 +41,7 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timezone
+from typing import NotRequired, TypedDict
 
 # Add shared lib to path for dependency_parser import
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
@@ -145,16 +146,49 @@ def parse_args(argv):
     return args
 
 
+class QueuedPR(TypedDict):
+    number: int
+    title: str
+    branch: str
+    body: str
+    status: str
+    error: str | None
+    base: str
+    stacked: bool
+    sweptChildren: NotRequired[list[int]]
+
+
+class Halt(TypedDict):
+    at: str
+    reason: str
+
+
+class MergeTrainState(TypedDict):
+    startedAt: str
+    target: str
+    prs: list[QueuedPR]
+    currentIndex: int
+    summary: dict[str, int]
+    mergedBranches: list[str]
+    halted: NotRequired[Halt]
+    _state_path: NotRequired[str]
+
+
 class StateManager:
     """Manages the merge-train state file with atomic writes."""
 
     def __init__(self, state_path):
         self.state_path = state_path
-        self._state = None
+        self._state: MergeTrainState | None = None
+
+    def _current(self) -> MergeTrainState:
+        if self._state is None:
+            raise RuntimeError("merge-train state not initialised: call init() or load() first")
+        return self._state
 
     @property
-    def state(self):
-        return self._state
+    def state(self) -> MergeTrainState:
+        return self._current()
 
     def init(self, prs, target="main"):
         """Initialize a new state file from a list of PR dicts.
@@ -190,12 +224,13 @@ class StateManager:
             self._state = json.load(f)
         # A state file may omit mergedBranches; default it. Per-PR keys need no
         # equivalent here: every reader of sweptChildren defaults it in place.
-        self._state.setdefault("mergedBranches", [])
-        return self._state
+        state = self._current()
+        state.setdefault("mergedBranches", [])
+        return state
 
     def index_of(self, number):
         """Queue index of the PR numbered ``number``, or None when not queued."""
-        for index, queued in enumerate(self._state["prs"]):
+        for index, queued in enumerate(self._current()["prs"]):
             if queued["number"] == number:
                 return index
         return None
@@ -203,13 +238,13 @@ class StateManager:
     def update_pr(self, index, status=None, error=None, base=None, stacked=None):
         """Update a PR's status, error, base and/or stacked flag, then persist."""
         if status is not None:
-            self._state["prs"][index]["status"] = status
+            self._current()["prs"][index]["status"] = status
         if error is not None:
-            self._state["prs"][index]["error"] = error
+            self._current()["prs"][index]["error"] = error
         if base is not None:
-            self._state["prs"][index]["base"] = base
+            self._current()["prs"][index]["base"] = base
         if stacked is not None:
-            self._state["prs"][index]["stacked"] = stacked
+            self._current()["prs"][index]["stacked"] = stacked
         self._save()
 
     def record_merged_branch(self, branch):
@@ -219,8 +254,8 @@ class StateManager:
         looks identical from the remote, and retargeting a child past it would
         land abandoned commits inside the child's diff.
         """
-        if branch and branch not in self._state.setdefault("mergedBranches", []):
-            self._state["mergedBranches"].append(branch)
+        if branch and branch not in self._current().setdefault("mergedBranches", []):
+            self._current()["mergedBranches"].append(branch)
             self._save()
 
     def add_swept_child(self, index, child):
@@ -234,7 +269,7 @@ class StateManager:
         persisted record a resumed run would believe it swept nothing and skip
         restoring the child if this PR then fails to land.
         """
-        swept = self._state["prs"][index].setdefault("sweptChildren", [])
+        swept = self._current()["prs"][index].setdefault("sweptChildren", [])
         if child not in swept:
             swept.append(child)
             self._save()
@@ -250,7 +285,7 @@ class StateManager:
         first and then crashing before the status save loses the only durable
         trace that those children still need attention.
         """
-        self._state["prs"][index]["sweptChildren"] = []
+        self._current()["prs"][index]["sweptChildren"] = []
         self._save()
 
     def halt(self, reason):
@@ -262,7 +297,7 @@ class StateManager:
         skips it and advances -- turning a deliberate stop into a silent pass
         over exactly the condition the stop exists to surface.
         """
-        self._state["halted"] = {
+        self._current()["halted"] = {
             "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "reason": reason,
         }
@@ -270,16 +305,17 @@ class StateManager:
 
     def advance(self):
         """Advance currentIndex and update summary counts, then persist."""
-        pr = self._state["prs"][self._state["currentIndex"]]
+        state = self._current()
+        pr = state["prs"][state["currentIndex"]]
         status = pr["status"]
-        if status in self._state["summary"]:
-            self._state["summary"][status] += 1
-        self._state["currentIndex"] += 1
+        if status in state["summary"]:
+            state["summary"][status] += 1
+        state["currentIndex"] += 1
         self._save()
 
     def _save(self):
         """Save state to disk atomically (write temp + rename)."""
-        write_json_private(self.state_path, self._state)
+        write_json_private(self.state_path, self._current())
 
 
 def extract_taiga_ref(branch, title, body):
