@@ -73,10 +73,9 @@ lint: ## Run ruff
 
 typecheck: ## Type-check with ty: fails on errors not in ty-baseline.json, and on baseline entries that are fixed
 	$(TY) check
-	@tmp=$$(mktemp -d) && \
+	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
 	$(TY) check --baseline "$$tmp/baseline.json" --update-baseline >/dev/null && \
-	if cmp -s "$$tmp/baseline.json" ty-baseline.json; then rm -rf "$$tmp"; \
-	else rm -rf "$$tmp"; echo "ty-baseline.json still lists errors that are fixed: run make typecheck-baseline and commit it" >&2; exit 1; fi
+	if ! cmp -s "$$tmp/baseline.json" ty-baseline.json; then echo "ty-baseline.json still lists errors that are fixed: run make typecheck-baseline and commit it" >&2; exit 1; fi
 
 typecheck-baseline: ## Rewrite ty-baseline.json for the whole project (only to drop fixed errors)
 	$(TY) check --update-baseline

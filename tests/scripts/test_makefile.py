@@ -161,6 +161,7 @@ def test_typecheck_fails_on_stale_baseline_entries():
     assert "--update-baseline" in out
     assert '--baseline "$tmp/baseline.json"' in out
     assert "cmp -s" in out
+    assert "trap 'rm -rf \"$tmp\"' EXIT" in out
     assert "make typecheck-baseline" in out
     # ty-baseline.json is only ever read here (cmp), never the target of --update-baseline.
     assert not re.search(r"--baseline\s+\S*ty-baseline\.json", out)

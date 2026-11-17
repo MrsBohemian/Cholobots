@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-DEV_TOOLS = ("pytest", "pytest-asyncio", "psycopg", "ruff", "pre-commit")
+DEV_TOOLS = ("pytest", "pytest-asyncio", "psycopg", "ruff", "pre-commit", "ty")
 
 
 def _pyproject():
