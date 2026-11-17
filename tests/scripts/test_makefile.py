@@ -70,12 +70,15 @@ def test_setup_syncs_the_lock_and_installs_pre_commit():
     assert "-m venv" not in out
 
 
-def test_lock_targets():
+def test_lock_relocks_and_exports_runtime_requirements():
     lock = dry_run("lock")
     assert "uv lock" in lock
     assert "uv export" in lock
     assert "--no-dev" in lock
     assert "-o requirements.txt" in lock
+
+
+def test_lock_check_fails_on_stale_lock_or_requirements():
     check = dry_run("lock-check")
     assert "uv lock --check" in check
     assert "diff -u requirements.txt -" in check

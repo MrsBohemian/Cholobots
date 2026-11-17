@@ -4,6 +4,8 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 DEV_TOOLS = ("pytest", "pytest-asyncio", "psycopg", "ruff", "pre-commit")
 
@@ -35,15 +37,20 @@ def test_pre_commit_ruff_rev_matches_locked_ruff():
     assert locked == [rev.removeprefix("v")]
 
 
-def test_dev_tools_are_not_runtime_dependencies():
+@pytest.mark.parametrize("tool", DEV_TOOLS)
+def test_dev_tool_is_not_a_runtime_dependency(tool):
     runtime = {_requirement_name(spec) for spec in _pyproject()["project"]["dependencies"]}
-    exported = set()
-    for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
-        if line.strip() and not line.startswith(("#", " ")):
-            exported.add(_requirement_name(line))
-    for tool in DEV_TOOLS:
-        assert tool not in runtime
-        assert tool not in exported
+    assert tool not in runtime
+
+
+@pytest.mark.parametrize("tool", DEV_TOOLS)
+def test_dev_tool_is_not_exported_to_requirements_txt(tool):
+    exported = {
+        _requirement_name(line)
+        for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith(("#", " "))
+    }
+    assert tool not in exported
 
 
 def test_project_is_not_packaged():

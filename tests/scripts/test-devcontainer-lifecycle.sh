@@ -364,12 +364,19 @@ fi
 exit 0
 FAKE
 chmod +x "$NOUV_BIN"/*
+# PATH is the fakes plus symlinks to the few system tools post-create.sh and the fakes call, never
+# /usr/bin or /bin: a distro-packaged /usr/bin/uv would otherwise skip the pip fallback under test.
+NOUV_SYS="$TMP/nouv-sys"
+mkdir -p "$NOUV_SYS"
+for tool in bash env basename dirname mkdir chmod cp id; do
+    ln -s "$(command -v "$tool")" "$NOUV_SYS/$tool"
+done
 WSN="$TMP/ws-nouv"
 make_workspace "$WSN"
 NOUV_HOME="$TMP/nouv-home"
 mkdir -p "$NOUV_HOME/.local/bin"
 : > "$CALLS"
-if (cd "$WSN" && HOME="$NOUV_HOME" PATH="$NOUV_BIN:/usr/bin:/bin" env -u GH_TOKEN -u GITHUB_TOKEN \
+if (cd "$WSN" && HOME="$NOUV_HOME" PATH="$NOUV_BIN:$NOUV_SYS" env -u GH_TOKEN -u GITHUB_TOKEN \
         .devcontainer/post-create.sh > "$TMP/nouv.out" 2> "$TMP/nouv.err"); then
     pass "post-create.sh exits 0 without uv on PATH"
 else
