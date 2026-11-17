@@ -2974,7 +2974,7 @@ class TestRunCmdIsBounded:
     def test_timeout_reported_as_failure(self, tmp_path, monkeypatch):
         orch, _ = _make_orchestrator(tmp_path, refs=(101,))
 
-        def hanging(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+        def hanging(cmd, cwd=None, capture_output=None, text=None, timeout: float = 0):
             raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
 
         monkeypatch.setattr("orchestrate_epic.subprocess.run", hanging)
@@ -3166,6 +3166,7 @@ class TestIsAgentProcess:
         proc = subprocess.Popen(
             ["bash", "-c", "echo ready; sleep 30; true", "/some/dir/exec-skill.sh", "/clone", "skill"],
             stdout=subprocess.PIPE, text=True)
+        assert proc.stdout is not None
         try:
             assert proc.stdout.readline() == "ready\n"
             assert is_agent_process(proc.pid) is True
@@ -3178,6 +3179,7 @@ class TestIsAgentProcess:
         from orchestrate_epic import is_agent_process
         proc = subprocess.Popen(["bash", "-c", "echo ready; exec sleep 30"],
                                 stdout=subprocess.PIPE, text=True)
+        assert proc.stdout is not None
         try:
             assert proc.stdout.readline() == "ready\n"
             assert is_agent_process(proc.pid) is False
