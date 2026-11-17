@@ -109,7 +109,7 @@ To browse the dashboards locally: `python -m http.server 8000 --directory mobile
 
 Dependencies are declared in `pyproject.toml` (runtime `dependencies`, dev tools in the `dev` group) and locked in `uv.lock`. `make setup` and CI install them with `uv sync --locked`, which fails when the lock is stale.
 
-To add or upgrade a package, edit its `==` pin in `pyproject.toml` (or `uv add <pkg>==<ver>`, `uv add --dev <pkg>==<ver>`), or for a transitive package run `uv lock --upgrade-package <pkg>`. Then run `make lock` and commit `pyproject.toml`, `uv.lock` and `requirements.txt` in one pull request. CI's `make lock-check` fails otherwise. Use the pinned uv version so the lock does not churn. ty is pinned in the dev group, so a ty upgrade goes in its own pull request that fixes every diagnostic the new version reports. When ruff changes, bump the `rev` in `.pre-commit-config.yaml` too; `tests/unit/test_dependency_contract.py` checks it.
+To add or upgrade a package, edit its `==` pin in `pyproject.toml` (or `uv add <pkg>==<ver>`, `uv add --dev <pkg>==<ver>`), or for a transitive package run `uv lock --upgrade-package <pkg>`. Then run `make lock` and commit `pyproject.toml`, `uv.lock` and `requirements.txt` in one pull request. CI's `make lock-check` fails otherwise. Use the pinned uv version so the lock does not churn. ty is pinned in the dev group, so a ty upgrade goes in its own pull request that fixes every diagnostic the new version reports. A pyrefly upgrade is also its own pull request; it does not have to clear the errors, but the PR notes the count change. When ruff changes, bump the `rev` in `.pre-commit-config.yaml` too; `tests/unit/test_dependency_contract.py` checks it.
 
 ## Production
 
@@ -127,6 +127,7 @@ Pick what to run from [docs/testing-workflow.md](docs/testing-workflow.md); whic
 |---|---|
 | `make check` | compile check, `ruff check .`, `make typecheck`, `make lock-check`, then `make test` |
 | `make typecheck` | `ty check` on the whole project; any diagnostic fails |
+| `make typecheck-pyrefly` | pyrefly (spike #216), informational: reports ty's blind spots, never part of `make check`, non-failing step in CI; configured in `pyproject.toml` `[tool.pyrefly]` |
 | `make test` | `pytest tests/unit tests/scripts` and every `tests/scripts/test-*.sh` |
 | `make test-integration` | `tests/integration` against the local stack (`make db-up` first); refuses any non-local Supabase URL |
 | `python -m pytest tests/unit -q` | fast contract and guard tests; no network, no Supabase |

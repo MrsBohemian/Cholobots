@@ -24,6 +24,7 @@ TARGETS = (
     "compile",
     "lint",
     "typecheck",
+    "typecheck-pyrefly",
     "test",
     "test-integration",
     "check",
@@ -141,6 +142,15 @@ def test_test_target_runs_every_shell_test_and_fails_on_the_first_failure():
     assert "for t in tests/scripts/test-*.sh;" in out
     assert 'bash "$t" || exit 1' in out
     assert out.index("-m pytest -q") < out.index("tests/scripts/test-*.sh")
+
+
+def test_typecheck_pyrefly_runs_the_locked_pyrefly_with_a_summary():
+    lines = [line for line in dry_run("typecheck-pyrefly").splitlines() if line.strip()]
+    assert lines == [".venv/bin/python -m pyrefly check --summary"]
+
+
+def test_check_does_not_run_pyrefly():
+    assert "pyrefly" not in dry_run("check")
 
 
 def test_check_runs_compile_lint_typecheck_then_test():

@@ -42,7 +42,7 @@ expect_no_match() {
 
 # Rules every CI workflow shares. $1 is the workflow and job name.
 check_common() {
-    local name="$1" file="$WORKFLOWS/$1.yml" body on_block pr_block
+    local name="$1" file="$WORKFLOWS/$1.yml" body strict_body on_block pr_block
     info "Testing $file"
     if [ ! -f "$file" ]; then
         fail "$name.yml exists"
@@ -68,7 +68,9 @@ check_common() {
     expect_match "$on_block" '^    branches: \[main\]$' "$name.yml: push is limited to main"
     expect_no_match "$on_block" 'pull_request_target' "$name.yml: no pull_request_target trigger"
 
-    expect_no_match "$body" '^[[:space:]]*continue-on-error:' "$name.yml: no continue-on-error (a failed step must fail the run)"
+    # The one informational step (pyrefly, spike #216) is the only place a failure may be ignored.
+    strict_body=$(awk '/^      - /{skip = ($0 == "      - name: Pyrefly (informational)")} !skip' <<< "$body")
+    expect_no_match "$strict_body" '^[[:space:]]*continue-on-error:' "$name.yml: no continue-on-error outside the informational pyrefly step"
     expect_no_match "$body" 'secrets\.' "$name.yml: uses no secrets"
     expect_match "$body" '^permissions:$' "$name.yml: sets top-level permissions"
     expect_match "$body" '^  contents: read$' "$name.yml: permissions are contents: read"
@@ -119,9 +121,21 @@ expect_match "$CHECKS" 'make typecheck$' "checks.yml: runs the type check"
 expect_match "$CHECKS" 'python -m pytest -q tests/unit$' "checks.yml: runs the unit tests"
 expect_match "$CHECKS" 'python -m pytest -q tests/scripts$' "checks.yml: runs the script pytest suite"
 expect_match "$CHECKS" 'for t in tests/scripts/test-\*\.sh; do' "checks.yml: runs every tests/scripts/test-*.sh"
-for step in Compile Lint 'Type check' 'Unit tests' 'Script tests'; do
+for step in Compile Lint 'Type check' 'Pyrefly \(informational\)' 'Unit tests' 'Script tests'; do
     expect_match "$CHECKS" "^      - name: $step\$" "checks.yml: has a '$step' step"
 done
+PYREFLY_STEP=$(awk '/^      - /{keep = ($0 == "      - name: Pyrefly (informational)")} keep' <<< "$CHECKS")
+expect_match "$PYREFLY_STEP" 'make typecheck-pyrefly$' "checks.yml: the informational step runs make typecheck-pyrefly"
+expect_match "$PYREFLY_STEP" '^        continue-on-error: true$' "checks.yml: the pyrefly step does not fail the run"
+expect_no_match "$PYREFLY_STEP" 'output-format' "checks.yml: pyrefly prints plain text, not GitHub annotations"
+TYPE_LINE=$(grep -n -- '- name: Type check$' <<< "$CHECKS" | cut -d: -f1)
+PYREFLY_LINE=$(grep -n -- '- name: Pyrefly (informational)$' <<< "$CHECKS" | cut -d: -f1 || true)
+UNIT_LINE=$(grep -n -- '- name: Unit tests$' <<< "$CHECKS" | cut -d: -f1)
+if [ -n "$PYREFLY_LINE" ] && [ "$TYPE_LINE" -lt "$PYREFLY_LINE" ] && [ "$PYREFLY_LINE" -lt "$UNIT_LINE" ]; then
+    pass "checks.yml: the pyrefly step sits between 'Type check' and 'Unit tests'"
+else
+    fail "checks.yml: the pyrefly step sits between 'Type check' and 'Unit tests'"
+fi
 
 check_common integration
 INTEGRATION=$(strip_comments "$WORKFLOWS/integration.yml" 2>/dev/null || true)
@@ -164,8 +178,12 @@ for name in ("checks", "integration"):
     assert job["name"] == name, job["name"]
     assert doc["permissions"] == {"contents": "read"}, doc["permissions"]
     assert job["runs-on"] == "ubuntu-latest", job["runs-on"]
+    assert "continue-on-error" not in job, job
     for step in job["steps"]:
-        assert "continue-on-error" not in step, step
+        if step.get("name") == "Pyrefly (informational)":
+            assert name == "checks" and step["continue-on-error"] is True, step
+        else:
+            assert "continue-on-error" not in step, step
 PY
     then
         pass "YAML parses with the expected triggers, names and permissions"
