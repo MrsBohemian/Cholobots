@@ -544,11 +544,11 @@ async def close_timecard(timecard_id: str) -> Dict[str, Any]:
 class ObiJuan(commands.Cog):
     """Quest guide / field operations coordinator."""
 
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         
     @commands.command(name="obijuan")
-    async def obijuan(self, ctx: commands.Context):
+    async def obijuan(self, ctx: commands.Context) -> None:
         """
         Show ObiJuan Ryobi command menu.
         """
@@ -578,7 +578,7 @@ class ObiJuan(commands.Cog):
         )
 
     @commands.command(name="oclockin")
-    async def oclockin(self, ctx: commands.Context, customer: str, *, project: str = ""):
+    async def oclockin(self, ctx: commands.Context, customer: str, *, project: str = "") -> None:
         existing = await fetch_open_timecard(ctx.author.id)
         if existing:
             await ctx.send("You already have an open timecard. Use `!oclockout` first.")
@@ -599,7 +599,7 @@ class ObiJuan(commands.Cog):
 
 
     @commands.command(name="oclockout")
-    async def oclockout(self, ctx: commands.Context):
+    async def oclockout(self, ctx: commands.Context) -> None:
         card = await fetch_open_timecard(ctx.author.id)
 
         if not card:
@@ -621,7 +621,7 @@ class ObiJuan(commands.Cog):
         customer_name: str,
         *,
         title: str,
-    ):
+    ) -> None:
         """
         Create a quest opportunity.
 
@@ -646,7 +646,7 @@ class ObiJuan(commands.Cog):
         )
 
     @commands.command(name="accept", aliases=["oaccept"])
-    async def accept(self, ctx: commands.Context, quest_id: str, accepted_price: float):
+    async def accept(self, ctx: commands.Context, quest_id: str, accepted_price: float) -> None:
         """
         Accept a quest at a fixed bid price.
 
@@ -669,12 +669,12 @@ class ObiJuan(commands.Cog):
             await ctx.send(f"Could not save quest price: {result.get('reason')}")
             return
 
-        quest = await update_quest(
+        quest = cast(Dict[str, Any], await update_quest(
             quest_id,
             status="accepted",
             accepted_by_user_id=ctx.author.id,
             accepted_by_name=ctx.author.display_name,
-        )
+        ))
 
         chisme = await unlock_chisme(quest["customer_name"])
         await ctx.send(
@@ -687,7 +687,7 @@ class ObiJuan(commands.Cog):
         )
 
     @commands.command(name="questinfo")
-    async def questinfo(self, ctx: commands.Context, quest_id: str):
+    async def questinfo(self, ctx: commands.Context, quest_id: str) -> None:
         """
         Show current quest status.
         """
@@ -709,7 +709,7 @@ class ObiJuan(commands.Cog):
         )
 
     @commands.command(name="setquest")
-    async def setquest(self, ctx: commands.Context, quest_id: str, field: str, *, value: str):
+    async def setquest(self, ctx: commands.Context, quest_id: str, field: str, *, value: str) -> None:
         """
         Update simple quest fields.
 
@@ -732,7 +732,7 @@ class ObiJuan(commands.Cog):
         await ctx.send(f"🧭 Updated `{field}` for `{slugify(quest_id)}`.")
 
     @commands.command(name="sitevisit")
-    async def sitevisit(self, ctx: commands.Context, quest_id: str):
+    async def sitevisit(self, ctx: commands.Context, quest_id: str) -> None:
         """
         Start the site visit interview prompt.
         This does not collect answers automatically yet; use !onote after each observation.
@@ -771,7 +771,7 @@ class ObiJuan(commands.Cog):
         )
 
     @commands.command(name="note")
-    async def note(self, ctx: commands.Context, quest_id: str, note_type: str, *, body: str):
+    async def note(self, ctx: commands.Context, quest_id: str, note_type: str, *, body: str) -> None:
         """
         Add a structured note to a quest.
 
@@ -789,7 +789,7 @@ class ObiJuan(commands.Cog):
         await ctx.send(f"📝 Note added to `{slugify(quest_id)}` as `{note_type}`.")
 
     @commands.command(name="update")
-    async def update(self, ctx: commands.Context, quest_id: str, *, body: str):
+    async def update(self, ctx: commands.Context, quest_id: str, *, body: str) -> None:
         """
         Add a progress update from the field or subcontractor.
 
@@ -805,7 +805,7 @@ class ObiJuan(commands.Cog):
         await ctx.send(f"📍 Progress update logged for `{slugify(quest_id)}`.")
 
     @commands.command(name="materials")
-    async def materials(self, ctx: commands.Context, quest_id: str, *, body: Optional[str] = None):
+    async def materials(self, ctx: commands.Context, quest_id: str, *, body: Optional[str] = None) -> None:
         """
         Add material notes and ask Guardabot for material memory placeholder.
 
@@ -824,7 +824,7 @@ class ObiJuan(commands.Cog):
         await ctx.send(f"🛡️ **Guardabot check for `{slugify(quest_id)}`**\n{material_memory}")
 
     @commands.command(name="oestimate")
-    async def oestimate(self, ctx: commands.Context, *, job_description: str):
+    async def oestimate(self, ctx: commands.Context, *, job_description: str) -> None:
         """
         Generate estimate prep from a plain job description.
         Example:
@@ -859,7 +859,7 @@ class ObiJuan(commands.Cog):
         amount: float,
         *,
         notes: str = "",
-    ):
+    ) -> None:
         """Record the final paid amount for an accepted quest."""
         quest = await get_quest(quest_id)
         if not quest:
@@ -891,7 +891,7 @@ class ObiJuan(commands.Cog):
         days: float,
         *,
         notes: str = "",
-    ):
+    ) -> None:
         """Save owner time as history only; Crudobot should not cost it yet."""
         quest = await get_quest(quest_id)
         if not quest:
@@ -917,7 +917,7 @@ class ObiJuan(commands.Cog):
         )
 
     @commands.command(name="labor", aliases=["olabor"])
-    async def labor(self, ctx: commands.Context, quest_id: str):
+    async def labor(self, ctx: commands.Context, quest_id: str) -> None:
         """Show labor records in a Crudobot-readable format."""
         quest = await get_quest(quest_id)
         if not quest:
@@ -958,7 +958,7 @@ class ObiJuan(commands.Cog):
         await ctx.send("\n".join(lines))
 
     @commands.command(name="questdone")
-    async def questdone(self, ctx: commands.Context, quest_id: str):
+    async def questdone(self, ctx: commands.Context, quest_id: str) -> None:
         """
         Mark quest work complete, pending invoice/payment.
         """
@@ -973,7 +973,7 @@ class ObiJuan(commands.Cog):
         )
 
     @commands.command(name="paid")
-    async def paid(self, ctx: commands.Context, quest_id: str):
+    async def paid(self, ctx: commands.Context, quest_id: str) -> None:
         """
         Mark quest paid/closed.
         """
@@ -985,5 +985,5 @@ class ObiJuan(commands.Cog):
         await ctx.send(f"💸 **Quest paid and closed:** `{slugify(quest_id)}`")
 
 
-async def setup_obijuan(bot: commands.Bot):
+async def setup_obijuan(bot: commands.Bot) -> None:
     await bot.add_cog(ObiJuan(bot))

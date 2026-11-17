@@ -1425,26 +1425,6 @@
         "lineCount": 1
       }
     ],
-    "bots/obijuan.py": [
-      {
-        "rule": "not-subscriptable",
-        "startColumn": 37,
-        "endColumn": 59,
-        "lineCount": 1
-      },
-      {
-        "rule": "not-subscriptable",
-        "startColumn": 27,
-        "endColumn": 44,
-        "lineCount": 1
-      },
-      {
-        "rule": "not-subscriptable",
-        "startColumn": 29,
-        "endColumn": 51,
-        "lineCount": 1
-      }
-    ],
     "bots/vueltabot.py": [
       {
         "rule": "invalid-argument-type",
