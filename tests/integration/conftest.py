@@ -266,6 +266,13 @@ async def crudo_bot(bot_modules):
 
 
 @pytest_asyncio.fixture
+async def guard_bot(bot_modules):
+    bot = fakes.make_bot()
+    bot_modules["guardabot"].register_guard(bot)
+    return bot
+
+
+@pytest_asyncio.fixture
 async def vuelta_bot(bot_modules):
     bot = fakes.make_bot()
     cog = bot_modules["vueltabot"].VueltaBot(bot)
