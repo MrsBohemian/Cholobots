@@ -1,13 +1,9 @@
 # ABOUTME: Pins the OpenAI request parse_receipt_with_openai sends, so typing refactors cannot change it.
-# ABOUTME: Fakes crudobot.client; no network, the local stack is only needed by the shared fixtures.
-# Integration placement: tests/unit has no harness for importing bot modules (crudobot calls
-# create_client at import), so this sits next to the other receipt tests.
+# ABOUTME: Fakes crudobot.client and imports crudobot through the unit `crudobot` fixture; no network, no Supabase.
 import json
 from types import SimpleNamespace
 
 import pytest
-
-pytestmark = pytest.mark.integration
 
 PARSED = {"vendor": "Fake Hardware Supply 207", "transaction_type": "purchase", "items": []}
 
@@ -28,8 +24,7 @@ class FakeOpenAI:
         return SimpleNamespace(output_text=self._output_text)
 
 
-def test_image_receipt_request_matches_the_contract(bot_modules, monkeypatch):
-    crudobot = bot_modules["crudobot"]
+def test_image_receipt_request_matches_the_contract(crudobot, monkeypatch):
     fake = FakeOpenAI(json.dumps(PARSED))
     monkeypatch.setattr(crudobot, "client", fake)
 
@@ -58,8 +53,7 @@ def test_image_receipt_request_matches_the_contract(bot_modules, monkeypatch):
     assert result["vendor"] == "Fake Hardware Supply 207"
 
 
-def test_pdf_receipt_uploads_then_references_the_file(bot_modules, monkeypatch):
-    crudobot = bot_modules["crudobot"]
+def test_pdf_receipt_uploads_then_references_the_file(crudobot, monkeypatch):
     fake = FakeOpenAI(json.dumps(PARSED))
     monkeypatch.setattr(crudobot, "client", fake)
 
@@ -74,8 +68,7 @@ def test_pdf_receipt_uploads_then_references_the_file(bot_modules, monkeypatch):
     assert content[0] == {"type": "input_file", "file_id": "file-test-1"}
 
 
-def test_empty_parser_output_raises(bot_modules, monkeypatch):
-    crudobot = bot_modules["crudobot"]
+def test_empty_parser_output_raises(crudobot, monkeypatch):
     monkeypatch.setattr(crudobot, "client", FakeOpenAI(""))
 
     with pytest.raises(ValueError, match="returned no data"):

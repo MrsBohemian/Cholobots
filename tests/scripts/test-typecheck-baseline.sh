@@ -41,9 +41,19 @@ info "Case 1: clean copy passes"
 if out="$(run_typecheck)"; then pass "clean copy exits 0"; else fail "clean copy exits 0"; echo "$out"; fi
 
 info "Case 2: baselined errors survive a line shift"
+# Shift a file that still has baseline entries: the ty stories empty the baseline one file at a
+# time, and shifting a clean file would pass without testing anything.
+BASELINED="$(python3 -c 'import json, sys; files = json.load(open(sys.argv[1]))["files"]; print(next((f for f, e in sorted(files.items()) if e and f.startswith("bots/")), next((f for f, e in sorted(files.items()) if e), "")))' "$TMP/ty-baseline.json")"
+if [ -z "$BASELINED" ]; then
+    info "baseline is empty; nothing to shift"
+else
+    cp "$TMP/$BASELINED" "$TMP/baselined.orig"
+    { printf '\n\n\n\n\n'; cat "$TMP/baselined.orig"; } > "$TMP/$BASELINED"
+    if out="$(run_typecheck)"; then pass "five blank lines at the top of $BASELINED still exit 0"; else fail "five blank lines at the top of $BASELINED still exit 0"; echo "$out"; fi
+    cp "$TMP/baselined.orig" "$TMP/$BASELINED"
+fi
+
 cp "$TMP/bots/crudobot.py" "$TMP/crudobot.orig"
-{ printf '\n\n\n\n\n'; cat "$TMP/crudobot.orig"; } > "$TMP/bots/crudobot.py"
-if out="$(run_typecheck)"; then pass "five blank lines at the top still exit 0"; else fail "five blank lines at the top still exit 0"; echo "$out"; fi
 
 info "Case 3: a new error fails and is named"
 { cat "$TMP/crudobot.orig"; printf '\n\ndef _probe() -> int:\n    return "x"\n'; } > "$TMP/bots/crudobot.py"
