@@ -46,9 +46,13 @@ def seed_code(seed):
 def production_discord_ids():
     tree = ast.parse((ROOT / "bots" / "metichebot.py").read_text())
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "DISCORD_USER_TO_PERSON" for t in node.targets
-        ):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if any(isinstance(t, ast.Name) and t.id == "DISCORD_USER_TO_PERSON" for t in targets):
             return [str(k.value) for k in node.value.keys]
     raise AssertionError("DISCORD_USER_TO_PERSON not found in bots/metichebot.py")
 

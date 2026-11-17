@@ -83,13 +83,13 @@ import traceback
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 from urllib import error, request
 from zoneinfo import ZoneInfo
 
 import discord
 from discord.ext import commands
-from supabase import create_client
+from supabase import Client, PostgrestAPIResponse, create_client
 
 from db.database import (
     now_iso,
@@ -109,7 +109,7 @@ DAY_NAMES = [
 
 VALID_PEOPLE = ["Heaven", "Daniel", "Jesse", "Samuel", "Handley Man"]
 
-PERSON_TO_CALENDAR_KEY = {
+PERSON_TO_CALENDAR_KEY: Dict[str, str] = {
     "Heaven": "heaven",
     "Daniel": "daniel",
     "Jesse": "jesse",
@@ -117,7 +117,7 @@ PERSON_TO_CALENDAR_KEY = {
     "Handley Man": "handley_man",
 }
 
-DISCORD_USER_TO_PERSON = {
+DISCORD_USER_TO_PERSON: Dict[int, str] = {
     823352347715174421: "Heaven",
     532299697843601419: "Daniel",
     1046820625840349244: "Jesse",
@@ -141,13 +141,13 @@ DEFAULT_CHILLHOP_URL = os.getenv(
     "https://www.youtube.com/results?search_query=chillhop+morning+radio",
 )
 
-metiche_instance = None
+metiche_instance: Optional["MeticheManager"] = None
 active_time_sessions: Dict[int, "TimeSession"] = {}
-channels_waiting_for_command = set()
+channels_waiting_for_command: set[int] = set()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+supabase: Optional[Client] = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 @dataclass
 class TimeSession:
@@ -410,12 +410,16 @@ def minutes_to_label(minutes: int) -> str:
 
 # ---------- Supabase daily task persistence ----------
 
-def require_supabase() -> bool:
-    return supabase is not None
+Row = Dict[str, Any]
+
+
+def response_rows(response: PostgrestAPIResponse) -> List[Row]:
+    """Rows of a table query. PostgREST types them as JSON, but table rows are always objects."""
+    return cast(List[Row], response.data or [])
 
 
 def load_daily_tasks(person: str, date_iso_value: str) -> List[Dict[str, Any]]:
-    if not require_supabase():
+    if supabase is None:
         return []
     calendar_key = PERSON_TO_CALENDAR_KEY.get(person, "heaven")
     response = (
@@ -428,13 +432,13 @@ def load_daily_tasks(person: str, date_iso_value: str) -> List[Dict[str, Any]]:
     )
     return [
         {"text": row.get("task", ""), "done": bool(row.get("completed", False))}
-        for row in (response.data or [])
+        for row in response_rows(response)
         if row.get("task")
     ]
 
 
-def replace_daily_tasks(person: str, date_iso_value: str, tasks: List[Dict[str, Any]]):
-    if not require_supabase():
+def replace_daily_tasks(person: str, date_iso_value: str, tasks: List[Dict[str, Any]]) -> None:
+    if supabase is None:
         return
     calendar_key = PERSON_TO_CALENDAR_KEY.get(person, "heaven")
     (
@@ -461,7 +465,7 @@ def save_default_ping_interval(
     user_id: str,
     interval_minutes: int
 ):
-    if not require_supabase():
+    if supabase is None:
         return {"ok": False}
 
     response = (
@@ -480,8 +484,8 @@ def save_default_ping_interval(
 
     return {"ok": True, "data": response.data}
 
-def fetch_default_ping_interval(user_id: str):
-    if not require_supabase():
+def fetch_default_ping_interval(user_id: str) -> Optional[Row]:
+    if supabase is None:
         return None
 
     response = (
@@ -492,15 +496,15 @@ def fetch_default_ping_interval(user_id: str):
         .execute()
     )
 
-    rows = response.data or []
+    rows = response_rows(response)
 
     if not rows:
         return None
 
     return rows[0]
     
-def save_wakeup(channel_id: int, person: str, wake_time: datetime, set_by: str):
-    if not require_supabase():
+def save_wakeup(channel_id: int, person: str, wake_time: datetime, set_by: str) -> Dict[str, Any]:
+    if supabase is None:
         return {"ok": False, "reason": "Supabase not configured"}
 
     response = (
@@ -518,8 +522,8 @@ def save_wakeup(channel_id: int, person: str, wake_time: datetime, set_by: str):
     return {"ok": True, "data": response.data}
 
 
-def fetch_due_wakeups(now: datetime):
-    if not require_supabase():
+def fetch_due_wakeups(now: datetime) -> List[Row]:
+    if supabase is None:
         return []
 
     response = (
@@ -530,11 +534,11 @@ def fetch_due_wakeups(now: datetime):
         .execute()
     )
 
-    return response.data or []
+    return response_rows(response)
 
 
-def mark_wakeup_sent(wakeup_id: str):
-    if not require_supabase():
+def mark_wakeup_sent(wakeup_id: str) -> None:
+    if supabase is None:
         return
 
     (
@@ -549,30 +553,30 @@ def mark_wakeup_sent(wakeup_id: str):
 
 # ---------- Crudobot project / job-costing bridge ----------
 
-def find_active_crudo_projects(focus: str, limit: int = 10):
+def find_active_crudo_projects(focus: str, limit: int = 10) -> List[Row]:
     """Match a human Metiche focus (for example 'Vasquez') to active Crudobot projects."""
     focus = (focus or "").strip()
-    if not focus or not require_supabase():
+    if not focus or supabase is None:
         return []
 
-    projects = (
+    projects = response_rows(
         supabase.table("crudo_projects")
         .select("*")
         .eq("status", "active")
         .limit(limit)
         .execute()
-    ).data or []
+    )
 
-    contact_ids = list({p.get("contact_id") for p in projects if p.get("contact_id")})
+    contact_ids = list({cid for p in projects if (cid := p.get("contact_id"))})
     contacts_by_id = {}
 
     if contact_ids:
-        contacts = (
+        contacts = response_rows(
             supabase.table("chisme_contacts")
             .select("id,name")
             .in_("id", contact_ids)
             .execute()
-        ).data or []
+        )
         contacts_by_id = {c.get("id"): c for c in contacts}
 
     incoming = normalize_task(focus)
@@ -618,8 +622,8 @@ def find_active_crudo_projects(focus: str, limit: int = 10):
     return matches
 
 
-def fetch_crudo_project_tasks(project_id: str, include_completed: bool = True):
-    if not project_id or not require_supabase():
+def fetch_crudo_project_tasks(project_id: Optional[str], include_completed: bool = True) -> List[Row]:
+    if not project_id or supabase is None:
         return []
 
     query = (
@@ -633,12 +637,12 @@ def fetch_crudo_project_tasks(project_id: str, include_completed: bool = True):
     if not include_completed:
         query = query.neq("status", "completed")
 
-    return query.execute().data or []
+    return response_rows(query.execute())
 
 
-def add_crudo_project_task(project_id: str, task_name: str):
+def add_crudo_project_task(project_id: str, task_name: str) -> Optional[Row]:
     """Append one persistent task to an existing Crudobot punch list."""
-    if not project_id or not require_supabase():
+    if not project_id or supabase is None:
         return None
 
     task_name = (task_name or "").strip()
@@ -659,13 +663,13 @@ def add_crudo_project_task(project_id: str, task_name: str):
         })
         .execute()
     )
-    rows = response.data or []
+    rows = response_rows(response)
     return rows[0] if rows else None
 
 
 def set_crudo_project_task_status(task_id: str, status: str):
     """Update the persistent Crudobot punch-list task from Metiche execution."""
-    if not task_id or not require_supabase():
+    if not task_id or supabase is None:
         return None
 
     now = now_iso()
@@ -682,7 +686,7 @@ def set_crudo_project_task_status(task_id: str, status: str):
     )
 
 
-def resolve_crudo_task_choice(project_id: str, target: str):
+def resolve_crudo_task_choice(project_id: str, target: str) -> Optional[Row]:
     """Resolve against stable full punch-list numbering; completed items cannot restart."""
     if not project_id:
         return None
@@ -730,7 +734,7 @@ def format_crudo_project_tasks(project_id: str, include_completed: bool = True) 
     return "\n".join(lines)
 
 
-def format_pending_crudo_tasks(project_id: str):
+def format_pending_crudo_tasks(project_id: str) -> str:
     tasks = fetch_crudo_project_tasks(project_id, include_completed=False)
     if not tasks:
         return ""
@@ -751,7 +755,7 @@ def insert_crudo_labor_entry(
     notes: Optional[str] = None,
 ):
     """Persist one Metiche time block as underlying Crudobot job-costing labor."""
-    if not project_id or not require_supabase():
+    if not project_id or supabase is None:
         return None
 
     row = {
@@ -766,7 +770,7 @@ def insert_crudo_labor_entry(
     }
 
     response = supabase.table("crudo_labor_entries").insert(row).execute()
-    return (response.data or [None])[0]
+    return (response_rows(response) or [None])[0]
 
 
 def format_crudo_task_picker(project, tasks):
@@ -876,18 +880,18 @@ async def resolve_crudo_focus(bot: commands.Bot, ctx: commands.Context, focus: s
 # ---------- Legacy Metiche project task persistence ----------
 
 
-def find_chisme_contacts(lookup, limit=5):
+def find_chisme_contacts(lookup, limit=5) -> List[Row]:
     lookup = (lookup or "").strip()
-    if not lookup or not require_supabase():
+    if not lookup or supabase is None:
         return []
 
-    return (
+    return response_rows(
         supabase.table("chisme_contacts")
         .select("*")
         .ilike("name", f"%{lookup}%")
         .limit(limit)
         .execute()
-    ).data or []
+    )
 
 
 def format_chisme_match_list(matches):
@@ -902,8 +906,8 @@ def format_chisme_match_list(matches):
     return "\n".join(lines)
 
 
-def fetch_project_tasks(contact_id, project_name=None):
-    if not require_supabase():
+def fetch_project_tasks(contact_id, project_name=None) -> List[Row]:
+    if supabase is None:
         return []
 
     query = (
@@ -915,16 +919,16 @@ def fetch_project_tasks(contact_id, project_name=None):
     if project_name:
         query = query.eq("project_name", project_name)
 
-    return (
+    return response_rows(
         query
         .order("sort_order")
         .order("created_at")
         .execute()
-    ).data or []
+    )
 
 
-def insert_project_tasks(contact_id, project_name, task_texts):
-    if not require_supabase():
+def insert_project_tasks(contact_id, project_name, task_texts) -> List[Row]:
+    if supabase is None:
         return []
 
     rows = []
@@ -946,7 +950,7 @@ def insert_project_tasks(contact_id, project_name, task_texts):
     if not rows:
         return []
 
-    return supabase.table("metiche_project_tasks").insert(rows).execute().data or []
+    return response_rows(supabase.table("metiche_project_tasks").insert(rows).execute())
 
 
 def calculate_project_progress(tasks):
@@ -961,16 +965,16 @@ def calculate_project_progress(tasks):
         "percent": percent,
         "actual_minutes": actual_minutes,
     }
-def fetch_customer_projects(contact_id):
-    if not require_supabase():
+def fetch_customer_projects(contact_id) -> List[str]:
+    if supabase is None:
         return []
 
-    rows = (
+    rows = response_rows(
         supabase.table("metiche_project_tasks")
         .select("project_name")
         .eq("contact_id", contact_id)
         .execute()
-    ).data or []
+    )
 
     projects = []
     seen = set()
@@ -1004,8 +1008,8 @@ def format_project_tasks(contact, project_name, tasks):
     
 # ---------- Routine persistence ----------
 
-def fetch_active_routine(person: str = "Daniel") -> Optional[Dict[str, Any]]:
-    if not require_supabase():
+def fetch_active_routine(person: str = "Daniel") -> Optional[Row]:
+    if supabase is None:
         return None
 
     response = (
@@ -1018,12 +1022,12 @@ def fetch_active_routine(person: str = "Daniel") -> Optional[Dict[str, Any]]:
         .execute()
     )
 
-    rows = response.data or []
+    rows = response_rows(response)
     return rows[0] if rows else None
 
 
-def save_routine(person: str, routine_name: str, routine_text: str):
-    if not require_supabase():
+def save_routine(person: str, routine_name: str, routine_text: str) -> Dict[str, Any]:
+    if supabase is None:
         return {"ok": False, "reason": "Supabase not configured"}
 
     user_id = person.lower()
@@ -1057,7 +1061,7 @@ def save_ping_schedule(
     prompt: str,
     source: str = "mtoday",
 ):
-    if not require_supabase():
+    if supabase is None:
         return {"ok": False, "reason": "Supabase not configured"}
 
     next_ping_at = local_now() + timedelta(minutes=interval_minutes)
@@ -1080,8 +1084,8 @@ def save_ping_schedule(
 
     return {"ok": True, "data": response.data}
 
-def fetch_due_pings(now: datetime):
-    if not require_supabase():
+def fetch_due_pings(now: datetime) -> List[Row]:
+    if supabase is None:
         return []
 
     response = (
@@ -1093,11 +1097,11 @@ def fetch_due_pings(now: datetime):
         .execute()
     )
 
-    return response.data or []
+    return response_rows(response)
 
 
-def advance_ping_schedule(ping_id: str, interval_minutes: int):
-    if not require_supabase():
+def advance_ping_schedule(ping_id: str, interval_minutes: int) -> None:
+    if supabase is None:
         return
 
     next_ping_at = local_now() + timedelta(minutes=interval_minutes)
@@ -1113,8 +1117,8 @@ def advance_ping_schedule(ping_id: str, interval_minutes: int):
     )
 
 
-def stop_ping_schedules(channel_id: int):
-    if not require_supabase():
+def stop_ping_schedules(channel_id: int) -> None:
+    if supabase is None:
         return
     (
         supabase.table("metiche_ping_schedules")
@@ -1127,8 +1131,8 @@ def stop_ping_schedules(channel_id: int):
         .execute()
     )
     
-def fetch_ping_schedule(channel_id: int, person: str):
-    if not require_supabase():
+def fetch_ping_schedule(channel_id: int, person: str) -> Optional[Row]:
+    if supabase is None:
         return None
 
     response = (
@@ -1140,7 +1144,7 @@ def fetch_ping_schedule(channel_id: int, person: str):
         .execute()
     )
 
-    rows = response.data or []
+    rows = response_rows(response)
     return rows[0] if rows else None
 
 
@@ -1149,12 +1153,15 @@ def sync_ping_focus(
     person: str,
     focus: Optional[str],
     pause: bool = False,
-):
+) -> None:
     """
     Keep an existing Que Onda schedule aligned with the current mtoday focus.
 
     Does NOT create a ping schedule if the user did not already have one.
     """
+    if supabase is None:
+        return
+
     ping = fetch_ping_schedule(channel_id, person)
 
     if not ping:
@@ -1202,7 +1209,7 @@ def save_mdice_entry(
     discord_user_id,
     channel_id,
 ):
-    if not require_supabase():
+    if supabase is None:
         return {"ok": False, "reason": "Supabase not configured"}
 
     response = (
@@ -1226,7 +1233,7 @@ def save_important_items(
     channel_id: str,
     items: List[str],
 ):
-    if not require_supabase():
+    if supabase is None:
         return {"ok": False, "reason": "Supabase not configured"}
 
     inserts = [
@@ -1254,7 +1261,7 @@ def fetch_important_items(
     channel_id: str,
     include_cancelled: bool = False,
 ) -> List[Dict[str, Any]]:
-    if not require_supabase():
+    if supabase is None:
         return []
 
     query = (
@@ -1270,11 +1277,11 @@ def fetch_important_items(
         query = query.neq("status", "cancelled")
 
     response = query.execute()
-    return response.data or []
+    return response_rows(response)
 
 
 def update_important_item_status(item_ids: List[Any], status: str) -> int:
-    if not require_supabase() or not item_ids:
+    if supabase is None or not item_ids:
         return 0
 
     updated = 0
