@@ -89,6 +89,7 @@ Complete Step 3 first (check out the PR branch), then run each check as a foregr
 
 1. `python -m py_compile cholobots.py config.py db/database.py bots/*.py` — always.
 2. `ruff check .` — only if ruff is configured (`ruff.toml` or `[tool.ruff]` in `pyproject.toml`); else note "no linter yet (#33)".
+   `make typecheck` (ty, #203) for a `Type check` failure.
 3. `python -m pytest -q` — only if `tests/` exists; else note "no test suite yet (#34)". `tests/integration` needs the local Supabase stack (story #47); if it is not running, that is an environment limitation, not a failure.
 
 If a venv is needed: `uv sync --locked` (then use `.venv/bin/python`).
@@ -106,6 +107,7 @@ env -u GH_TOKEN gh run view <run-id> --repo MrsBohemian/Cholobots --json jobs --
 The CI steps that can fail are:
 - `checks` / **Compile** — `py_compile` syntax errors
 - `checks` / **Lint** — ruff violations
+- `checks` / **Type check** — `make typecheck`: a new ty error, or a `ty-baseline.json` that still lists fixed errors
 - `checks` / **Unit tests** — `pytest tests/unit` failures
 - `checks` / **Script tests** — `pytest tests/scripts` or a `tests/scripts/test-*.sh` failure
 - `integration` / **Start local Supabase** — a migration or `seed.sql` that does not apply, or a CLI/Docker problem
@@ -178,6 +180,10 @@ Classify the failure using the categories in `.claude/skills/shared/test-failure
 
 The log lists rule codes per file. Undefined names (`F821`) and unused imports (`F401`) after a rebase are the common ones.
 
+### Type check failures
+
+The log names file, line and rule of each error not in `ty-baseline.json`. Fix the error in code; never add it to the baseline. If the message says the baseline still lists fixed errors, run `make typecheck-baseline` (whole project, no paths) and commit the shrunk file.
+
 ### Test failures
 
 Determine which suite failed (`tests/unit`, `tests/integration`, `tests/scripts`; layout in `docs/testing-strategy.md`).
@@ -217,6 +223,10 @@ Run each check as a foreground Bash call with the tool's `timeout: 600000` param
 ### For lint failures
 
 Run `ruff check --fix .` for auto-fixable rules and fix the rest by hand, then re-run `ruff check .`. Do not edit the ruff configuration to silence a rule.
+
+### For type check failures
+
+Fix the new error; `make typecheck` must pass. Do not grow `ty-baseline.json` or add `# ty: ignore`.
 
 ### For test failures
 

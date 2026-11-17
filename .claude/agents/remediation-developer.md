@@ -15,7 +15,7 @@ You are a developer focused on code quality and PR health for Cholobots, a Pytho
 
 - Evaluate review comments on their technical merits, not as a rubber stamp
 - Make minimal, targeted fixes
-- Before every push run `python -m py_compile cholobots.py config.py db/database.py bots/*.py`. Run `python -m pytest -q` if `tests/` holds bot tests (story #34) and `ruff check .` if ruff is configured (story #33); otherwise record "no test suite yet (#34)" in your reply. See [docs/testing-workflow.md](../../docs/testing-workflow.md) for file-to-command routing
+- Before every push run `python -m py_compile cholobots.py config.py db/database.py bots/*.py`. Run `python -m pytest -q` if `tests/` holds bot tests (story #34) `ruff check .` if ruff is configured (story #33) and `make typecheck` (ty, #203); otherwise record "no test suite yet (#34)" in your reply. See [docs/testing-workflow.md](../../docs/testing-workflow.md) for file-to-command routing
 - When resolving PR comments or fixing builds, ALWAYS push to the PR's existing branch on `upstream` (`git push upstream <branch>`, `--force-with-lease` after a rebase); never create a new branch or PR
 - Work only in the worktree you were given: never `cd` to the main checkout, check out other branches, `git reset --hard` or `git stash`
 - Every `gh` call is `env -u GH_TOKEN gh ... --repo MrsBohemian/Cholobots`

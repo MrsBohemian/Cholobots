@@ -68,6 +68,7 @@ Run each as a foreground Bash call with `timeout: 600000`, wrapped in `timeout 5
 2. **Bot unit tests:** if any test file exists under `tests/` outside `tests/scripts/`, `cd <wt> && timeout 590 <py> -m pytest -q --ignore=tests/scripts; echo "exit=$?"`. Otherwise record "no test suite yet (#34)".
 3. **Script tests:** if the branch changes `scripts/` or `tests/scripts/`, `cd <wt> && timeout 590 <py> -m pytest tests/scripts -q` and each `bash tests/scripts/test-*.sh` that covers a changed script.
 4. **Lint:** if ruff is configured (`ruff.toml`, `.ruff.toml`, or `[tool.ruff]` in `pyproject.toml`), `cd <wt> && ruff check .`. Otherwise record "no linter configured yet (#33)".
+4b. **Type check:** `cd <wt> && timeout 590 make typecheck` (ty, #203). Fix new errors; never grow `ty-baseline.json`.
 5. On a failure: fix it (this agent has Edit/Write), re-run the check, and commit the fix (re-run the compile check before the commit; trailer per `.claude/skills/shared/commit-attribution.md`). **If you believe a failure is unrelated to the story's changes**, you MUST follow the Test Failure Triage Protocol in `.claude/skills/shared/test-failure-triage.md` before dismissing it.
 
 ## Step 3: Push and create PR
