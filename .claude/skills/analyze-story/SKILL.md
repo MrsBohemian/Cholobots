@@ -181,7 +181,7 @@ Answer every item in the plan (Architecture section). Each one has burned this c
 3. **In-memory sessions.** Session dicts keyed by `author.id` (or channel) never expire and die on restart, and a user in two guilds shares one entry. Say where the new flow keeps state, how it ends (complete, `cancel`, timeout) and what happens after a redeploy. New `bot.wait_for` calls take a `timeout=` (story #24).
 4. **Blocking I/O.** Supabase `.execute()`, `urllib`, SQLite and OpenAI calls block the event loop. New slow calls go through `asyncio.to_thread` (or the `run_db()` helper once story #22 lands).
 5. **Identity and time.** `DISCORD_USER_TO_PERSON` (`bots/metichebot.py:120`) maps four hardcoded IDs; unknown users become `UNKNOWN:<id>` and read/overwrite Heaven's `daily_tasks`. Timezone is `America/Chicago`; each module has its own `now_iso()` (naive local vs UTC-aware). Say which identity the feature uses and which clock (story #27 for the shared clock).
-6. **Tables and columns.** Name every Supabase table and column read or written, each inferred from an existing query (cite it). New tables or columns need a migration: if story #32 (baseline migration) and #49 (migration workflow) have landed, plan a migration file; otherwise the plan says the schema change is applied by hand in Supabase and records the SQL in the task. No table has a tenant column; anything under epic #3 follows the #37 decision.
+6. **Tables and columns.** Name every Supabase table and column read or written, each inferred from an existing query (cite it). New tables or columns need a migration: plan a migration file under `supabase/migrations/` (`supabase migration new`), never a hand edit in the Supabase dashboard; while the push gate is closed the change reaches production only through the go-live checklist in `docs/database-migrations.md`. New tables enable RLS explicitly. No table has a tenant column; anything under epic #3 follows the #37 decision.
 7. **Help text.** A new or renamed command updates that persona's `!<persona>` help command (`!metichebot`, `!chismebot`, `!guardabot`, `!crudobot`, `!obijuan`, `!vueltabot`) and, if it is a headline feature, `!cholobots` in `cholobots.py`. Keep the Spanglish persona voice.
 8. **Command-name collisions.** Grep every `name=` and `aliases=` across `cholobots.py` and `bots/*.py` for the proposed name and aliases. Unprefixed names exist in several personas (`note`, `update`, `accept`, `lead`, `cancel`, `claim`, `report`, `close`...).
 9. **Errors.** There is no `on_command_error` (story #21). Say what the user sees when a Supabase call fails mid-flow.
@@ -256,7 +256,7 @@ Each task is independently committable (passes `python -m py_compile cholobots.p
 Common ordering:
 
 1. **Pure helper + unit tests** (parsing, formatting, arithmetic), possibly extracted to an importable module
-2. **Schema change** (migration file or recorded SQL, per hazard 6)
+2. **Schema change** (a migration file under `supabase/migrations/`, per hazard 6)
 3. **Data access** (the module's Supabase helper, offloaded per hazard 4)
 4. **Command / flow** (registration, prompts with timeouts, listener guards, attachment-gate entry)
 5. **Help text** (`!<persona>`, `!cholobots`)

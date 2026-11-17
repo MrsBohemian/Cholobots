@@ -41,7 +41,7 @@ db-up: ## Start the local Supabase stack in Docker
 db-down: ## Stop the local Supabase stack
 	$(SUPABASE) stop
 
-db-reset: ## Rebuild the local database from supabase/migrations (and seed.sql when present)
+db-reset: ## Rebuild the local database from supabase/migrations and supabase/seed.sql
 	$(SUPABASE) db reset
 
 db-env: ## Print the SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY lines to paste into .env
