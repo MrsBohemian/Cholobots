@@ -74,7 +74,14 @@ check_common() {
     expect_match "$body" '^  contents: read$' "$name.yml: permissions are contents: read"
     expect_match "$body" 'python-version-file: \.python-version$' "$name.yml: Python comes from .python-version"
     expect_no_match "$body" '^[[:space:]]*python-version:' "$name.yml: no hardcoded python-version"
-    expect_match "$body" 'pip install -r requirements\.txt -r requirements-dev\.txt$' "$name.yml: installs the pinned requirements"
+    expect_match "$body" 'uses: astral-sh/setup-uv@[0-9a-f]{40}$' "$name.yml: installs uv with astral-sh/setup-uv"
+    expect_match "$body" 'uv sync --locked$' "$name.yml: installs from uv.lock with uv sync --locked"
+    expect_match "$body" 'enable-cache: true$' "$name.yml: caches uv downloads"
+    expect_match "$body" 'scripts/devcontainer/pins\.sh' "$name.yml: reads the uv pin from pins.sh"
+    expect_match "$body" 'version: \$\{\{ steps\.pins\.outputs\.uv \}\}$' "$name.yml: setup-uv version comes from the pins.sh step"
+    expect_match "$body" 'UV_PYTHON_DOWNLOADS: never$' "$name.yml: uv uses setup-python's interpreter instead of downloading one"
+    expect_no_match "$body" 'pip install -r|cache: pip|cache-dependency-path:.*requirements' "$name.yml: no pip install or pip cache"
+    expect_no_match "$(grep -A4 'astral-sh/setup-uv@' <<< "$body" || true)" 'version: [0-9]' "$name.yml: no literal uv version (the pin lives in Dockerfile.prebuild)"
 
     # Every action is pinned to a full commit SHA (with the tag in a comment).
     local uses unpinned
@@ -103,6 +110,8 @@ check_common() {
 
 check_common checks
 CHECKS=$(strip_comments "$WORKFLOWS/checks.yml" 2>/dev/null || true)
+expect_match "$CHECKS" 'make lock-check$' "checks.yml: fails when uv.lock or requirements.txt is stale"
+expect_match "$CHECKS" '^      - name: Lockfile$' "checks.yml: has a 'Lockfile' step"
 expect_match "$CHECKS" 'make check-tools$' "checks.yml: checks the shell-test tools like make test"
 expect_match "$CHECKS" 'python -m py_compile cholobots\.py config\.py db/database\.py bots/\*\.py$' "checks.yml: compiles every bot module"
 expect_match "$CHECKS" 'ruff check' "checks.yml: runs ruff"
