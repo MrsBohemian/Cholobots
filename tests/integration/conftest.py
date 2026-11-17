@@ -238,6 +238,15 @@ class Factories:
                  "task": t, "completed": completed} for t in tasks]
         return self.db.table("daily_tasks").insert(rows).execute().data
 
+    def inventory_item(self, name, quantity, location, unit="each", category="", notes=""):
+        return self._insert("inventory_items", {
+            "item_name": name, "quantity": quantity, "location": location,
+            "unit": unit, "category": category, "notes": notes,
+        })
+
+    def garage_zone(self, cell, zone_name):
+        return self._insert("garage_zones", {"cell": cell, "zone_name": zone_name})
+
     def vuelta_item(self, title, status="available", seller_discord_id="100000000000000009",
                     asking_price=None):
         return self._insert("vuelta_items", {
