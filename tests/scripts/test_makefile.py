@@ -142,7 +142,7 @@ def test_test_target_runs_every_shell_test_and_fails_on_the_first_failure():
     assert out.index("-m pytest -q") < out.index("tests/scripts/test-*.sh")
 
 
-def test_check_runs_compile_lint_and_test():
+def test_check_runs_compile_lint_typecheck_then_test():
     out = dry_run("check")
     compile_at = out.index("-m py_compile cholobots.py config.py db/database.py bots/*.py")
     lint_at = out.index("-m ruff check .")
