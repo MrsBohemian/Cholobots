@@ -1664,11 +1664,14 @@ def apply_list_edit(tasks: List[Dict[str, Any]], instruction: str) -> Tuple[List
 # ---------- manager ----------
 
 class MeticheManager:
+    # Set by cholobots.on_ready; absent until the scheduler starts (on_ready checks with getattr).
+    loop_task: "asyncio.Task[None]"
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.data_service_url = os.getenv("DATA_SERVICE_URL", "").rstrip("/")
 
-    async def start_loop(self):
+    async def start_loop(self) -> None:
         print("[METICHE LOOP] started", flush=True)
     
         while True:
@@ -1706,7 +1709,7 @@ class MeticheManager:
                             wakeup.get("person", "Daniel")
                         )
     
-                        await channel.send(
+                        await cast(discord.abc.Messageable, channel).send(
                             build_wakeup_message(execution, routine)
                         )
     
@@ -1776,7 +1779,7 @@ class MeticheManager:
                             session.awaiting_checkin_response = True
                             session.last_checkin_focus = session.active_task
     
-                        await channel.send(prompt)
+                        await cast(discord.abc.Messageable, channel).send(prompt)
     
                         advance_ping_schedule(
                             ping["id"],
@@ -1835,7 +1838,7 @@ class MeticheManager:
 
 # ---------- persistence wrappers ----------
 
-def get_metiche():
+def get_metiche() -> Optional["MeticheManager"]:
     return metiche_instance
 
 
@@ -3872,7 +3875,7 @@ def register_metiche(bot: commands.Bot):
         if not session:
             await ctx.send("No active `!mtoday` session is running. Start one with `!mtoday`, or use `!mshow` to see today's list.")
             return
-        target = target.strip() or session.active_task
+        target = target.strip() or session.active_task or ""
         if not target:
             await ctx.send("Done with what? Try `!mdone 2` or `!mdone clean kitchen`.")
             return
