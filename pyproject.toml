@@ -18,8 +18,26 @@ dev = [
     "psycopg[binary]==3.3.6",
     "ruff==0.17.4",
     "pre-commit==4.7.0",
+    "ty==0.0.105",
 ]
 
 [tool.uv]
 # An application: uv installs the dependencies into .venv but never builds or installs cholobots itself.
 package = false
+
+[tool.ty]
+# Preview at the pinned ty version. Regenerate with `make typecheck-baseline` (whole project only:
+# `--update-baseline <paths>` drops every other file's entries).
+# discord.py, supabase, openai, python-dotenv, pytest, pytest-asyncio and psycopg ship inline types,
+# so no allowed-unresolved-imports or replace-imports-with-any is needed.
+baseline = "ty-baseline.json"
+
+[tool.ty.environment]
+# python-version is stated here (matches requires-python and .python-version) rather than derived.
+python-version = "3.14"
+python-platform = "linux"
+# tests/scripts put these on sys.path before importing the module under test.
+extra-paths = ["scripts", "scripts/lib", "scripts/devcontainer"]
+
+[tool.ty.terminal]
+error-on-warning = true

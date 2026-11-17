@@ -23,6 +23,8 @@ TARGETS = (
     "run",
     "compile",
     "lint",
+    "typecheck",
+    "typecheck-baseline",
     "test",
     "test-integration",
     "check",
@@ -140,12 +142,33 @@ def test_test_target_runs_every_shell_test_and_fails_on_the_first_failure():
     assert out.index("-m pytest -q") < out.index("tests/scripts/test-*.sh")
 
 
-def test_check_runs_compile_lint_and_test():
+def test_check_runs_compile_lint_typecheck_then_test():
     out = dry_run("check")
     compile_at = out.index("-m py_compile cholobots.py config.py db/database.py bots/*.py")
     lint_at = out.index("-m ruff check .")
+    typecheck_at = out.index("-m ty check")
     test_at = out.index("-m pytest -q tests/unit tests/scripts")
-    assert compile_at < lint_at < test_at
+    assert compile_at < lint_at < typecheck_at < test_at
+
+
+def test_typecheck_runs_ty_with_the_configured_baseline():
+    lines = [line for line in dry_run("typecheck").splitlines() if line.endswith("ty check")]
+    assert lines, "no recipe line ends in `ty check` (a path argument would defeat the baseline)"
+
+
+def test_typecheck_fails_on_stale_baseline_entries():
+    out = dry_run("typecheck")
+    assert "--update-baseline" in out
+    assert '--baseline "$tmp/baseline.json"' in out
+    assert "cmp -s" in out
+    assert "trap 'rm -rf \"$tmp\"' EXIT" in out
+    assert "make typecheck-baseline" in out
+    # ty-baseline.json is only ever read here (cmp), never the target of --update-baseline.
+    assert not re.search(r"--baseline\s+\S*ty-baseline\.json", out)
+
+
+def test_typecheck_baseline_rewrites_whole_project():
+    assert dry_run("typecheck-baseline").strip().endswith("ty check --update-baseline")
 
 
 def test_integration_target_reports_missing_harness(tmp_path):

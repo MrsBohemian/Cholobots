@@ -115,10 +115,11 @@ expect_match "$CHECKS" '^      - name: Lockfile$' "checks.yml: has a 'Lockfile' 
 expect_match "$CHECKS" 'make check-tools$' "checks.yml: checks the shell-test tools like make test"
 expect_match "$CHECKS" 'python -m py_compile cholobots\.py config\.py db/database\.py bots/\*\.py$' "checks.yml: compiles every bot module"
 expect_match "$CHECKS" 'ruff check' "checks.yml: runs ruff"
+expect_match "$CHECKS" 'make typecheck$' "checks.yml: runs the type check"
 expect_match "$CHECKS" 'python -m pytest -q tests/unit$' "checks.yml: runs the unit tests"
 expect_match "$CHECKS" 'python -m pytest -q tests/scripts$' "checks.yml: runs the script pytest suite"
 expect_match "$CHECKS" 'for t in tests/scripts/test-\*\.sh; do' "checks.yml: runs every tests/scripts/test-*.sh"
-for step in Compile Lint 'Unit tests' 'Script tests'; do
+for step in Compile Lint 'Type check' 'Unit tests' 'Script tests'; do
     expect_match "$CHECKS" "^      - name: $step\$" "checks.yml: has a '$step' step"
 done
 

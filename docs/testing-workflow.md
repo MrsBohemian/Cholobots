@@ -7,8 +7,8 @@ When each test level runs and the exact commands. Placement rules are in
 ## Guiding principle
 
 Run the narrowest check that covers your change, every time, before you push. The floor is the
-compile check and `ruff check .`; the bot has no full unit suite yet (#34). CI then runs the
-whole scope on the PR: workflow `checks` (compile, lint, unit and script tests, the same scope as
+compile check, `ruff check .` and `make typecheck`; the bot has no full unit suite yet (#34). CI then runs the
+whole scope on the PR: workflow `checks` (compile, lint, type check, unit and script tests, the same scope as
 `make check`) and workflow `integration` (`make test-integration` on a fresh local Supabase stack).
 
 ## Commands
@@ -20,14 +20,17 @@ whole scope on the PR: workflow `checks` (compile, lint, unit and script tests, 
 | Integration | `python -m pytest tests/integration -q -m integration` | `make test-integration` (the raw pytest command needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` exported) | When a change touches a command, listener or query; needs `make db-up`; local stack only |
 | Script tests | `python -m pytest tests/scripts -q` and `bash tests/scripts/test-<name>.sh` | (in `make test`, which stops at the first failing `.sh`) | Exist today |
 | Lint | `ruff check .` (also the pre-commit hook) | `make lint` | Always. Config and exceptions in `ruff.toml` |
+| Type check | `uv run --frozen ty check` (also the pre-commit hook) | `make typecheck` | Always. Fails on errors not in `ty-baseline.json` and on baseline entries that are fixed. Config in `pyproject.toml` `[tool.ty]` |
 | Unit + script tests | `python -m pytest -q tests/unit tests/scripts`, then `for t in tests/scripts/test-*.sh; do bash "$t" || exit 1; done` | `make test` | Same scope as CI's `Unit tests` and `Script tests` steps |
-| Compile, lint, test | | `make check` | Before every push |
+| Compile, lint, type check, test | | `make check` | Before every push |
 | Whole suite | `python -m pytest -q` | | Once #34 lands |
 
 **Which database.** Integration tests run against the local stack of the checkout you are in: the default stack (API 54321) in the main checkout and the devcontainer, or the worktree's own stack (API `54321+10n`, DB `54322+10n`) in a worktree. `make db-up` starts it and `make test-integration` uses it. Without make: `eval "$(scripts/supabase-local.sh env | sed 's/^/export /')"` then `CHOLOBOTS_INTEGRATION_REQUIRED=1 python -m pytest tests/integration -q -m integration`. When `SUPABASE_URL` is not on port 54321 the harness also needs `SUPABASE_DB_URL` (`env` prints it). Never point a worktree at another checkout's stack or at the hosted project. Details: "Local Supabase stacks" in `.claude/skills/shared/taiga-project.md`.
 
 Set up the environment once with `make setup`. The `make` targets call `.venv/bin/python` directly, so no activation is needed.
 Never run `python cholobots.py` or `make run` from an automated run.
+
+**Type-check baseline.** Never grow `ty-baseline.json` to make a check pass; fix the new error. Regenerate it only with `make typecheck-baseline`, which rewrites the whole project (`--update-baseline` with paths drops every other file's entries), and the diff should only remove entries. The baseline format is a ty preview feature, so a ty upgrade is its own PR.
 
 ## What to run after a change
 
@@ -43,18 +46,19 @@ Never run `python cholobots.py` or `make run` from an automated run.
 | `.devcontainer/**`, `scripts/devcontainer/**` | `python -m pytest tests/scripts -q -k devcontainer` and `bash tests/scripts/test-devcontainer-lifecycle.sh`; a `devcontainer up` smoke when the Dockerfile or lifecycle scripts change |
 | `.devcontainer/**`, `tools/pytaiga-mcp/**`, `.github/workflows/build-devcontainer.yml` | `python -m pytest tests/scripts -q` plus `bash tests/scripts/test-pytaiga-mcp-install.sh`, `test-devcontainer-pins.sh`, `test-build-devcontainer-cache.sh`, `test-build-devcontainer-workflow.sh` and `test-launch-prebuild-image.sh` |
 | `scripts/devcontainer/orchestrate_*.py` | `python -m pytest tests/scripts -q` (includes the end-to-end test with fake `launch.sh`, `exec-skill.sh` and `teardown.sh`; no Docker needed) |
+| `pyproject.toml` `[tool.ty]`, or a ty version bump | `make typecheck-baseline` (whole project, never with paths), review the `ty-baseline.json` diff (a bump is its own PR), then `make typecheck` |
 | `.claude/**`, `docs/**` | Nothing to run |
-| `pyproject.toml`, `uv.lock`, `requirements.txt`, `.python-version` | `make lock-check`, fresh `make setup`, compile, `ruff check .`, script tests, whole suite |
+| `pyproject.toml`, `uv.lock`, `requirements.txt`, `.python-version` | `make lock-check`, fresh `make setup`, compile, `ruff check .`, `make typecheck`, script tests, whole suite |
 
 ## When each level runs
 
 | Moment | What runs |
 |---|---|
 | During implementation (`implement-task`, `fix-single-bug`, `fix-story-bug`) | The affected rows above, after each change |
-| Pre-push (`finalize-story-pr`, any skill that pushes) | Compile and lint always; unit when it exists; script tests if `scripts/` changed |
-| In the PR | Codex review (`.claude/skills/shared/codex-review.md`) and GitHub Actions: `checks` (steps `Compile`, `Lint`, `Unit tests`, `Script tests`) and `integration` (steps `Start local Supabase`, `Integration tests`), reported by `gh pr checks`. A PR whose branch predates the workflows has no runs: the monitor counts that as passed after its two-minute run-registration grace when its base requires no checks; otherwise missing required runs stay `PENDING` until the branch is rebased onto a base that has the workflows |
+| Pre-push (`finalize-story-pr`, any skill that pushes) | Compile, lint and `make typecheck` always; unit when it exists; script tests if `scripts/` changed |
+| In the PR | Codex review (`.claude/skills/shared/codex-review.md`) and GitHub Actions: `checks` (steps `Compile`, `Lint`, `Type check`, `Unit tests`, `Script tests`) and `integration` (steps `Start local Supabase`, `Integration tests`), reported by `gh pr checks`. A PR whose branch predates the workflows has no runs: the monitor counts that as passed after its two-minute run-registration grace when its base requires no checks; otherwise missing required runs stay `PENDING` until the branch is rebased onto a base that has the workflows |
 | Failing check on a PR (`fix-build-failure`) | Reproduce the one failing check locally, fix, re-run it |
-| Rebase (`rebase-branch`) | Compile, plus the tests for files with conflicts |
+| Rebase (`rebase-branch`) | Compile and `make typecheck`, plus the tests for files with conflicts |
 | Post-merge | Manual scripts (`docs/manual-tests/`, #36) for the commands the PR touched, in the test Discord server (#31), by the manual-testing agent or a person. The push to `main` reruns `checks` and `integration` |
 
 ## Reading results
