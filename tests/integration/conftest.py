@@ -206,8 +206,11 @@ class Factories:
     def _insert(self, table, row):
         return self.db.table(table).insert(row).execute().data[0]
 
-    def chisme_contact(self, name):
-        return self._insert("chisme_contacts", {"name": name})
+    def chisme_contact(self, name, **fields):
+        return self._insert("chisme_contacts", {"name": name, **fields})
+
+    def chisme_lead(self, **fields):
+        return self._insert("chisme_leads", fields)
 
     def crudo_project(self, name, status="active", closeout_status=None, contact_id=None,
                       tasks_completed=0, tasks_pending=0, actual_minutes=None):
