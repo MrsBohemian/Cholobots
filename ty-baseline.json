@@ -2397,14 +2397,6 @@
         "lineCount": 1
       }
     ],
-    "db/database.py": [
-      {
-        "rule": "invalid-explicit-return",
-        "startColumn": 11,
-        "endColumn": 18,
-        "lineCount": 1
-      }
-    ],
     "scripts/check_schema_coverage.py": [
       {
         "rule": "unsupported-operator",

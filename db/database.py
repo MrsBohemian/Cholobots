@@ -1,13 +1,13 @@
 import json
 import sqlite3
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, cast
 import os
-from supabase import create_client
+from supabase import Client, create_client
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+supabase: Optional[Client] = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 from config import GUARDABOT_DB
 
@@ -19,7 +19,7 @@ def now_iso() -> str:
 def db_connect() -> sqlite3.Connection:
     return sqlite3.connect(GUARDABOT_DB)
 
-def init_guardabot_db():
+def init_guardabot_db() -> None:
     with db_connect() as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -48,7 +48,7 @@ def init_guardabot_db():
         conn.commit()
 
 
-def ensure_guardabot_schema():
+def ensure_guardabot_schema() -> None:
     with db_connect() as conn:
         cur = conn.cursor()
         cur.execute("PRAGMA table_info(guard_events)")
@@ -59,7 +59,7 @@ def ensure_guardabot_schema():
         conn.commit()
 
 
-def init_metiche_db():
+def init_metiche_db() -> None:
     with db_connect() as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -112,7 +112,7 @@ def init_metiche_db():
         conn.commit()
 
 
-def init_crudobot_db():
+def init_crudobot_db() -> None:
     with db_connect() as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -142,7 +142,7 @@ def init_crudobot_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_crudo_job_ts ON crudo_reports(job, ts)")
         conn.commit()
         
-def insert_metiche_log(row: Dict[str, Any]):
+def insert_metiche_log(row: Dict[str, Any]) -> None:
     with db_connect() as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -154,7 +154,7 @@ def insert_metiche_log(row: Dict[str, Any]):
         ))
         conn.commit()
 
-def insert_guard_event(ev: Dict[str, Any]):
+def insert_guard_event(ev: Dict[str, Any]) -> None:
     with db_connect() as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -208,7 +208,7 @@ def build_guard_last_known_index() -> Dict[str, Tuple]:
         """)
         rows = cur.fetchall()
 
-    seen = {}
+    seen: Dict[str, Tuple] = {}
     for item, ts, eco, loc_to, qty, unit, action in rows:
         key = item.lower()
         if key not in seen:
@@ -216,7 +216,7 @@ def build_guard_last_known_index() -> Dict[str, Tuple]:
     return seen
 
 
-def insert_metiche_weekly(row: Dict[str, Any]):
+def insert_metiche_weekly(row: Dict[str, Any]) -> None:
     if supabase is None:
         raise RuntimeError("Supabase is not configured")
 
@@ -239,7 +239,7 @@ def insert_metiche_weekly(row: Dict[str, Any]):
     supabase.table("metiche_weekly").insert(payload).execute()
 
 
-def insert_metiche_checkin(row: Dict[str, Any]):
+def insert_metiche_checkin(row: Dict[str, Any]) -> None:
     with db_connect() as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -272,9 +272,9 @@ def fetch_latest_metiche_weekly(week_of: str) -> Optional[Dict[str, Any]]:
     if not rows:
         return None
 
-    return rows[0]
+    return cast(Dict[str, Any], rows[0])
 
-def insert_crudo_report(data):
+def insert_crudo_report(data: Dict[str, Any]) -> None:
     with db_connect() as conn:
         cur = conn.cursor()
 
@@ -317,7 +317,7 @@ def insert_crudo_report(data):
 
         conn.commit()
 
-def fetch_latest_crudo_report(job: str):
+def fetch_latest_crudo_report(job: str) -> Optional[Dict[str, Any]]:
     with db_connect() as conn:
         cur = conn.cursor()
 
