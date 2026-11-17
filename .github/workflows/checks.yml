@@ -1,5 +1,5 @@
 # ABOUTME: CI gate run on every pull request (any base, so stacked PRs too) and on pushes to main.
-# ABOUTME: Mirrors `make check`: the uv.lock and requirements.txt check, py_compile, ruff, unit tests, script pytest tests and every tests/scripts/test-*.sh.
+# ABOUTME: Mirrors `make check`: the uv.lock and requirements.txt check, py_compile, ruff, ty, unit tests, script pytest tests and every tests/scripts/test-*.sh.
 #
 # The workflow and its job are both named "checks": branch protection requires the
 # job name as a context, and scripts/monitor-pr-stability.sh matches those contexts
@@ -64,6 +64,11 @@ jobs:
         run: python -m py_compile cholobots.py config.py db/database.py bots/*.py
       - name: Lint
         run: python -m ruff check --output-format=github .
+      - name: Type check
+        run: make typecheck
+        env:
+          # ty reads this: new errors show as PR annotations.
+          TY_OUTPUT_FORMAT: github
       - name: Unit tests
         run: python -m pytest -q tests/unit
       - name: Script tests
