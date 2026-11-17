@@ -1,21 +1,29 @@
 import os
 import re
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Set, cast
 
 import discord
 from discord.ext import commands
-from supabase import create_client, Client
+from supabase import Client, PostgrestAPIResponse, create_client
 
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = (
     os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    or os.getenv("SUPABASE_KEY")
+    or os.getenv("SUPABASE_KEY", "")
 )
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 TRANSPORTATION_CHANNEL_ID = int(os.getenv("TRANSPORTATION_CHANNEL_ID", "0"))
+
+Row = Dict[str, Any]
+
+
+def response_rows(response: PostgrestAPIResponse) -> List[Row]:
+    """Rows of a table query. PostgREST types them as JSON, but table rows are always objects."""
+    return cast(List[Row], response.data or [])
 
 
 # =========================================================
@@ -30,7 +38,7 @@ STOP_WORDS = {
 }
 
 
-def normalize_words(text):
+def normalize_words(text: Optional[str]) -> Set[str]:
     if not text:
         return set()
 
@@ -43,7 +51,7 @@ def normalize_words(text):
     }
 
 
-def get_item_words(item):
+def get_item_words(item: Row) -> Set[str]:
     combined = " ".join([
         item.get("item_name") or "",
         item.get("description") or "",
@@ -55,7 +63,7 @@ def get_item_words(item):
     return normalize_words(combined)
 
 
-def get_interest_words(interest):
+def get_interest_words(interest: Row) -> Set[str]:
     combined = " ".join([
         interest.get("description") or "",
         interest.get("category") or "",
@@ -66,7 +74,7 @@ def get_interest_words(interest):
     return normalize_words(combined)
 
 
-def is_match(item, interest):
+def is_match(item: Row, interest: Row) -> bool:
     item_words = get_item_words(item)
     interest_words = get_interest_words(interest)
 
@@ -76,7 +84,7 @@ def is_match(item, interest):
     return bool(item_words.intersection(interest_words))
 
 
-def extract_price(description):
+def extract_price(description: Optional[str]) -> Optional[float]:
     if not description:
         return None
 
@@ -94,7 +102,7 @@ def extract_price(description):
         return None
 
 
-def clean_item_name(description):
+def clean_item_name(description: Optional[str]) -> Optional[str]:
     if not description:
         return description
 
@@ -107,7 +115,7 @@ def clean_item_name(description):
     return " ".join(cleaned.split()).strip()
 
 
-def get_first_image_url(ctx):
+def get_first_image_url(ctx: commands.Context) -> Optional[str]:
     """
     Grab the first attached Discord image, if one exists.
     """
@@ -129,13 +137,13 @@ def get_first_image_url(ctx):
 
 class VueltaBot(commands.Cog):
 
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    async def ask_user(self, ctx, question, timeout=120):
+    async def ask_user(self, ctx: commands.Context, question: str, timeout: float = 120) -> Optional[str]:
         await ctx.send(question)
 
-        def check(message):
+        def check(message: discord.Message) -> bool:
             return (
                 message.author.id == ctx.author.id
                 and message.channel.id == ctx.channel.id
@@ -158,7 +166,7 @@ class VueltaBot(commands.Cog):
     # =====================================================
 
     @commands.command(name="vueltabot")
-    async def vueltabot(self, ctx, *, topic: str = None):
+    async def vueltabot(self, ctx: commands.Context, *, topic: Optional[str] = None) -> None:
         embed = discord.Embed(
             title="♻️ Qué onda, I’m Vueltabot.",
             description=(
@@ -205,7 +213,7 @@ class VueltaBot(commands.Cog):
     # =====================================================
 
     @commands.command(name="tengo")
-    async def tengo(self, ctx, *, description: str = None):
+    async def tengo(self, ctx: commands.Context, *, description: Optional[str] = None) -> None:
         """
         Examples:
 
@@ -259,7 +267,7 @@ class VueltaBot(commands.Cog):
             )
             return
 
-        item = item_result.data[0]
+        item = response_rows(item_result)[0]
         item_id = item["id"]
 
         # Create Circular SA local marketplace route
@@ -290,7 +298,7 @@ class VueltaBot(commands.Cog):
 
         matched_interests = []
 
-        for interest in interest_result.data or []:
+        for interest in response_rows(interest_result):
 
             if interest.get("discord_user_id") == seller_id:
                 continue
@@ -374,7 +382,7 @@ class VueltaBot(commands.Cog):
     # =====================================================
 
     @commands.command(name="busco")
-    async def busco(self, ctx, *, description: str = None):
+    async def busco(self, ctx: commands.Context, *, description: Optional[str] = None) -> None:
         """
         Examples:
 
@@ -415,7 +423,7 @@ class VueltaBot(commands.Cog):
             .execute()
         )
 
-        interest = interest_result.data[0]
+        interest = response_rows(interest_result)[0]
 
         item_result = (
             supabase
@@ -427,7 +435,7 @@ class VueltaBot(commands.Cog):
 
         matches = []
 
-        for item in item_result.data or []:
+        for item in response_rows(item_result):
 
             if item.get("seller_discord_id") == user_id:
                 continue
@@ -516,7 +524,11 @@ class VueltaBot(commands.Cog):
     # =====================================================
 
     @commands.command(name="vuelta")
-    async def vuelta(self, ctx, item_id: int = None):
+    async def vuelta(
+        self,
+        ctx: commands.Context,
+        item_id: Optional[int] = commands.parameter(default=None, converter=int),
+    ) -> None:
         """
         Inspect an item's full journey.
 
@@ -545,7 +557,7 @@ class VueltaBot(commands.Cog):
             )
             return
 
-        item = item_result.data[0]
+        item = response_rows(item_result)[0]
 
         route_result = (
             supabase
@@ -615,7 +627,7 @@ class VueltaBot(commands.Cog):
         await ctx.send(embed=embed)
 
         # Route history
-        routes = route_result.data or []
+        routes = response_rows(route_result)
 
         if not routes:
             await ctx.send(
@@ -663,7 +675,11 @@ class VueltaBot(commands.Cog):
     # =====================================================
 
     @commands.command(name="claim")
-    async def claim(self, ctx, item_id: int = None):
+    async def claim(
+        self,
+        ctx: commands.Context,
+        item_id: Optional[int] = commands.parameter(default=None, converter=int),
+    ) -> None:
         """
         Claim an available item.
 
@@ -696,7 +712,7 @@ class VueltaBot(commands.Cog):
             )
             return
 
-        item = result.data[0]
+        item = response_rows(result)[0]
 
         # Make sure it's available
         if item.get("status") != "available":
@@ -752,7 +768,7 @@ class VueltaBot(commands.Cog):
             )
             return
 
-        transaction = transaction_result.data[0]
+        transaction = response_rows(transaction_result)[0]
         transaction_id = transaction["id"]
 
         # Mark item claimed
@@ -919,7 +935,7 @@ class VueltaBot(commands.Cog):
             )
             return
 
-        gig = transport_result.data[0]
+        gig = response_rows(transport_result)[0]
         gig_id = gig["id"]
         await ctx.send(
             f"🚗 **Transportation requested!**\n"
@@ -952,7 +968,9 @@ class VueltaBot(commands.Cog):
         gig_embed.add_field(name="Status", value="OPEN", inline=True)
         gig_embed.set_footer(text=f"Claim this trip with !tripclaim {gig_id}")
 
-        gig_message = await transportation_channel.send(embed=gig_embed)
+        gig_message = await cast(
+            discord.abc.Messageable, transportation_channel
+        ).send(embed=gig_embed)
         (
             supabase.table("transport_gigs")
             .update({
@@ -968,7 +986,11 @@ class VueltaBot(commands.Cog):
     # =====================================================
 
     @commands.command(name="tripclaim")
-    async def tripclaim(self, ctx, gig_id: int = None):
+    async def tripclaim(
+        self,
+        ctx: commands.Context,
+        gig_id: Optional[int] = commands.parameter(default=None, converter=int),
+    ) -> None:
         if not gig_id:
             await ctx.send("Use it like this:\n`!tripclaim 7`")
             return
@@ -984,7 +1006,7 @@ class VueltaBot(commands.Cog):
             await ctx.send(f"❌ I can't find Trip Gig #{gig_id}.")
             return
 
-        gig = result.data[0]
+        gig = response_rows(result)[0]
         if gig.get("status") != "open":
             await ctx.send(
                 f"⚠️ Trip Gig #{gig_id} is already **{gig.get('status')}**."
@@ -1012,7 +1034,7 @@ class VueltaBot(commands.Cog):
             )
             return
 
-        claimed_gig = claim_result.data[0]
+        claimed_gig = response_rows(claim_result)[0]
         await ctx.send(
             f"🚗 **Trip Gig #{gig_id} claimed!**\n\n"
             f"<@{driver_id}> is taking this trip.\n"
@@ -1030,7 +1052,9 @@ class VueltaBot(commands.Cog):
             try:
                 gig_channel = self.bot.get_channel(int(channel_id))
                 if gig_channel:
-                    gig_message = await gig_channel.fetch_message(int(message_id))
+                    gig_message = await cast(
+                        discord.abc.Messageable, gig_channel
+                    ).fetch_message(int(message_id))
                     if gig_message.embeds:
                         gig_embed = gig_message.embeds[0]
                         gig_embed.set_field_at(
@@ -1047,5 +1071,5 @@ class VueltaBot(commands.Cog):
             ):
                 pass
 
-async def setup(bot):
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(VueltaBot(bot))
