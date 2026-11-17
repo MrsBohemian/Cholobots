@@ -124,6 +124,7 @@ case "\$*" in
         cat "\$MOCK_DIR/pr_view.json"
         ;;
     "api repos/TestOwner/TestRepo/pulls/"*"/reviews --paginate --jq .[].body")
+        echo x >> "\$MOCK_DIR/reviews_calls.log"
         if [[ -f "\$MOCK_DIR/reviews.txt" ]]; then
             cat "\$MOCK_DIR/reviews.txt"
         fi
@@ -162,6 +163,14 @@ fi
 if [[ -f "\$MOCK_DIR/codex_sleep" ]]; then
     sleep "\$(cat "\$MOCK_DIR/codex_sleep")"
 fi
+
+# Optional gate: block until the test deletes codex_hold (bounded, so a test
+# that forgets to release it cannot hang the suite).
+hold=0
+while [[ -f "\$MOCK_DIR/codex_hold" && "\$hold" -lt 1200 ]]; do
+    sleep 0.1
+    hold=\$((hold + 1))
+done
 
 OUT=""
 prev=""
@@ -1179,16 +1188,40 @@ cleanup; MOCK_DIR=""; REPO_DIR=""
 
 # --- Test: two concurrent invocations for the same PR/head/mode race for one
 # job instead of both launching a worker (the job dir claim must be atomic) ---
-info "Test: concurrent invocations race for one job, not two"
+# Run twice: once with the system mkdir, and once with a mkdir that, like
+# uutils coreutils 0.10 (the default on Ubuntu 26.04, hence on GitHub's
+# ubuntu-latest), is NOT exclusive: a racing `mkdir DIR` of an existing dir
+# can succeed. The script must not rely on mkdir alone to elect the owner.
+for race_mode in system-mkdir non-exclusive-mkdir; do
+info "Test: concurrent invocations race for one job, not two ($race_mode)"
 setup_repo
 setup_mock_gh
-echo 2 > "$MOCK_DIR/codex_sleep"
+if [[ "$race_mode" == non-exclusive-mkdir ]]; then
+    cat > "$MOCK_DIR/mkdir" << MOCKSCRIPT
+#!/usr/bin/env bash
+# Succeeds when the directory already exists, as a racing uutils mkdir can.
+PATH="\${PATH#$MOCK_DIR:}"
+exec mkdir -p "\$@"
+MOCKSCRIPT
+    chmod +x "$MOCK_DIR/mkdir"
+fi
+# Gate codex instead of sleeping a fixed 2s: with a fixed sleep, a racer that
+# starts late (a slow CI runner) can reach its mkdir after the first job has
+# finished and removed its dir, claim a fresh job and run a second codex. The
+# gate keeps the first job alive until both racers have read the review list
+# (the last gh call before the claim) plus a settle margin for the remaining
+# few forks up to the mkdir.
+: > "$MOCK_DIR/codex_hold"
 (cd "$REPO_DIR" && PATH="$MOCK_DIR:$PATH" MOCK_DIR="$MOCK_DIR" CODEX_REVIEW_STATE_DIR="$MOCK_DIR/state" \
     CODEX_REVIEW_WAIT_SECONDS="$RACE_JOIN_WAIT" timeout "$INVOCATION_TIMEOUT" bash "$SCRIPT" 42 > "$MOCK_DIR/race_out1" 2>&1) &
 race_pid1=$!
 (cd "$REPO_DIR" && PATH="$MOCK_DIR:$PATH" MOCK_DIR="$MOCK_DIR" CODEX_REVIEW_STATE_DIR="$MOCK_DIR/state" \
     CODEX_REVIEW_WAIT_SECONDS="$RACE_JOIN_WAIT" timeout "$INVOCATION_TIMEOUT" bash "$SCRIPT" 42 > "$MOCK_DIR/race_out2" 2>&1) &
 race_pid2=$!
+wait_for "$POLL_DEADLINE" '[[ "$(cat "$MOCK_DIR/reviews_calls.log" 2>/dev/null | wc -l)" -ge 2 ]]' \
+    || fail "Expected both racers to reach the claim point"
+sleep 5
+rm -f "$MOCK_DIR/codex_hold"
 # wait's own exit status reflects only the last-listed pid; run both under
 # set +e regardless so neither invocation's exit code can trip this suite's
 # set -e before its output is inspected below.
@@ -1244,6 +1277,7 @@ else
     fail "Expected no leftover job dir under $MOCK_DIR/state"
 fi
 cleanup; MOCK_DIR=""; REPO_DIR=""
+done
 
 # --- Test: pid is persisted via a temp file + rename, never a bare redirect ---
 # Regression guard for the atomic-pid-write fix: `echo "$X" > "$JOBDIR/pid"`

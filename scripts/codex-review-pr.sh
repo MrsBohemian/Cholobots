@@ -577,7 +577,17 @@ mkdir -p "$CODEX_REVIEW_STATE_DIR" || {
 # mkdir call, rather than leaving a window at the default umask before a
 # separate chmod. See job_dir_is_ours(), which the worker and the
 # dead-worker reclaim path both check before trusting anything under here.
-if ! mkdir -m 700 "$JOBDIR" 2>/dev/null; then
+# `mkdir` alone is not trusted to be exclusive: uutils coreutils (Ubuntu 26.04's
+# default) lets two racing `mkdir DIR` calls both succeed, which launched two
+# workers (two codex runs, two reviews) for one job. The owner is therefore
+# elected by an `owner` file created under `set -o noclobber`, which bash opens
+# O_EXCL itself, so exactly one invocation wins it however mkdir behaves. The
+# file lives inside $JOBDIR, so it vanishes with every `rm -rf "$JOBDIR"`.
+claimed=false
+if mkdir -m 700 "$JOBDIR" 2>/dev/null && (set -o noclobber; : > "$JOBDIR/owner") 2>/dev/null; then
+    claimed=true
+fi
+if [[ "$claimed" != true ]]; then
     # mkdir fails for reasons other than "already exists" too (a read-only or
     # missing state dir, no space left, ...). Only join an existing, owned
     # job dir; anything else is a real setup error, not a job to wait on.
