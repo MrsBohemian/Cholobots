@@ -26,11 +26,9 @@ dev = [
 package = false
 
 [tool.ty]
-# Preview at the pinned ty version. Regenerate with `make typecheck-baseline` (whole project only:
-# `--update-baseline <paths>` drops every other file's entries).
+# Preview at the pinned ty version; no baseline, every diagnostic fails.
 # discord.py, supabase, openai, python-dotenv, pytest, pytest-asyncio and psycopg ship inline types,
 # so no allowed-unresolved-imports or replace-imports-with-any is needed.
-baseline = "ty-baseline.json"
 
 [tool.ty.environment]
 # python-version is stated here (matches requires-python and .python-version) rather than derived.

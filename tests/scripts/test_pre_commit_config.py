@@ -1,5 +1,5 @@
 # ABOUTME: Pins the local ty hook in .pre-commit-config.yaml (text-based; PyYAML is not a dependency).
-# ABOUTME: The hook must use the locked env and run on Python, pyproject and baseline changes only.
+# ABOUTME: The hook must use the locked env and run on Python and pyproject changes only.
 import re
 from pathlib import Path
 
@@ -24,7 +24,11 @@ def test_ty_hook_runs_on_python_and_config_changes():
     match = re.search(r"^\s*files: '(.+)'\s*$", ty_hook_block(), re.MULTILINE)
     assert match, "ty hook has no files: regex"
     pattern = match.group(1)
-    for path in ("bots/crudobot.py", "pyproject.toml", "ty-baseline.json"):
+    for path in ("bots/crudobot.py", "pyproject.toml"):
         assert re.search(pattern, path), path
     for path in ("README.md", "supabase/seed.sql"):
         assert not re.search(pattern, path), path
+
+
+def test_ty_hook_has_no_baseline():
+    assert "baseline" not in ty_hook_block()

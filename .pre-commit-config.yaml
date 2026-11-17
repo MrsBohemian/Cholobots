@@ -4,13 +4,13 @@ repos:
     rev: v0.17.4
     hooks:
       - id: ruff-check
-  # Same ty and baseline as make typecheck and CI (locked env); no rev to keep in step.
+  # Same ty as make typecheck and CI (locked env); no rev to keep in step.
   # Whole project, because type errors cross files.
   - repo: local
     hooks:
       - id: ty
-        name: ty check (new errors only; baseline in ty-baseline.json)
+        name: ty check
         entry: uv run --frozen ty check
         language: system
         pass_filenames: false
-        files: '\.pyi?$|^pyproject\.toml$|^ty-baseline\.json$'
+        files: '\.pyi?$|^pyproject\.toml$'
