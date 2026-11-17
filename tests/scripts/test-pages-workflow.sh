@@ -139,6 +139,19 @@ else
     pass "pages-disabled job gets no publish permissions"
 fi
 
+# In a plain (unquoted) YAML scalar, " #" starts a comment, so a run: line like
+# `run: echo "see story #179"` reaches bash cut short with an unterminated quote.
+# Checked on the raw file, since the comment strip above would hide it, and
+# without PyYAML, which CI does not install.
+RAW_RUNS=$(grep -nE '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+[^|>"'"'"'[:space:]]' "$WORKFLOW" || true)
+PLAIN_RUN_HASH=$(grep -E '[[:space:]]#' <<< "$RAW_RUNS" || true)
+if [ -z "$PLAIN_RUN_HASH" ]; then
+    pass "no plain-scalar run: contains ' #' (YAML would cut it off there)"
+else
+    fail "no plain-scalar run: contains ' #' (YAML would cut it off there)"
+    echo "$PLAIN_RUN_HASH"
+fi
+
 # Structural check when PyYAML is available; the greps above stand alone without it.
 if python3 -c 'import yaml' 2>/dev/null; then
     if python3 - "$WORKFLOW" <<'PY'
@@ -156,7 +169,14 @@ assert deploy["permissions"]["pages"] == "write"
 assert deploy["permissions"]["id-token"] == "write"
 assert deploy["if"] == "vars.PAGES_ENABLED == 'true'", deploy["if"]
 assert deploy["environment"]["name"] == "github-pages"
-assert doc["jobs"]["pages-disabled"]["if"] == "vars.PAGES_ENABLED != 'true'"
+disabled = doc["jobs"]["pages-disabled"]
+assert disabled["if"] == "vars.PAGES_ENABLED != 'true'"
+notice = [s["run"] for s in disabled["steps"] if "::notice::" in s.get("run", "")]
+assert len(notice) == 1, disabled["steps"]
+assert notice[0].strip() == (
+    'echo "::notice::GitHub Pages publishing is switched off '
+    "(PAGES_ENABLED is not 'true'); see story #179 task #135.\""
+), notice[0]
 upload = [s for s in deploy["steps"] if s.get("uses", "").startswith("actions/upload-pages-artifact@")]
 assert len(upload) == 1 and upload[0]["with"]["path"] == "mobile", upload
 PY
