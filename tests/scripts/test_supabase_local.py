@@ -311,7 +311,7 @@ def test_port_in_use_ignores_time_wait_left_by_a_stopped_stack():
 
 # --- main() with a stub CLI runner -------------------------------------------------
 
-STATUS_ENV = 'API_URL="http://127.0.0.1:54331"\nDB_URL="postgresql://postgres:postgres@127.0.0.1:54332/postgres"\nSERVICE_ROLE_KEY="svc-key"\n'
+STATUS_ENV = 'API_URL="http://127.0.0.1:54331"\nDB_URL="postgresql://postgres:postgres@127.0.0.1:54332/postgres"\nSERVICE_ROLE_KEY="svc-key"\nANON_KEY="anon-key"\n'
 CLI = "fakecli"
 ENV = {"SUPABASE_CLI": CLI}
 
@@ -352,6 +352,9 @@ def stack_repo(repo, monkeypatch):
     # main() probes the slot's ports before `start`; a developer's own stacks (the main one on
     # 54321, a worktree on 54331...) must not decide these tests. Tests about the probe override it.
     monkeypatch.setattr(supabase_local, "port_in_use", lambda port: False)
+    # After `start`, main() checks that PostgREST answers /rest/v1/; tests about that override it.
+    monkeypatch.setattr(supabase_local, "rest_server", lambda url, key: "postgrest/16.4")
+    monkeypatch.setattr(supabase_local.time, "sleep", lambda seconds: None)
     commit_supabase(repo)
     return repo
 
@@ -696,3 +699,100 @@ def test_launcher_resolves_its_directory_without_gnu_readlink_f(tmp_path):
     )
     assert result.returncode == 2, result.stderr
     assert "usage: supabase-local.sh" in result.stderr
+
+
+# --- start: /rest/v1 must reach PostgREST (#217) -------------------------------------
+
+
+class RestProbe:
+    """Stand-in for rest_server: answers from `servers` in turn, repeating the last one."""
+
+    def __init__(self, *servers):
+        self.servers = list(servers)
+        self.calls = []
+
+    def __call__(self, api_url, key):
+        self.calls.append((api_url, key))
+        return self.servers.pop(0) if len(self.servers) > 1 else self.servers[0]
+
+
+def kong_execs(stub):
+    return [c for c in stub.calls if c[:2] == ["docker", "exec"]]
+
+
+def test_start_leaves_kong_alone_when_postgrest_answers(stack_repo, monkeypatch):
+    probe = RestProbe("postgrest/16.4")
+    monkeypatch.setattr(supabase_local, "rest_server", probe)
+    stub = StubRunner()
+    assert supabase_local.main(["start", str(stack_repo)], environ=ENV, run=stub) == 0
+    assert probe.calls == [("http://127.0.0.1:54331", "anon-key")]
+    assert kong_execs(stub) == []
+
+
+def test_start_drops_kong_search_domain_when_another_host_answers(stack_repo, monkeypatch, capsys):
+    probe = RestProbe("", "", "postgrest/16.4")  # a wildcard host sends no PostgREST Server header
+    monkeypatch.setattr(supabase_local, "rest_server", probe)
+    stub = StubRunner()
+    assert supabase_local.main(["start", str(stack_repo)], environ=ENV, run=stub) == 0
+    (fix,) = kong_execs(stub)
+    assert fix[:5] == ["docker", "exec", "-u", "0", "supabase_kong_cholobots"]
+    assert fix[-1] == supabase_local.DROP_KONG_SEARCH
+    captured = capsys.readouterr()
+    assert "removed the DNS search domain from supabase_kong_cholobots" in captured.err
+    assert "SUPABASE_URL=http://127.0.0.1:54331" in captured.out
+
+
+def test_start_fails_when_rest_is_still_misrouted(stack_repo, monkeypatch, capsys):
+    probe = RestProbe("")
+    monkeypatch.setattr(supabase_local, "rest_server", probe)
+    stub = StubRunner()
+    assert supabase_local.main(["start", str(stack_repo)], environ=ENV, run=stub) == 1
+    assert len(probe.calls) == 1 + supabase_local.REST_PROBE_ATTEMPTS
+    captured = capsys.readouterr()
+    assert "/rest/v1/ is not answered by PostgREST" in captured.err
+    assert captured.out == ""
+
+
+@pytest.mark.parametrize("excluded", ["kong", "postgrest"])
+def test_start_skips_rest_check_when_kong_or_postgrest_is_excluded(stack_repo, monkeypatch, excluded):
+    probe = RestProbe("")
+    monkeypatch.setattr(supabase_local, "rest_server", probe)
+    env = {**ENV, "SUPABASE_LOCAL_EXCLUDE": excluded}
+    assert supabase_local.main(["start", str(stack_repo)], environ=env, run=StubRunner()) == 0
+    assert probe.calls == []
+
+
+def test_rest_server_reports_the_server_header_and_sends_the_key():
+    import http.server
+    import threading
+
+    seen = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_HEAD(self):
+            seen["path"], seen["apikey"] = self.path, self.headers.get("apikey")
+            self.send_response(200)
+            self.send_header("Server", "postgrest/16.4")
+            self.end_headers()
+
+        def version_string(self):
+            return "postgrest/16.4"
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.handle_request, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}"
+        assert supabase_local.rest_server(url, "anon-key") == "postgrest/16.4"
+    finally:
+        server.server_close()
+    assert seen == {"path": "/rest/v1/", "apikey": "anon-key"}
+
+
+def test_rest_server_is_empty_when_nothing_listens():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    assert supabase_local.rest_server(f"http://127.0.0.1:{port}", "k") == ""

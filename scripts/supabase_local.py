@@ -11,7 +11,10 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 import tomllib
+import urllib.error
+import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -191,6 +194,36 @@ def port_in_use(port: int) -> bool:
     return False
 
 
+# Kong's DNS client ignores `ndots:0` when Docker copies the host's `edns0 trust-ad` onto the same
+# options line, so it tries the search domain before the Docker name, and a wildcard record there
+# answers /rest/v1 with some other host (#217). Kong's upstreams are all single-label Docker names,
+# so dropping its search line is safe. Reloading Kong makes its workers reread resolv.conf.
+DROP_KONG_SEARCH = "sed '/^search /d' /etc/resolv.conf > /tmp/resolv.conf && cat /tmp/resolv.conf > /etc/resolv.conf && kill -HUP 1"
+REST_PROBE_ATTEMPTS = 15
+
+
+def rest_server(api_url: str, key: str) -> str:
+    """The Server header that answers `<api_url>/rest/v1/`; empty when nothing answers."""
+    request = urllib.request.Request(f"{api_url}/rest/v1/", method="HEAD", headers={"apikey": key})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.headers.get("Server", "")
+    except urllib.error.HTTPError as error:
+        return error.headers.get("Server", "")
+    except OSError:
+        return ""
+
+
+def _rest_routed(status: Mapping[str, str], attempts: int) -> bool:
+    key = status.get("ANON_KEY") or status.get("PUBLISHABLE_KEY", "")
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(1)
+        if rest_server(status["API_URL"], key).lower().startswith("postgrest"):
+            return True
+    return False
+
+
 DEFAULT_CLI = "npx --yes supabase@2.121.0"
 # Option names (matched with or without `=value`) that select a hosted project or database.
 HOSTED_FLAGS = {"--linked", "--db-url", "--project-ref", "--password", "-p"}
@@ -317,12 +350,31 @@ def _ports_to_probe(base_config: str, excludes: list[str], slot: int) -> list[in
     return ports
 
 
-def _print_env(cli: list[str], workdir: str, run) -> int:
+def _status(cli: list[str], workdir: str, run) -> dict[str, str]:
     result = run([*cli, "status", "--workdir", workdir, "-o", "env"], capture_output=True, text=True)
     if result.returncode != 0:
         sys.stderr.write(result.stderr or "")
-        return result.returncode
-    status = parse_status_env(result.stdout or "")
+        raise LocalError("supabase status failed", result.returncode)
+    return parse_status_env(result.stdout or "")
+
+
+def _ensure_rest_routed(identity: Identity, cli: list[str], workdir: str, run) -> None:
+    """Fail unless PostgREST answers /rest/v1/, after dropping Kong's DNS search line if it does not."""
+    status = _status(cli, workdir, run)
+    if "API_URL" not in status or _rest_routed(status, 1):
+        return
+    kong = f"supabase_kong_{identity.project_id}"
+    run(["docker", "exec", "-u", "0", kong, "sh", "-c", DROP_KONG_SEARCH], capture_output=True, text=True)
+    if not _rest_routed(status, REST_PROBE_ATTEMPTS):
+        raise LocalError(
+            f"{status['API_URL']}/rest/v1/ is not answered by PostgREST, even after removing the DNS "
+            f"search domain from {kong}; check what `docker exec {kong} cat /etc/resolv.conf` resolves"
+        )
+    print(f"supabase-local: removed the DNS search domain from {kong}; its wildcard was answering /rest/v1/", file=sys.stderr)
+
+
+def _print_env(cli: list[str], workdir: str, run) -> int:
+    status = _status(cli, workdir, run)
     try:
         lines = env_lines(status)
     except KeyError as missing:
@@ -361,6 +413,8 @@ def _start(identity, cli, environ, run) -> int:
     result = run(command, stdout=2)
     if result.returncode != 0:
         return result.returncode
+    if not {"kong", "postgrest"} & set(excludes):
+        _ensure_rest_routed(identity, cli, workdir, run)
     return _print_env(cli, workdir, run)
 
 
