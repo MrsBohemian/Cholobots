@@ -100,7 +100,9 @@ def test_supabase_targets_use_the_per_checkout_script(target, command):
 
 def test_makefile_exports_the_pinned_cli_for_the_script():
     text = MAKEFILE.read_text(encoding="utf-8")
-    version = re.search(r"^SUPABASE_CLI_VERSION := (\S+)$", text, re.M).group(1)
+    match = re.search(r"^SUPABASE_CLI_VERSION := (\S+)$", text, re.M)
+    assert match is not None, "Makefile has no SUPABASE_CLI_VERSION pin"
+    version = match.group(1)
     # The script's own default (used outside make) must pin the same CLI as the Makefile.
     script = (ROOT / "scripts" / "supabase_local.py").read_text(encoding="utf-8")
     assert f'DEFAULT_CLI = "npx --yes supabase@{version}"' in script
@@ -204,7 +206,9 @@ def test_integration_target_fails_without_running_pytest_when_the_stack_is_down(
 
 
 def test_cli_version_matches_readme():
-    version = re.search(r"^SUPABASE_CLI_VERSION := (\S+)$", MAKEFILE.read_text(), re.M).group(1)
+    match = re.search(r"^SUPABASE_CLI_VERSION := (\S+)$", MAKEFILE.read_text(), re.M)
+    assert match is not None, "Makefile has no SUPABASE_CLI_VERSION pin"
+    version = match.group(1)
     assert f"supabase@{version}" in (ROOT / "README.md").read_text(encoding="utf-8")
 
 

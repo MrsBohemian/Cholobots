@@ -81,7 +81,9 @@ def tracked_text_files():
 def test_each_pin_is_declared_once(prebuild):
     pins = [arg_value(prebuild, name) for name in VERSION_ARGS]
     install = (ROOT / "tools/pytaiga-mcp/install.sh").read_text()
-    pins.append(re.search(r"^PYTAIGA_MCP_COMMIT=([0-9a-f]{40})$", install, re.M).group(1))
+    commit = re.search(r"^PYTAIGA_MCP_COMMIT=([0-9a-f]{40})$", install, re.M)
+    assert commit is not None, "install.sh has no PYTAIGA_MCP_COMMIT pin"
+    pins.append(commit.group(1))
     files = list(tracked_text_files())
     for pin in pins:
         pattern = re.compile(rf"(?<![\w.]){re.escape(pin)}(?![\w.])")

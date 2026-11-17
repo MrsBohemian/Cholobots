@@ -979,50 +979,6 @@
         "lineCount": 1
       }
     ],
-    "tests/scripts/test_devcontainer_prebuild.py": [
-      {
-        "rule": "missing-union-attribute",
-        "startColumn": 16,
-        "endColumn": 86,
-        "lineCount": 1
-      }
-    ],
-    "tests/scripts/test_makefile.py": [
-      {
-        "rule": "missing-union-attribute",
-        "startColumn": 14,
-        "endColumn": 77,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-union-attribute",
-        "startColumn": 14,
-        "endColumn": 93,
-        "lineCount": 1
-      }
-    ],
-    "tests/scripts/test_supabase_local.py": [
-      {
-        "rule": "incompatible-method-override",
-        "startColumn": 12,
-        "endColumn": 36,
-        "lineCount": 1
-      }
-    ],
-    "tests/scripts/test_taiga_sync_from_push.py": [
-      {
-        "rule": "incompatible-method-override",
-        "startColumn": 8,
-        "endColumn": 28,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-argument-type",
-        "startColumn": 73,
-        "endColumn": 75,
-        "lineCount": 1
-      }
-    ],
     "tests/unit/test_dependency_contract.py": [
       {
         "rule": "missing-union-attribute",
