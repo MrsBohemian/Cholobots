@@ -246,7 +246,7 @@ If it fails:
 3. Fix the errors. If you're still in the middle of the rebase, stage the fixes and run `git rebase --continue`. If the rebase has completed, commit the fixes as a new commit (do **not** amend rebased commits).
 4. If the errors are too complex to resolve confidently, **escalate** per Step 5c.
 
-`py_compile` does not catch a wrong name or a missing import. Also `git diff <target-ref>...HEAD --stat` and skim each resolved file for references to symbols that either side renamed. If `ruff` is configured, `ruff check .` catches undefined names; otherwise do this by reading. Run `make typecheck` (ty, #203); a conflict in `ty-baseline.json` is resolved by regenerating it with `make typecheck-baseline` after the rest of the rebase, never by merging entries by hand.
+`py_compile` does not catch a wrong name or a missing import. Also `git diff <target-ref>...HEAD --stat` and skim each resolved file for references to symbols that either side renamed. If `ruff` is configured, `ruff check .` catches undefined names; otherwise do this by reading. Run `make typecheck` (ty, #203);
 
 ### 6c. Run tests
 

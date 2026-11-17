@@ -115,7 +115,7 @@ Run each command as a foreground Bash call with the tool's `timeout: 600000` par
 2. **Bot unit tests:** if any test file exists under `tests/` outside `tests/scripts/`, run only the affected files: `cd <wt> && timeout 590 <py> -m pytest -q tests/<file>.py; echo "exit=$?"`. Otherwise record "no test suite yet (#34)".
 3. **Script tests:** if the task changed `scripts/`, run `cd <wt> && timeout 590 <py> -m pytest tests/scripts -q` and the matching `bash tests/scripts/test-*.sh`.
 4. **Lint:** if ruff is configured (`ruff.toml`, `.ruff.toml`, or `[tool.ruff]` in `pyproject.toml`), `cd <wt> && ruff check .`. Otherwise record "no linter configured yet (#33)".
-5. **Type check:** `cd <wt> && timeout 590 make typecheck; echo "exit=$?"` (ty, #203; new errors fail, and so does a baseline that lists fixed errors). Never add entries to `ty-baseline.json` to pass: fix the error. Only `make typecheck-baseline` rewrites it, and only to drop fixed errors.
+5. **Type check:** `cd <wt> && timeout 590 make typecheck; echo "exit=$?"` (ty, #203; any diagnostic fails and there is no baseline: fix the error).
 
 Consult `docs/testing-workflow.md` for routing. Fix every failure, then re-run. **If you believe a failure is unrelated to your changes**, you MUST follow the Test Failure Triage Protocol in `.claude/skills/shared/test-failure-triage.md` before dismissing it.
 

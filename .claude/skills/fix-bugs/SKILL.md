@@ -79,7 +79,7 @@ Run, as foreground Bash calls (no `run_in_background`, this runs headless):
 1. `python -m py_compile cholobots.py config.py db/database.py bots/*.py` (mandatory)
 2. `python -m pytest -q` if `tests/` holds a suite, else record "no test suite yet (#34)"
 3. `ruff check .` if ruff is configured (story #33), else skip
-4. `make typecheck` (ty, #203); fix new errors, never grow `ty-baseline.json`
+4. `make typecheck` (ty, #203); fix every diagnostic, there is no baseline
 
 Fix every failure, then re-run.
 

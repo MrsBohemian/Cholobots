@@ -83,7 +83,7 @@ Run, as foreground Bash calls (never `run_in_background`, `Monitor`, or end your
 1. `python -m py_compile cholobots.py config.py db/database.py bots/*.py` (mandatory before every commit)
 2. `python -m pytest -q` if `tests/` holds a suite, else record "no test suite yet (#34)"
 3. `ruff check .` if ruff is configured (story #33), else skip
-4. `make typecheck` (ty, #203); fix new errors, never grow `ty-baseline.json`
+4. `make typecheck` (ty, #203); fix every diagnostic, there is no baseline
 
 Fix every failure, then re-run.
 - **If you believe a failure is unrelated to your changes**, you MUST follow the Test Failure Triage Protocol in `.claude/skills/shared/test-failure-triage.md` before dismissing it.

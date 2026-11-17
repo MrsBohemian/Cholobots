@@ -20,7 +20,7 @@ whole scope on the PR: workflow `checks` (compile, lint, type check, unit and sc
 | Integration | `python -m pytest tests/integration -q -m integration` | `make test-integration` (the raw pytest command needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` exported) | When a change touches a command, listener or query; needs `make db-up`; local stack only |
 | Script tests | `python -m pytest tests/scripts -q` and `bash tests/scripts/test-<name>.sh` | (in `make test`, which stops at the first failing `.sh`) | Exist today |
 | Lint | `ruff check .` (also the pre-commit hook) | `make lint` | Always. Config and exceptions in `ruff.toml` |
-| Type check | `uv run --frozen ty check` (also the pre-commit hook) | `make typecheck` | Always. Fails on errors not in `ty-baseline.json` and on baseline entries that are fixed. Config in `pyproject.toml` `[tool.ty]` |
+| Type check | `uv run --frozen ty check` (also the pre-commit hook) | `make typecheck` | Always. Any diagnostic fails; there is no baseline. Config in `pyproject.toml` `[tool.ty]` |
 | Unit + script tests | `python -m pytest -q tests/unit tests/scripts`, then `for t in tests/scripts/test-*.sh; do bash "$t" || exit 1; done` | `make test` | Same scope as CI's `Unit tests` and `Script tests` steps |
 | Compile, lint, type check, test | | `make check` | Before every push |
 | Whole suite | `python -m pytest -q` | | Once #34 lands |
@@ -30,7 +30,7 @@ whole scope on the PR: workflow `checks` (compile, lint, type check, unit and sc
 Set up the environment once with `make setup`. The `make` targets call `.venv/bin/python` directly, so no activation is needed.
 Never run `python cholobots.py` or `make run` from an automated run.
 
-**Type-check baseline.** Never grow `ty-baseline.json` to make a check pass; fix the new error. Regenerate it only with `make typecheck-baseline`, which rewrites the whole project (`--update-baseline` with paths drops every other file's entries), and the diff should only remove entries. The baseline format is a ty preview feature, so a ty upgrade is its own PR.
+**Type check.** Fix every diagnostic; never silence one with `cast(Any, ...)` or `dict[str, Any]` in place of a real type. `# ty: ignore[<rule>]` is a last resort with a reason comment (`blanket-ignore-comment` rejects one without a rule code). A ty upgrade is its own PR that fixes the diagnostics the new version reports.
 
 ## What to run after a change
 
@@ -46,7 +46,7 @@ Never run `python cholobots.py` or `make run` from an automated run.
 | `.devcontainer/**`, `scripts/devcontainer/**` | `python -m pytest tests/scripts -q -k devcontainer` and `bash tests/scripts/test-devcontainer-lifecycle.sh`; a `devcontainer up` smoke when the Dockerfile or lifecycle scripts change |
 | `.devcontainer/**`, `tools/pytaiga-mcp/**`, `.github/workflows/build-devcontainer.yml` | `python -m pytest tests/scripts -q` plus `bash tests/scripts/test-pytaiga-mcp-install.sh`, `test-devcontainer-pins.sh`, `test-build-devcontainer-cache.sh`, `test-build-devcontainer-workflow.sh` and `test-launch-prebuild-image.sh` |
 | `scripts/devcontainer/orchestrate_*.py` | `python -m pytest tests/scripts -q` (includes the end-to-end test with fake `launch.sh`, `exec-skill.sh` and `teardown.sh`; no Docker needed) |
-| `pyproject.toml` `[tool.ty]`, or a ty version bump | `make typecheck-baseline` (whole project, never with paths), review the `ty-baseline.json` diff (a bump is its own PR), then `make typecheck` |
+| `pyproject.toml` `[tool.ty]`, or a ty version bump | `make typecheck`; fix every new diagnostic in the same PR (a ty bump is its own PR) |
 | `.claude/**`, `docs/**` | Nothing to run |
 | `pyproject.toml`, `uv.lock`, `requirements.txt`, `.python-version` | `make lock-check`, fresh `make setup`, compile, `ruff check .`, `make typecheck`, script tests, whole suite |
 

@@ -109,7 +109,7 @@ To browse the dashboards locally: `python -m http.server 8000 --directory mobile
 
 Dependencies are declared in `pyproject.toml` (runtime `dependencies`, dev tools in the `dev` group) and locked in `uv.lock`. `make setup` and CI install them with `uv sync --locked`, which fails when the lock is stale.
 
-To add or upgrade a package, edit its `==` pin in `pyproject.toml` (or `uv add <pkg>==<ver>`, `uv add --dev <pkg>==<ver>`), or for a transitive package run `uv lock --upgrade-package <pkg>`. Then run `make lock` and commit `pyproject.toml`, `uv.lock` and `requirements.txt` in one pull request. CI's `make lock-check` fails otherwise. Use the pinned uv version so the lock does not churn. ty is pinned in the dev group and its baseline format is a preview feature, so a ty upgrade goes in its own pull request that runs `make typecheck-baseline` and shows the diff. When ruff changes, bump the `rev` in `.pre-commit-config.yaml` too; `tests/unit/test_dependency_contract.py` checks it.
+To add or upgrade a package, edit its `==` pin in `pyproject.toml` (or `uv add <pkg>==<ver>`, `uv add --dev <pkg>==<ver>`), or for a transitive package run `uv lock --upgrade-package <pkg>`. Then run `make lock` and commit `pyproject.toml`, `uv.lock` and `requirements.txt` in one pull request. CI's `make lock-check` fails otherwise. Use the pinned uv version so the lock does not churn. ty is pinned in the dev group, so a ty upgrade goes in its own pull request that fixes every diagnostic the new version reports. When ruff changes, bump the `rev` in `.pre-commit-config.yaml` too; `tests/unit/test_dependency_contract.py` checks it.
 
 ## Production
 
@@ -126,15 +126,14 @@ Pick what to run from [docs/testing-workflow.md](docs/testing-workflow.md); whic
 | Command | Runs |
 |---|---|
 | `make check` | compile check, `ruff check .`, `make typecheck`, `make lock-check`, then `make test` |
-| `make typecheck` | `ty check` against `ty-baseline.json`; fails on new errors and on baseline entries that are already fixed |
-| `make typecheck-baseline` | rewrites `ty-baseline.json` for the whole project; only to drop fixed errors, never to admit new ones |
+| `make typecheck` | `ty check` on the whole project; any diagnostic fails |
 | `make test` | `pytest tests/unit tests/scripts` and every `tests/scripts/test-*.sh` |
 | `make test-integration` | `tests/integration` against the local stack (`make db-up` first); refuses any non-local Supabase URL |
 | `python -m pytest tests/unit -q` | fast contract and guard tests; no network, no Supabase |
 | `python -m pytest tests/scripts -q` | tests for the pipeline scripts in `scripts/` |
 | `python -m py_compile cholobots.py config.py db/database.py bots/*.py` | compile check of the bot modules |
 | `ruff check .` | lint (configured in `ruff.toml`) |
-| `uv run --frozen ty check` | type check, new errors only (configured in `pyproject.toml` `[tool.ty]`; also the pre-commit hook) |
+| `uv run --frozen ty check` | type check, any diagnostic fails (configured in `pyproject.toml` `[tool.ty]`; also the pre-commit hook) |
 
 The bots' command logic has no unit tests yet; `tests/integration` drives commands against the local stack.
 
