@@ -1,26 +1,6 @@
 {
   "version": 0,
   "files": {
-    "bots/metichebot.py": [
-      {
-        "rule": "missing-union-attribute",
-        "startColumn": 30,
-        "endColumn": 42,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-union-attribute",
-        "startColumn": 30,
-        "endColumn": 42,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-assignment",
-        "startColumn": 17,
-        "endColumn": 54,
-        "lineCount": 1
-      }
-    ],
     "bots/vueltabot.py": [
       {
         "rule": "invalid-argument-type",
