@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "integration"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from local_guard import DEFAULT_DB_URL, MAKE_HINT, integration_settings, is_local_url  # noqa: E402
+from integration.local_guard import DEFAULT_DB_URL, MAKE_HINT, integration_settings, is_local_url  # noqa: E402
 
 LOCAL_API = "http://127.0.0.1:54321"
 

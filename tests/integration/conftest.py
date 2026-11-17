@@ -6,13 +6,14 @@ import sys
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+from typing import TypedDict
 from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
 
 from . import fakes
-from .local_guard import integration_settings, is_local_url
+from .local_guard import IntegrationSettings, integration_settings, is_local_url
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SEED_SQL = REPO_ROOT / "supabase" / "seed.sql"
@@ -31,7 +32,13 @@ DEFAULT_NOW = datetime(2031, 1, 15, 10, 0, tzinfo=ZoneInfo("America/Chicago"))
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-_state = {"settings": None, "problem": None}
+
+class _HarnessState(TypedDict):
+    settings: IntegrationSettings | None
+    problem: str
+
+
+_state: _HarnessState = {"settings": None, "problem": ""}
 
 
 def pytest_configure(config):
@@ -59,7 +66,7 @@ def pytest_sessionstart(session):
         if reason:
             settings = None
     _state["settings"] = settings
-    _state["problem"] = reason or None
+    _state["problem"] = reason
 
 
 def pytest_collection_modifyitems(config, items):

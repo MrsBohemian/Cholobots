@@ -31,7 +31,9 @@ def test_requires_python_matches_python_version():
 def test_pre_commit_ruff_rev_matches_locked_ruff():
     config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
     block = config.split("astral-sh/ruff-pre-commit", 1)[1]
-    rev = re.search(r"rev:\s*(v\S+)", block).group(1)
+    match = re.search(r"rev:\s*(v\S+)", block)
+    assert match, "no rev found for astral-sh/ruff-pre-commit in .pre-commit-config.yaml"
+    rev = match.group(1)
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     locked = [p["version"] for p in lock["package"] if p["name"] == "ruff"]
     assert locked == [rev.removeprefix("v")]
