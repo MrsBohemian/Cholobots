@@ -48,7 +48,7 @@ if [ ! -f "$REPO_ROOT/supabase/config.toml" ] || [ ! -d "$REPO_ROOT/tests/integr
     exit 0
 fi
 
-# Python with requirements.txt and requirements-dev.txt installed: SUPABASE_LOCAL_TEST_PYTHON,
+# Python with the locked dependencies installed (make setup): SUPABASE_LOCAL_TEST_PYTHON,
 # else the main checkout's venv, else python3.
 main_checkout="$(dirname "$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir)")"
 if [ -n "${SUPABASE_LOCAL_TEST_PYTHON:-}" ]; then

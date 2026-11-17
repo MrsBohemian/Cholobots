@@ -52,7 +52,7 @@ check(doc["name"] == "build-devcontainer", "workflow is named build-devcontainer
 check(build.get("name") == "build-devcontainer", "first job id and name are build-devcontainer")
 check(set(on) == {"push", "pull_request", "schedule", "workflow_dispatch"}, "triggers are push, pull_request, schedule, workflow_dispatch")
 check(on["push"]["branches"] == ["main"], "push is limited to main")
-want_paths = {".devcontainer/**", "requirements*.txt", "tools/pytaiga-mcp/**", ".dockerignore", ".github/workflows/build-devcontainer.yml"}
+want_paths = {".devcontainer/**", "pyproject.toml", "uv.lock", "tools/pytaiga-mcp/**", ".dockerignore", ".github/workflows/build-devcontainer.yml"}
 check(set(on["push"]["paths"]) == want_paths, "push paths list")
 check(set(on["pull_request"]["paths"]) == want_paths, "pull_request paths list")
 check(on["schedule"] == [{"cron": "0 4 * * 0"}], "weekly cron Sunday 04:00 UTC")

@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[2]
 DEVCONTAINER = ROOT / ".devcontainer"
 PREBUILD = DEVCONTAINER / "Dockerfile.prebuild"
 VERSION_ARGS = ("CLAUDE_CODE_VERSION", "CODEX_VERSION", "CHROME_DEVTOOLS_MCP_VERSION", "UV_VERSION")
-ALLOWED_COPY_SOURCES = {"requirements.txt", "requirements-dev.txt", "tools/pytaiga-mcp/install.sh"}
-PIP_WARMUP = "pip install -r requirements.txt -r requirements-dev.txt"
+ALLOWED_COPY_SOURCES = {"pyproject.toml", "uv.lock", ".python-version", "tools/pytaiga-mcp/install.sh"}
+UV_WARMUP = "uv sync --locked"
 
 
 @pytest.fixture(scope="module")
@@ -98,13 +98,14 @@ def test_prebuild_copies_only_dependency_files(prebuild):
             assert src in ALLOWED_COPY_SOURCES, ln
 
 
-def test_pip_cache_warmed_as_vscode(prebuild):
+def test_uv_cache_warmed_as_vscode(prebuild):
     lines = instructions(prebuild)
     user_vscode = index_of(lines, "USER vscode")
     warm = index_of(lines, "RUN", user_vscode)
-    while PIP_WARMUP not in lines[warm]:
+    while UV_WARMUP not in lines[warm]:
         warm = index_of(lines, "RUN", warm + 1)
-    assert "--no-cache-dir" not in lines[warm]
+    assert "--no-cache" not in lines[warm]
+    assert "UV_PROJECT_ENVIRONMENT=/tmp/prebuild/venv" in lines[warm]
     user_root = index_of(lines, "USER root", warm)
     cleanup = index_of(lines, "RUN rm -rf /tmp/prebuild", user_root)
     assert cleanup > warm
@@ -113,10 +114,10 @@ def test_pip_cache_warmed_as_vscode(prebuild):
     assert lines[-1] == "WORKDIR /"
 
 
-def test_post_create_does_not_bypass_the_pip_cache():
+def test_post_create_does_not_bypass_the_uv_cache():
     text = (DEVCONTAINER / "post-create.sh").read_text()
-    assert "--no-cache-dir" not in text
-    assert "PIP_NO_CACHE_DIR" not in text
+    assert "--no-cache" not in text
+    assert "UV_NO_CACHE" not in text
 
 
 def test_pytaiga_mcp_installed_to_opt_and_owned_by_vscode(prebuild):
@@ -150,7 +151,7 @@ def test_dockerignore_keeps_secrets_and_junk_out():
     lines = [ln.strip() for ln in path.read_text().splitlines() if ln.strip() and not ln.startswith("#")]
     for required in (".git", ".env", ".envrc", ".venv", ".claude/worktrees", "*.db"):
         assert required in lines, required
-    for needed in (".devcontainer", "requirements.txt", "requirements-dev.txt", "tools"):
+    for needed in (".devcontainer", "pyproject.toml", "uv.lock", ".python-version", "tools"):
         assert not any(ln.strip("/") == needed for ln in lines), needed
     if ".env.*" in lines:
         assert "!.env.example" in lines

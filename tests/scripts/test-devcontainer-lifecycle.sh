@@ -137,22 +137,21 @@ FAKE
 
 chmod +x "$BIN"/*
 
-# Fake python3 for post-create only: "-m venv .venv" creates a logging .venv/bin/python.
+# Fake uv for post-create only: "sync" creates a logging .venv/bin/python. HOME is a temp dir so the
+# pip fallback never touches the real ~/.local.
 CREATE_BIN="$TMP/create-bin"
-mkdir -p "$CREATE_BIN"
+CREATE_HOME="$TMP/create-home"
+mkdir -p "$CREATE_BIN" "$CREATE_HOME/.local/bin"
 cp "$BIN"/* "$CREATE_BIN"/
-cat > "$CREATE_BIN/python3" <<FAKE
+cat > "$CREATE_BIN/uv" <<FAKE
 #!/usr/bin/env bash
 $log_call
-if [ "\${1:-}" = "-m" ] && [ "\${2:-}" = "venv" ]; then
-    mkdir -p "\$3/bin"
-    cp "\$(dirname "\$0")/venv-python" "\$3/bin/python"
+printf "uv-env UV_LINK_MODE=%s UV_PYTHON_DOWNLOADS=%s\\n" "\${UV_LINK_MODE:-}" "\${UV_PYTHON_DOWNLOADS:-}" >> "\$CALLS"
+if [ "\${1:-}" = "sync" ]; then
+    mkdir -p .venv/bin
+    printf '#!/usr/bin/env bash\\n' > .venv/bin/python
+    chmod +x .venv/bin/python
 fi
-exit 0
-FAKE
-cat > "$CREATE_BIN/venv-python" <<FAKE
-#!/usr/bin/env bash
-printf "venv-python %s\n" "\$*" >> "\$CALLS"
 exit 0
 FAKE
 chmod +x "$CREATE_BIN"/*
@@ -163,6 +162,11 @@ make_workspace() {
     cp "$POST_CREATE" "$POST_START" "$ws/.devcontainer/"
     cp "$REPO_ROOT/scripts/devcontainer/write_env.py" "$ws/scripts/devcontainer/"
     cp "$REPO_ROOT/scripts/check_local_env.py" "$ws/scripts/"
+    cat > "$ws/scripts/devcontainer/pins.sh" <<'PINS'
+#!/usr/bin/env bash
+echo "UV_VERSION='9.9.9'"
+PINS
+    chmod +x "$ws/scripts/devcontainer/pins.sh"
 }
 
 calls_has() { grep -qxF -- "$1" "$CALLS"; }
@@ -322,27 +326,69 @@ if grep -q 'update-alternatives' "$CALLS"; then fail "no iptables switch when le
 WSC="$TMP/ws-create"
 make_workspace "$WSC"
 : > "$CALLS"
-if (cd "$WSC" && PATH="$CREATE_BIN:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN \
+if (cd "$WSC" && HOME="$CREATE_HOME" PATH="$CREATE_BIN:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN \
         .devcontainer/post-create.sh > "$TMP/create1.out" 2> "$TMP/create1.err"); then
     pass "post-create.sh first run exits 0"
 else
     fail "post-create.sh first run exits 0"
     cat "$TMP/create1.err"
 fi
-if [ "$(grep -c '^python3 -m venv' "$CALLS")" = "1" ]; then pass "first run creates the venv"; else fail "first run creates the venv"; cat "$CALLS"; fi
-if calls_has "venv-python -m pip install -r requirements.txt -r requirements-dev.txt"; then
-    pass "pip installs requirements.txt and requirements-dev.txt into the venv"
+if calls_has "uv sync --locked"; then pass "first run syncs the venv with uv sync --locked"; else fail "first run syncs the venv with uv sync --locked"; cat "$CALLS"; fi
+if calls_has "uv-env UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never"; then
+    pass "uv runs with UV_LINK_MODE=copy and UV_PYTHON_DOWNLOADS=never"
 else
-    fail "pip installs requirements.txt and requirements-dev.txt into the venv"
+    fail "uv runs with UV_LINK_MODE=copy and UV_PYTHON_DOWNLOADS=never"
+    cat "$CALLS"
 fi
+if grep -qE '^python3 |pip install' "$CALLS"; then fail "no pip or venv call when uv is on PATH"; else pass "no pip or venv call when uv is on PATH"; fi
+if [ -x "$WSC/.venv/bin/python" ]; then pass "first run leaves .venv/bin/python"; else fail "first run leaves .venv/bin/python"; fi
 if grep -q '^gh ' "$CALLS"; then fail "no gh call without GH_TOKEN"; else pass "no gh call without GH_TOKEN"; fi
 
 : > "$CALLS"
-(cd "$WSC" && PATH="$CREATE_BIN:$PATH" GH_TOKEN=dummy \
+(cd "$WSC" && HOME="$CREATE_HOME" PATH="$CREATE_BIN:$PATH" GH_TOKEN=dummy \
     .devcontainer/post-create.sh > "$TMP/create2.out" 2> "$TMP/create2.err") || fail "post-create.sh second run exits 0"
-if grep -q '^python3 -m venv' "$CALLS"; then fail "second run reuses the venv"; else pass "second run reuses the venv"; fi
+if calls_has "uv sync --locked"; then pass "second run syncs again"; else fail "second run syncs again"; fi
 if grep -qF 'Reusing .venv' "$TMP/create2.out"; then pass "second run says it reuses .venv"; else fail "second run says it reuses .venv"; fi
 if calls_has "gh auth setup-git"; then pass "gh auth setup-git runs when GH_TOKEN is set"; else fail "gh auth setup-git runs when GH_TOKEN is set"; fi
+
+# Base-image-only container: no uv on PATH, so post-create installs the pinned uv with pip first.
+NOUV_BIN="$TMP/nouv-bin"
+mkdir -p "$NOUV_BIN"
+cp "$BIN"/* "$NOUV_BIN"/
+cat > "$NOUV_BIN/python3" <<FAKE
+#!/usr/bin/env bash
+$log_call
+if [ "\${1:-}" = "-m" ] && [ "\${2:-}" = "pip" ]; then
+    cp "$CREATE_BIN/uv" "\$HOME/.local/bin/uv"
+fi
+exit 0
+FAKE
+chmod +x "$NOUV_BIN"/*
+WSN="$TMP/ws-nouv"
+make_workspace "$WSN"
+NOUV_HOME="$TMP/nouv-home"
+mkdir -p "$NOUV_HOME/.local/bin"
+: > "$CALLS"
+if (cd "$WSN" && HOME="$NOUV_HOME" PATH="$NOUV_BIN:/usr/bin:/bin" env -u GH_TOKEN -u GITHUB_TOKEN \
+        .devcontainer/post-create.sh > "$TMP/nouv.out" 2> "$TMP/nouv.err"); then
+    pass "post-create.sh exits 0 without uv on PATH"
+else
+    fail "post-create.sh exits 0 without uv on PATH"
+    cat "$TMP/nouv.err"
+fi
+if calls_has "python3 -m pip install --user uv==9.9.9"; then
+    pass "no uv on PATH: installs the pinned uv with pip --user"
+else
+    fail "no uv on PATH: installs the pinned uv with pip --user"
+    cat "$CALLS"
+fi
+p=$(line_of "python3 -m pip install --user uv==9.9.9"); u=$(line_of "uv sync --locked")
+if [ -n "$p" ] && [ -n "$u" ] && [ "$p" -lt "$u" ]; then
+    pass "the pip fallback runs before uv sync --locked"
+else
+    fail "the pip fallback runs before uv sync --locked"
+    cat "$CALLS"
+fi
 
 if [ "$FAILURES" -gt 0 ]; then
     echo -e "${RED}$FAILURES check(s) failed${NC}"

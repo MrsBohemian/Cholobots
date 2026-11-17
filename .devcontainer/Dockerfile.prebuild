@@ -1,4 +1,4 @@
-# ABOUTME: Pre-built devcontainer image: the base image plus the volatile tools and a warm pip cache.
+# ABOUTME: Pre-built devcontainer image: the base image plus the volatile tools and a warm uv cache.
 # ABOUTME: CI publishes it to GHCR; scripts/devcontainer/launch.sh pulls it or builds both stages locally.
 #
 # Two-stage build:
@@ -41,14 +41,13 @@ RUN /tmp/pytaiga-mcp/install.sh && rm -rf /tmp/pytaiga-mcp \
 # there is no DinD daemon at build time and its data root is a per-container volume.
 ENV SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io
 
-# Warm vscode's pip cache for post-create.sh's `pip install`. The venv is thrown away; the wheels
-# stay in /home/vscode/.cache/pip (no --no-cache-dir on purpose).
+# Warm vscode's uv cache for post-create.sh's `uv sync`. The venv is thrown away; the wheels stay
+# in /home/vscode/.cache/uv (no --no-cache on purpose).
 WORKDIR /tmp/prebuild
-COPY requirements.txt requirements-dev.txt ./
+COPY pyproject.toml uv.lock .python-version ./
 RUN chown -R vscode:vscode /tmp/prebuild
 USER vscode
-RUN python3 -m venv /tmp/prebuild/venv \
-    && /tmp/prebuild/venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+RUN UV_PROJECT_ENVIRONMENT=/tmp/prebuild/venv UV_LINK_MODE=copy uv sync --locked
 USER root
 RUN rm -rf /tmp/prebuild
 WORKDIR /
