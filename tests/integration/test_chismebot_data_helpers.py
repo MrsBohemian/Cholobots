@@ -20,17 +20,16 @@ class FakeOpenAI:
         return SimpleNamespace(output_text=self._output_text)
 
 
+TODAY = "2031-01-15"
+
+
 @pytest.fixture
-def chismebot(bot_modules):
-    return bot_modules["chismebot"]
-
-
-def _contact(db, name, **fields):
-    return db.table("chisme_contacts").insert({"name": name, **fields}).execute().data[0]
-
-
-def _lead(db, **fields):
-    return db.table("chisme_leads").insert(fields).execute().data[0]
+def chismebot(bot_modules, monkeypatch):
+    module = bot_modules["chismebot"]
+    # The helpers stamp rows with naive local time; pin it so nothing depends on the wall clock.
+    monkeypatch.setattr(module, "today_date", lambda: TODAY)
+    monkeypatch.setattr(module, "now_iso", lambda: f"{TODAY}T10:00:00")
+    return module
 
 
 def _rows(db, table, **eq):
@@ -40,9 +39,9 @@ def _rows(db, table, **eq):
     return query.execute().data
 
 
-def test_find_contacts_matches_phone_digits_then_name(chismebot, db):
-    alpha = _contact(db, "Chisme Probe Alpha", phone="2105550191")
-    beta = _contact(db, "Chisme Probe Beta")
+def test_find_contacts_matches_phone_digits_then_name(chismebot, factories):
+    alpha = factories.chisme_contact("Chisme Probe Alpha", phone="2105550191")
+    beta = factories.chisme_contact("Chisme Probe Beta")
 
     assert [c["id"] for c in chismebot.find_contacts("(210) 555-0191")] == [alpha["id"]]
     assert [c["id"] for c in chismebot.find_contacts("probe beta")] == [beta["id"]]
@@ -63,8 +62,8 @@ def test_create_contact_stub_inserts_placeholder_and_journal(chismebot, db):
     assert len(_rows(db, "chisme_journals", contact_id=contact["id"])) == 1
 
 
-def test_ensure_journal_is_idempotent_and_get_journal_returns_newest_first(chismebot, db):
-    contact = _contact(db, "Chisme Probe Journal")
+def test_ensure_journal_is_idempotent_and_get_journal_returns_newest_first(chismebot, db, factories):
+    contact = factories.chisme_contact("Chisme Probe Journal")
 
     first = chismebot.ensure_journal(contact["id"])
     second = chismebot.ensure_journal(contact["id"])
@@ -85,10 +84,10 @@ def test_ensure_journal_is_idempotent_and_get_journal_returns_newest_first(chism
     assert [n["note_text"] for n in notes] == ["note 02", "note 01"]
 
 
-def test_add_note_writes_note_and_updates_contact(chismebot, db, monkeypatch):
+def test_add_note_writes_note_and_updates_contact(chismebot, db, factories, monkeypatch):
     fake = FakeOpenAI("Summary v2")
     monkeypatch.setattr(chismebot, "client", fake)
-    contact = _contact(db, "Chisme Probe Notes")
+    contact = factories.chisme_contact("Chisme Probe Notes")
     text = "Follow up 2031-02-01, cell 210-555-0193"
 
     note = chismebot.add_note(contact, text, created_by="tester")
@@ -102,13 +101,15 @@ def test_add_note_writes_note_and_updates_contact(chismebot, db, monkeypatch):
     assert row["next_followup_date"] == "2031-02-01"
     assert row["next_contact_date"] == "2031-02-01"
     assert row["phone"] == "2105550193"
+    assert row["last_contact_date"] == TODAY
+    assert _rows(db, "chisme_notes", id=note["id"])[0]["note_date"] == TODAY
     assert len(fake.calls) == 1
     assert fake.calls[0]["model"] == "gpt-5-mini"
 
 
-def test_set_active_upserts_and_next_burner_skips_used(chismebot, db):
+def test_set_active_upserts_and_next_burner_skips_used(chismebot, db, factories):
     db.table("chisme_active").delete().neq("id", NO_ID).execute()
-    contact = _contact(db, "Chisme Probe Oven")
+    contact = factories.chisme_contact("Chisme Probe Oven")
 
     chismebot.set_active(contact, "hot", burner_position=1)
     chismebot.set_active(contact, "hot", burner_position=1)
@@ -120,10 +121,10 @@ def test_set_active_upserts_and_next_burner_skips_used(chismebot, db):
     assert chismebot.get_active()[0]["chisme_contacts"]["name"] == "Chisme Probe Oven"
 
 
-def test_unprocessed_leads_and_lookup_by_id(chismebot, db):
-    later = _lead(db, raw_notes="later", status="unprocessed", captured_at="2031-01-02T10:00:00+00:00")
-    earlier = _lead(db, raw_notes="earlier", status="unprocessed", captured_at="2031-01-01T10:00:00+00:00")
-    _lead(db, raw_notes="done", status="processed", captured_at="2031-01-03T10:00:00+00:00")
+def test_unprocessed_leads_and_lookup_by_id(chismebot, factories):
+    later = factories.chisme_lead(raw_notes="later", status="unprocessed", captured_at="2031-01-02T10:00:00+00:00")
+    earlier = factories.chisme_lead(raw_notes="earlier", status="unprocessed", captured_at="2031-01-01T10:00:00+00:00")
+    factories.chisme_lead(raw_notes="done", status="processed", captured_at="2031-01-03T10:00:00+00:00")
 
     leads = chismebot.get_unprocessed_leads()
 
@@ -132,9 +133,9 @@ def test_unprocessed_leads_and_lookup_by_id(chismebot, db):
     assert chismebot.get_lead_by_id(NO_ID) is None
 
 
-def test_try_link_lead_links_unique_phone_match(chismebot, db):
-    delta = _contact(db, "Chisme Probe Delta", phone="2105550177")
-    lead = _lead(db, raw_notes="Called from +1 (210) 555-0177", status="unprocessed")
+def test_try_link_lead_links_unique_phone_match(chismebot, db, factories):
+    delta = factories.chisme_contact("Chisme Probe Delta", phone="2105550177")
+    lead = factories.chisme_lead(raw_notes="Called from +1 (210) 555-0177", status="unprocessed")
 
     linked = chismebot.try_link_lead_to_existing_contact(lead)
 
@@ -142,10 +143,10 @@ def test_try_link_lead_links_unique_phone_match(chismebot, db):
     assert _rows(db, "chisme_leads", id=lead["id"])[0]["contact_id"] == delta["id"]
 
 
-def test_try_link_lead_leaves_ambiguous_phone_unlinked(chismebot, db):
-    _contact(db, "Chisme Probe Delta", phone="2105550177")
-    _contact(db, "Chisme Probe Delta Twin", phone="2105550177")
-    lead = _lead(db, raw_notes="Called from +1 (210) 555-0177", status="unprocessed")
+def test_try_link_lead_leaves_ambiguous_phone_unlinked(chismebot, db, factories):
+    factories.chisme_contact("Chisme Probe Delta", phone="2105550177")
+    factories.chisme_contact("Chisme Probe Delta Twin", phone="2105550177")
+    lead = factories.chisme_lead(raw_notes="Called from +1 (210) 555-0177", status="unprocessed")
 
     result = chismebot.try_link_lead_to_existing_contact(lead)
 
@@ -153,9 +154,9 @@ def test_try_link_lead_leaves_ambiguous_phone_unlinked(chismebot, db):
     assert _rows(db, "chisme_leads", id=lead["id"])[0]["contact_id"] is None
 
 
-def test_promote_lead_to_opportunity_creates_once_and_syncs_callback(chismebot, db):
-    echo = _contact(db, "Chisme Probe Echo")
-    lead = _lead(db, raw_notes="Kitchen remodel", status="unprocessed",
+def test_promote_lead_to_opportunity_creates_once_and_syncs_callback(chismebot, db, factories):
+    echo = factories.chisme_contact("Chisme Probe Echo")
+    lead = factories.chisme_lead(raw_notes="Kitchen remodel", status="unprocessed",
                  contact_id=echo["id"], callback_date="2031-03-03")
 
     opp = chismebot.promote_lead_to_opportunity(lead, "Kitchen")
