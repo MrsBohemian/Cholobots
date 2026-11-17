@@ -1,5 +1,5 @@
 # ABOUTME: CI gate run on every pull request (any base, so stacked PRs too) and on pushes to main.
-# ABOUTME: Mirrors `make check`: the uv.lock and requirements.txt check, py_compile, ruff, ty, unit tests, script pytest tests and every tests/scripts/test-*.sh.
+# ABOUTME: Mirrors `make check`: the uv.lock and requirements.txt check, py_compile, ruff, ty, unit tests, script pytest tests and every tests/scripts/test-*.sh, plus pyrefly as a non-failing step.
 #
 # The workflow and its job are both named "checks": branch protection requires the
 # job name as a context, and scripts/monitor-pr-stability.sh matches those contexts
@@ -69,6 +69,12 @@ jobs:
         env:
           # ty reads this: new errors show as PR annotations.
           TY_OUTPUT_FORMAT: github
+      - name: Pyrefly (informational)
+        # Spike #216: pyrefly reports but never fails the build; ty above is the gate.
+        # A step, not a job: a new job would be a new check context next to the required checks/integration.
+        # Plain text output: GitHub annotations from 300+ informational errors would bury ty's.
+        continue-on-error: true
+        run: make typecheck-pyrefly
       - name: Unit tests
         run: python -m pytest -q tests/unit
       - name: Script tests
