@@ -138,7 +138,10 @@ class TestChooseStripPoint:
         description = "## Plan\n\nBody.\n\n---\n\n" + ORIGINAL_MARKDOWN
         candidates = split_candidates(description)
 
-        chosen, similarity = choose_strip_point(candidates, ORIGINAL_HTML, threshold=0.9)
+        result = choose_strip_point(candidates, ORIGINAL_HTML, threshold=0.9)
+
+        assert result is not None
+        chosen, similarity = result
 
         assert chosen is candidates[0]
         assert similarity >= 0.9
@@ -172,7 +175,10 @@ class TestChooseStripPoint:
 
         assert len(candidates) == 2
 
-        chosen, _ = choose_strip_point(candidates, prior_html, threshold=0.5)
+        result = choose_strip_point(candidates, prior_html, threshold=0.5)
+
+        assert result is not None
+        chosen, _ = result
 
         assert chosen is candidates[0]
 
@@ -821,6 +827,7 @@ class TestPlanReconstruction:
         plan = plan_reconstruction(POST_STRIP_MARKDOWN, PRE_STRIP_HTML, threshold=0.9)
 
         assert plan.decision == "repaired"
+        assert plan.description is not None
         assert plan.description.startswith(POST_STRIP_MARKDOWN.rstrip())
         assert "## Acceptance Criteria" in plan.description
         assert "- A supporter cannot pledge a negative amount." in plan.description

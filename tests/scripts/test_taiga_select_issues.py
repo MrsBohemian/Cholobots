@@ -345,6 +345,7 @@ class FakeClient:
         self.issues = issues
         self.fail = fail
         self.milestones = METADATA.milestones if milestones is None else milestones
+        self.priorities = METADATA.priorities
         self.list_params = None
 
     def get(self, path, **params):
@@ -355,8 +356,7 @@ class FakeClient:
         if path == "/api/v1/issue-statuses":
             return [{"id": s.id, "name": n, "is_closed": s.is_closed} for n, s in METADATA.statuses.items()]
         if path == "/api/v1/priorities":
-            priorities = getattr(self, "priorities", METADATA.priorities)
-            return [{"id": label.id, "name": n, "order": label.order} for n, label in priorities.items()]
+            return [{"id": label.id, "name": n, "order": label.order} for n, label in self.priorities.items()]
         if path == "/api/v1/severities":
             return [{"id": label.id, "name": n, "order": label.order} for n, label in METADATA.severities.items()]
         if path == "/api/v1/milestones":

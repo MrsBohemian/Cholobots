@@ -2,7 +2,7 @@
 # ABOUTME: Covers only the subset Taiga's renderer emits; callers verify each result against the source before using it.
 import re
 from html.parser import HTMLParser
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 
 HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
@@ -20,7 +20,7 @@ class _MarkdownWriter(HTMLParser):
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.blocks: List[str] = []
+        self.blocks: List[Tuple[str, Optional[int]]] = []
         self.inline: List[str] = []
         self.list_stack: List[dict] = []
         self.list_group = 0

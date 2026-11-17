@@ -62,7 +62,7 @@ def merge_env(existing: str, values: Mapping[str, str]) -> str:
     seen: set[str] = set()
     for line in existing.splitlines():
         key = _line_key(line)
-        if key in values:
+        if key is not None and key in values:
             if key not in seen:
                 seen.add(key)
                 out.append(f"{key}={values[key]}")

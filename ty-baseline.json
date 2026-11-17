@@ -971,14 +971,6 @@
         "lineCount": 1
       }
     ],
-    "scripts/check_schema_coverage.py": [
-      {
-        "rule": "unsupported-operator",
-        "startColumn": 12,
-        "endColumn": 42,
-        "lineCount": 1
-      }
-    ],
     "scripts/devcontainer/orchestrate_bugs.py": [
       {
         "rule": "not-subscriptable",
@@ -1268,20 +1260,6 @@
         "rule": "missing-attribute",
         "startColumn": 34,
         "endColumn": 48,
-        "lineCount": 1
-      }
-    ],
-    "scripts/devcontainer/write_env.py": [
-      {
-        "rule": "invalid-argument-type",
-        "startColumn": 25,
-        "endColumn": 28,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-argument-type",
-        "startColumn": 36,
-        "endColumn": 42,
         "lineCount": 1
       }
     ],
@@ -1799,138 +1777,6 @@
         "lineCount": 1
       }
     ],
-    "scripts/taiga_audit.py": [
-      {
-        "rule": "invalid-assignment",
-        "startColumn": 4,
-        "endColumn": 39,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-assignment",
-        "startColumn": 4,
-        "endColumn": 5,
-        "lineCount": 5
-      },
-      {
-        "rule": "invalid-assignment",
-        "startColumn": 4,
-        "endColumn": 5,
-        "lineCount": 5
-      },
-      {
-        "rule": "invalid-assignment",
-        "startColumn": 4,
-        "endColumn": 36,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-assignment",
-        "startColumn": 4,
-        "endColumn": 86,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-assignment",
-        "startColumn": 4,
-        "endColumn": 86,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-assignment",
-        "startColumn": 4,
-        "endColumn": 45,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-assignment",
-        "startColumn": 4,
-        "endColumn": 96,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-assignment",
-        "startColumn": 4,
-        "endColumn": 96,
-        "lineCount": 1
-      }
-    ],
-    "scripts/taiga_closing_refs.py": [
-      {
-        "rule": "redundant-condition",
-        "startColumn": 55,
-        "endColumn": 68,
-        "lineCount": 1
-      }
-    ],
-    "scripts/taiga_find_duplicate_tasks.py": [
-      {
-        "rule": "missing-union-attribute",
-        "startColumn": 16,
-        "endColumn": 36,
-        "lineCount": 1
-      }
-    ],
-    "scripts/taiga_html_to_markdown.py": [
-      {
-        "rule": "invalid-argument-type",
-        "startColumn": 27,
-        "endColumn": 88,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-argument-type",
-        "startColumn": 31,
-        "endColumn": 45,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-argument-type",
-        "startColumn": 27,
-        "endColumn": 55,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-argument-type",
-        "startColumn": 27,
-        "endColumn": 52,
-        "lineCount": 1
-      }
-    ],
-    "scripts/taiga_project_setup.py": [
-      {
-        "rule": "missing-union-attribute",
-        "startColumn": 47,
-        "endColumn": 71,
-        "lineCount": 1
-      },
-      {
-        "rule": "not-iterable",
-        "startColumn": 43,
-        "endColumn": 54,
-        "lineCount": 1
-      }
-    ],
-    "scripts/taiga_strip_duplicated_description.py": [
-      {
-        "rule": "missing-attribute",
-        "startColumn": 16,
-        "endColumn": 28,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-argument-type",
-        "startColumn": 57,
-        "endColumn": 72,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-argument-type",
-        "startColumn": 34,
-        "endColumn": 49,
-        "lineCount": 1
-      }
-    ],
     "tests/integration/conftest.py": [
       {
         "rule": "invalid-argument-type",
@@ -2024,98 +1870,6 @@
         "rule": "incompatible-method-override",
         "startColumn": 12,
         "endColumn": 36,
-        "lineCount": 1
-      }
-    ],
-    "tests/scripts/test_taiga_audit.py": [
-      {
-        "rule": "invalid-argument-type",
-        "startColumn": 21,
-        "endColumn": 27,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-argument-type",
-        "startColumn": 30,
-        "endColumn": 36,
-        "lineCount": 1
-      },
-      {
-        "rule": "invalid-argument-type",
-        "startColumn": 30,
-        "endColumn": 36,
-        "lineCount": 1
-      }
-    ],
-    "tests/scripts/test_taiga_project_setup.py": [
-      {
-        "rule": "no-matching-overload",
-        "startColumn": 19,
-        "endColumn": 49,
-        "lineCount": 1
-      },
-      {
-        "rule": "not-subscriptable",
-        "startColumn": 22,
-        "endColumn": 36,
-        "lineCount": 1
-      },
-      {
-        "rule": "not-subscriptable",
-        "startColumn": 40,
-        "endColumn": 56,
-        "lineCount": 1
-      },
-      {
-        "rule": "not-subscriptable",
-        "startColumn": 58,
-        "endColumn": 73,
-        "lineCount": 1
-      },
-      {
-        "rule": "not-subscriptable",
-        "startColumn": 86,
-        "endColumn": 104,
-        "lineCount": 1
-      }
-    ],
-    "tests/scripts/test_taiga_select_issues.py": [
-      {
-        "rule": "missing-attribute",
-        "startColumn": 8,
-        "endColumn": 25,
-        "lineCount": 1
-      }
-    ],
-    "tests/scripts/test_taiga_strip_duplicated_description.py": [
-      {
-        "rule": "not-iterable",
-        "startColumn": 29,
-        "endColumn": 89,
-        "lineCount": 1
-      },
-      {
-        "rule": "not-iterable",
-        "startColumn": 20,
-        "endColumn": 77,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-union-attribute",
-        "startColumn": 15,
-        "endColumn": 42,
-        "lineCount": 1
-      },
-      {
-        "rule": "unsupported-operator",
-        "startColumn": 15,
-        "endColumn": 59,
-        "lineCount": 1
-      },
-      {
-        "rule": "unsupported-operator",
-        "startColumn": 15,
-        "endColumn": 83,
         "lineCount": 1
       }
     ],

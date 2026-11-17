@@ -8,7 +8,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
 
@@ -136,7 +136,7 @@ def run_request(cmd: List[str], stdin_text: Optional[str] = None) -> Tuple[int, 
         ) from exc
 
 
-def run_json_request(cmd: List[str], stdin_text: Optional[str] = None) -> object:
+def run_json_request(cmd: List[str], stdin_text: Optional[str] = None) -> Any:
     status, body = run_request(cmd, stdin_text)
 
     if status >= 400:

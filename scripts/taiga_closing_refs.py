@@ -57,8 +57,7 @@ def extract_closing_refs(branch, title, body):
         if match:
             refs.append(int(match.group(1) or match.group(2)))
 
-    seen = set()
-    return [ref for ref in refs if not (ref in seen or seen.add(ref))]
+    return list(dict.fromkeys(refs))
 
 
 def main():
