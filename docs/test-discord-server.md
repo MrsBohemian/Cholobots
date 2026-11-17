@@ -2,6 +2,8 @@
 
 How to run Cholobots against a separate Discord server and the local Supabase stack, so commands can be tried without touching production.
 
+**Optional.** Only a manual smoke test (`python cholobots.py` / `make run`) needs this server and a real bot token. The automated tests never connect to Discord: unit tests don't import the bot, and the integration tests (story #51) and CI (story #35) use a dummy `DISCORD_TOKEN` with faked Discord objects.
+
 ## 1. Discord application (one-time, Jon)
 
 1. In the Discord Developer Portal, create a separate application and bot (not the production one).
