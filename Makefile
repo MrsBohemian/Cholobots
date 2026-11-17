@@ -38,7 +38,7 @@ check-tools: ## Check the system tools setup and the tests need (uv, jq, timeout
 		command -v $$tool >/dev/null 2>&1 && continue; \
 		missing=1; \
 		case $$tool in \
-			uv) hint='brew install uv (macOS) or curl -LsSf https://astral.sh/uv/install.sh | sh; the version to use is in the README';; \
+			uv) hint='brew install uv (macOS) or curl -LsSf https://astral.sh/uv/install.sh | sh; the version to use is the uv pin in scripts/devcontainer/pins.sh';; \
 			jq) hint='brew install jq (macOS) or apt install jq (Debian/Ubuntu)';; \
 			timeout) hint='brew install coreutils, then put "$$(brew --prefix coreutils)/libexec/gnubin" on PATH (macOS); part of coreutils on Linux';; \
 			setsid) hint='brew install util-linux, then put "$$(brew --prefix util-linux)/bin" on PATH (macOS); part of util-linux on Linux';; \
