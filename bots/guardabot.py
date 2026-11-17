@@ -1,20 +1,27 @@
 import os
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from discord.ext import commands
-from supabase import create_client
+from supabase import PostgrestAPIResponse, create_client
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 VALID_ROWS = ["A", "B", "C", "D", "E"]
 VALID_COLS = ["1", "2", "3", "4", "5"]
 
+Row = Dict[str, Any]
 
-def now_iso():
+
+def response_rows(response: PostgrestAPIResponse) -> List[Row]:
+    """Rows of a table query. PostgREST types them as JSON, but table rows are always objects."""
+    return cast(List[Row], response.data or [])
+
+
+def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
@@ -25,7 +32,7 @@ def normalize_cell(cell: str) -> Optional[str]:
     return None
 
 
-def parse_cells(cell_text: str):
+def parse_cells(cell_text: str) -> List[str]:
     """Accept A1, A1-A2, or A1,A2,B3."""
     cell_text = (cell_text or "").strip().upper().replace(" ", "")
 
@@ -52,12 +59,12 @@ def parse_cells(cell_text: str):
     return cells
 
 
-def get_arg(text: str, key: str, default=None):
+def get_arg(text: str, key: str, default: Any = None) -> Any:
     match = re.search(rf"\b{re.escape(key)}:(\S+)", text, flags=re.IGNORECASE)
     return match.group(1).strip() if match else default
 
 
-def remove_arg_tokens(text: str):
+def remove_arg_tokens(text: str) -> str:
     return re.sub(
         r"\b(qty|loc|location|from|to|category|unit):\S+",
         "",
@@ -66,7 +73,7 @@ def remove_arg_tokens(text: str):
     ).strip()
 
 
-def find_inventory(item_name: str, location: str = ""):
+def find_inventory(item_name: str, location: str = "") -> List[Row]:
     query = (
         supabase.table("inventory_items")
         .select("*")
@@ -74,10 +81,17 @@ def find_inventory(item_name: str, location: str = ""):
     )
     if location:
         query = query.eq("location", location.upper())
-    return query.execute().data or []
+    return response_rows(query.execute())
 
 
-def add_or_update_inventory(item_name, qty, location="", category="", unit="", notes=""):
+def add_or_update_inventory(
+    item_name: str,
+    qty: float,
+    location: str = "",
+    category: str = "",
+    unit: str = "",
+    notes: str = "",
+) -> Tuple[Optional[int], float]:
     location = (location or "").upper()
     response = (
         supabase.table("inventory_items")
@@ -86,7 +100,7 @@ def add_or_update_inventory(item_name, qty, location="", category="", unit="", n
         .eq("location", location)
         .execute()
     )
-    existing = response.data or []
+    existing = response_rows(response)
 
     if existing:
         row = existing[0]
@@ -100,7 +114,7 @@ def add_or_update_inventory(item_name, qty, location="", category="", unit="", n
         }).eq("id", row["id"]).execute()
         return row["id"], new_qty
 
-    result = supabase.table("inventory_items").insert({
+    result = response_rows(supabase.table("inventory_items").insert({
         "item_name": item_name,
         "quantity": float(qty or 0),
         "unit": unit,
@@ -108,7 +122,7 @@ def add_or_update_inventory(item_name, qty, location="", category="", unit="", n
         "category": category,
         "notes": notes,
         "updated_at": now_iso(),
-    }).execute().data or []
+    }).execute())
     return (result[0].get("id") if result else None), float(qty or 0)
 
 
@@ -116,7 +130,7 @@ def inventory_available(item_name: str, location: str = "") -> float:
     return sum(float(r.get("quantity") or 0) for r in find_inventory(item_name, location))
 
 
-def subtract_inventory(item_name, qty, location=""):
+def subtract_inventory(item_name: str, qty: float, location: str = "") -> Tuple[bool, str, float]:
     rows = find_inventory(item_name, location)
     if not rows:
         return False, "not_found", 0.0
@@ -150,7 +164,14 @@ def subtract_inventory(item_name, qty, location=""):
     return True, "ok", removed
 
 
-def log_inventory_event(event_type, item_name, qty=0, location="", unit="", notes=""):
+def log_inventory_event(
+    event_type: str,
+    item_name: str,
+    qty: float = 0,
+    location: str = "",
+    unit: str = "",
+    notes: str = "",
+) -> None:
     """Keep a lightweight physical-inventory audit trail; no job-cost data lives here."""
     try:
         supabase.table("material_events").insert({
@@ -170,10 +191,10 @@ def log_inventory_event(event_type, item_name, qty=0, location="", unit="", note
         pass
 
 
-def register_guard(bot: commands.Bot):
+def register_guard(bot: commands.Bot) -> None:
 
     @bot.command(name="guardabot")
-    async def guardabot_help(ctx):
+    async def guardabot_help(ctx: commands.Context) -> None:
         await ctx.send(
             "📦 GUARDABOT\n\n"
             "Guardabot tracks what Handley Man physically has on hand, how much, and where it is.\n\n"
@@ -187,9 +208,9 @@ def register_guard(bot: commands.Bot):
         )
 
     @bot.command(name="gmap")
-    async def gmap(ctx):
+    async def gmap(ctx: commands.Context) -> None:
         response = supabase.table("garage_zones").select("*").execute()
-        rows = response.data or []
+        rows = response_rows(response)
         zone_by_cell = {row["cell"]: row["zone_name"] for row in rows}
 
         lines = ["🗺️ GARAGE MAP"]
@@ -202,7 +223,7 @@ def register_guard(bot: commands.Bot):
         await ctx.send("```" + "\n".join(lines) + "```")
 
     @bot.command(name="gzone")
-    async def gzone(ctx, cells: str = "", *, zone_name: str = ""):
+    async def gzone(ctx: commands.Context, cells: str = "", *, zone_name: str = "") -> None:
         parsed = parse_cells(cells)
         zone_name = zone_name.strip()
         if not parsed or not zone_name:
@@ -218,7 +239,7 @@ def register_guard(bot: commands.Bot):
         await ctx.send(f"✅ Updated map: {', '.join(parsed)} = {zone_name}")
 
     @bot.command(name="gadd")
-    async def gadd(ctx, *, text: str = ""):
+    async def gadd(ctx: commands.Context, *, text: str = "") -> None:
         if not text.strip():
             await ctx.send("Use: `!gadd wire nuts qty:50 loc:E2 category:electrical unit:each`")
             return
@@ -250,7 +271,7 @@ def register_guard(bot: commands.Bot):
         )
 
     @bot.command(name="gcheck")
-    async def gcheck(ctx, *, item_name: str = ""):
+    async def gcheck(ctx: commands.Context, *, item_name: str = "") -> None:
         item_name = item_name.strip()
         if not item_name:
             await ctx.send("Use: `!gcheck fan box`")
@@ -270,7 +291,7 @@ def register_guard(bot: commands.Bot):
         await ctx.send("\n".join(lines))
 
     @bot.command(name="gremove")
-    async def gremove(ctx, *, text: str = ""):
+    async def gremove(ctx: commands.Context, *, text: str = "") -> None:
         if not text.strip():
             await ctx.send("Use: `!gremove wire nuts qty:10 loc:E2`")
             return
@@ -305,7 +326,7 @@ def register_guard(bot: commands.Bot):
         await ctx.send(f"✅ Removed: {item_name} x {removed:g}{f' from {loc}' if loc else ''}")
 
     @bot.command(name="gmove")
-    async def gmove(ctx, *, text: str = ""):
+    async def gmove(ctx: commands.Context, *, text: str = "") -> None:
         if not text.strip():
             await ctx.send("Use: `!gmove wire nuts qty:25 from:E2 to:D2`")
             return
@@ -355,6 +376,6 @@ def register_guard(bot: commands.Bot):
 
     # Backward-compatible alias. This now means only "remove from physical inventory".
     @bot.command(name="gused")
-    async def gused(ctx, *, text: str = ""):
+    async def gused(ctx: commands.Context, *, text: str = "") -> None:
         cleaned = re.sub(r"\bjob:\S+", "", text, flags=re.IGNORECASE).strip()
         await gremove(ctx, text=cleaned)
