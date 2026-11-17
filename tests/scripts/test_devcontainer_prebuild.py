@@ -69,7 +69,8 @@ def tracked_text_files():
         cwd=ROOT, check=True, capture_output=True, text=True,
     ).stdout.split("\n")
     for rel in filter(None, out):
-        if rel.startswith("tests/") or not (ROOT / rel).is_file():
+        # uv.lock is generated and holds every locked package version, which can equal a tool pin by chance.
+        if rel.startswith("tests/") or rel == "uv.lock" or not (ROOT / rel).is_file():
             continue
         try:
             yield rel, (ROOT / rel).read_text()

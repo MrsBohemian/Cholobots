@@ -13,6 +13,8 @@ MAKEFILE = ROOT / "Makefile"
 TARGETS = (
     "help",
     "setup",
+    "lock",
+    "lock-check",
     "check-tools",
     "db-up",
     "db-down",
@@ -34,7 +36,6 @@ pytestmark = pytest.mark.skipif(shutil.which("make") is None, reason="make is no
 PARENT_MAKE_VARS = ("MAKEFLAGS", "MAKELEVEL", "MFLAGS", "MAKEOVERRIDES")
 CLEAN_ENV = {key: value for key, value in os.environ.items() if key not in PARENT_MAKE_VARS}
 CLEAN_ENV.pop("SUPABASE", None)
-CLEAN_ENV.pop("PYTHON", None)
 
 
 def make(*args, cwd=ROOT):
@@ -60,17 +61,28 @@ def test_default_goal_is_help():
     assert make().stdout == make("help").stdout
 
 
-def test_setup_installs_pinned_requirements_and_pre_commit():
+def test_setup_syncs_the_lock_and_installs_pre_commit():
     out = dry_run("setup")
-    assert "-m venv .venv" in out
-    assert "-m pip install -r requirements.txt -r requirements-dev.txt" in out
+    assert "uv sync --locked" in out
     assert "-m pre_commit install" in out
     assert "[ -f .env ] || cp .env.example .env" in out
+    assert "pip install" not in out
+    assert "-m venv" not in out
 
 
-def test_setup_builds_venv_with_pinned_python_version():
-    version = (ROOT / ".python-version").read_text(encoding="utf-8").strip()
-    assert f"python{version} -m venv .venv" in dry_run("setup")
+def test_lock_targets():
+    lock = dry_run("lock")
+    assert "uv lock" in lock
+    assert "uv export" in lock
+    assert "--no-dev" in lock
+    assert "-o requirements.txt" in lock
+    check = dry_run("lock-check")
+    assert "uv lock --check" in check
+    assert "diff -u requirements.txt -" in check
+
+
+def test_check_runs_lock_check():
+    assert "uv lock --check" in dry_run("check")
 
 
 @pytest.mark.parametrize(
@@ -171,15 +183,15 @@ def test_cli_version_matches_readme():
 
 
 def test_setup_and_test_run_the_tool_preflight_first():
-    assert dry_run("setup").index("command -v") < dry_run("setup").index("-m venv .venv")
+    assert dry_run("setup").index("command -v") < dry_run("setup").index("uv sync")
     out = dry_run("test")
-    assert out.index("for tool in jq timeout setsid curl") < out.index("-m pytest -q")
+    assert out.index("for tool in uv jq timeout setsid curl") < out.index("-m pytest -q")
 
 
 def test_check_tools_names_the_missing_binary_and_how_to_install_it(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    for tool in ("jq", "curl", "setsid"):  # everything but timeout is present
+    for tool in ("uv", "jq", "curl", "setsid"):  # everything but timeout is present
         (fake_bin / tool).write_text("#!/bin/sh\n")
         (fake_bin / tool).chmod(0o755)
     env = {**CLEAN_ENV, "PATH": f"{fake_bin}:/usr/bin:/bin"}
@@ -197,7 +209,7 @@ def test_check_tools_names_the_missing_binary_and_how_to_install_it(tmp_path):
 def test_check_tools_passes_when_all_present(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    for tool in ("jq", "curl", "setsid", "timeout"):
+    for tool in ("uv", "jq", "curl", "setsid", "timeout"):
         (fake_bin / tool).write_text("#!/bin/sh\n")
         (fake_bin / tool).chmod(0o755)
     env = {**CLEAN_ENV, "PATH": f"{fake_bin}:/usr/bin:/bin"}
