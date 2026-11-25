@@ -46,4 +46,6 @@ jobs:
     if: vars.PAGES_ENABLED != 'true'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "::notice::GitHub Pages publishing is switched off (PAGES_ENABLED is not 'true'); see story #179 task #135."
+      # A block scalar: in a plain scalar, " #" would start a YAML comment.
+      - run: |
+          echo "::notice::GitHub Pages publishing is switched off (PAGES_ENABLED is not 'true'); see story #179 task #135."
